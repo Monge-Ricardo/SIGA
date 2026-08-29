@@ -1,0 +1,28 @@
+﻿{
+  "name": "app-agua-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema Offline-First / Local-First para Cobro de Agua y Flujo de Caja",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@app-agua/client & npm run dev --workspace=@app-agua/server",
+    "dev:client": "npm run dev --workspace=@app-agua/client",
+    "dev:server": "npm run dev --workspace=@app-agua/server",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "keywords": [
+    "offline-first",
+    "local-first",
+    "water-billing",
+    "cashflow",
+    "indexeddb",
+    "outbox-pattern"
+  ],
+  "author": "Equipo App Agua",
+  "license": "MIT"
+}
