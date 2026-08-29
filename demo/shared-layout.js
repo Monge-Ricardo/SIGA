@@ -29,11 +29,11 @@ export function injectAppLayout(activePageId) {
       <div class="user-session-pill">
         <div class="user-avatar-mini">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</div>
         <div class="user-session-text">
-          <div class="user-session-name">${user?.nombre || 'Usuario'}</div>
+          <div class="user-session-name">${user?.nombre || user?.username || 'Usuario'}</div>
           <span class="user-role-badge" style="background: ${roleInfo.bg}; color: ${roleInfo.text};">${roleInfo.label}</span>
         </div>
         <button class="btn btn-sm btn-logout" id="btnLogoutHeader" title="Cerrar Sesión">
-          🚪 Salir
+          🚪 Cerrar Sesión
         </button>
       </div>
 
@@ -54,7 +54,7 @@ export function injectAppLayout(activePageId) {
       <span class="banner-icon">🌐</span>
       <div>
         <strong id="bannerTitle">Conexión Activa</strong>
-        <p id="bannerDesc">Los datos se guardan en IndexedDB local y se sincronizan vía Outbox Pattern.</p>
+        <p id="bannerDesc">Los datos se guardan en IndexedDB local y se sincronizan con SQLite / Supabase.</p>
       </div>
     </div>
     <div class="banner-action">
@@ -62,16 +62,16 @@ export function injectAppLayout(activePageId) {
     </div>
   `;
 
-  // 3. Navigation Bar (MPA Links filtrados exclusivamente por rol)
+  // 3. Navigation Bar (El Cajero/Tesorero maneja todos los módulos operativos y de reportes)
   const nav = document.createElement('nav');
   nav.className = 'app-nav';
 
   const allMenuItems = [
     { id: 'socios', href: 'socios.html', icon: '👥', label: '1. Padrón de Socios', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'lecturas', href: 'lecturas.html', icon: '⏱️', label: '2. Toma de Lecturas', roles: ['ADMIN', 'LECTOR'] },
+    { id: 'lecturas', href: 'lecturas.html', icon: '⏱️', label: '2. Toma de Lecturas', roles: ['ADMIN', 'CAJERO', 'LECTOR'] },
     { id: 'caja', href: 'caja.html', icon: '💵', label: '3. Caja y Cobros', roles: ['ADMIN', 'CAJERO'] },
     { id: 'fondos', href: 'fondos.html', icon: '🏛️', label: '4. Fondos (3 Col)', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'reportes', href: 'reportes.html', icon: '📊', label: '5. Reportes & Auditoría', roles: ['ADMIN'] }
+    { id: 'reportes', href: 'reportes.html', icon: '📊', label: '5. Reportes & Auditoría', roles: ['ADMIN', 'CAJERO'] }
   ];
 
   // Filtrar solo los módulos que pertenecen al rol activo
@@ -94,7 +94,6 @@ export function injectAppLayout(activePageId) {
   });
 
   nav.appendChild(ul);
-
 
   container.insertBefore(nav, container.firstChild);
   container.insertBefore(banner, container.firstChild);
@@ -126,7 +125,7 @@ function initNetworkSimulator() {
       networkStatusText.textContent = 'Simulador: EN LÍNEA';
       networkBanner.className = 'status-banner banner-online';
       bannerTitle.textContent = 'Conexión Activa';
-      bannerDesc.textContent = 'Los datos se guardan en IndexedDB local y se sincronizan vía Outbox Pattern.';
+      bannerDesc.textContent = 'Los datos se guardan en IndexedDB local y se sincronizan con SQLite / Supabase.';
     } else {
       toggleNetworkBtn.className = 'btn-network offline';
       networkStatusText.textContent = 'Simulador: FUERA DE LÍNEA';

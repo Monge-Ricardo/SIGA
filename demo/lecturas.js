@@ -2,8 +2,8 @@ import { requireAuth } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 
-// Guard de autenticación (Accesible por ADMIN y LECTOR)
-const currentUser = requireAuth(['ADMIN', 'LECTOR']);
+// Guard de autenticación (Accesible por ADMIN, CAJERO y LECTOR)
+const currentUser = requireAuth(['ADMIN', 'CAJERO', 'LECTOR']);
 if (currentUser) {
   injectAppLayout('lecturas');
 }
