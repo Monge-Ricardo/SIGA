@@ -1,32 +1,47 @@
 export type EstadoSocio = 'ACTIVO' | 'SUSPENDIDO' | 'CORTADO';
+export type EstadoServicio = EstadoSocio;
+export type EstadoCuenta = 'AL_DIA' | 'EN_MORA';
 
 export interface Socio {
   id: string; // UUIDv4
   codigoSocio: string; // Ej: "SOC-0012"
   nombres: string;
   apellidos: string;
+  nombreCompleto?: string;
   cedulaRuc: string;
   fechaNacimiento: string; // "YYYY-MM-DD"
+  edadCalculada?: number;
   esTerceraEdad?: boolean; // Calculado dinámicamente: edad >= 65
   fechaUnion: string; // "YYYY-MM-DD"
+  fechaAfiliacion?: string;
   idSector: string;
+  sectorId?: string;
   nombreSector?: string;
   medidorNumero: string;
   tieneAlcantarillado: boolean; // Recargo +$1.00/mes
   telefono?: string;
   direccion: string;
   estado: EstadoSocio;
+  estadoServicio?: EstadoServicio;
+  estadoCuenta?: EstadoCuenta;
+  mesesAdeudados?: number;
+  montoTotalAdeudado?: number;
+  fechaDeudaAntigua?: string;
+  tarifaBaseMensual?: number;
   version: number;
   createdAt: string;
   updatedAt: string;
 }
 
-// Alias para compatibilidad con cliente existente
+// Alias para compatibilidad
+export type SocioAgua = Socio;
 export type ClienteAgua = Socio;
 
 export interface Sector {
   id: string;
+  codigo?: string;
   codigoSector: string;
+  nombre?: string;
   nombreSector: string;
   descripcion?: string;
   activo: boolean;
@@ -140,3 +155,12 @@ export interface EstadoCuentaSocio {
   multasPendientes: MultaRubro[];
   historialFacturas: Factura[];
 }
+
+export const TARIFAS_CONFIG = {
+  BASE_NORMAL: 7.00,
+  BASE_TERCERA_EDAD: 5.00,
+  RECARGO_ALCANTARILLADO: 1.00,
+  EXCEDENTE_POR_M3: 0.10,
+  LIMITE_BASE_M3: 30,
+  EDAD_TERCERA_EDAD: 65,
+} as const;

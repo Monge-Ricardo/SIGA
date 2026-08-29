@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Padrón de Socios • SIGA-Comunitario</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- El Header, Banner y Nav se inyectan automáticamente desde shared-layout.js -->
+
+    <!-- Module Header -->
+    <div class="module-header">
+      <div>
+        <h2 class="module-title">👥 Módulo 1: Padrón de Socios y Consumidores</h2>
+        <p class="module-subtitle">
+          Administración de abonados, cálculo dinámico de 3ra Edad ($5.00), alcantarillado ($1.00) y control de morosidad.
+        </p>
+      </div>
+      <div>
+        <button class="btn btn-primary" id="btnOpenCreateSocio">
+          ➕ Registrar Nuevo Socio
+        </button>
+      </div>
+    </div>
+
+    <!-- Metrics Grid -->
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Total Padrón</div>
+        <div class="metric-value text-blue" id="metricTotalSocios">0</div>
+        <div class="metric-sub" id="metricActivosSub">0 activos</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">3ra Edad (Tarifa $5.00)</div>
+        <div class="metric-value text-purple" id="metricTerceraEdad">0</div>
+        <div class="metric-sub">Subsidio comunitario</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Con Alcantarillado (+1$)</div>
+        <div class="metric-value text-cyan" id="metricAlcantarillado">0</div>
+        <div class="metric-sub">Red de saneamiento</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Socios en Mora</div>
+        <div class="metric-value text-red" id="metricEnMora">0</div>
+        <div class="metric-sub" id="metricCarteraTotal">$0.00 pendiente</div>
+      </div>
+    </div>
+
+    <!-- Filters Card -->
+    <div class="filter-card">
+      <div class="filter-row">
+        <div class="filter-group search-flex">
+          <label for="filterBusqueda">Buscar Socio / Cédula / Medidor</label>
+          <div class="search-input-wrapper">
+            <span class="search-icon">🔍</span>
+            <input
+              type="text"
+              id="filterBusqueda"
+              placeholder="Escribe nombre, cédula o medidor..."
+              autocomplete="off"
+            />
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label for="filterSector">Sector / Barrio</label>
+          <select id="filterSector">
+            <option value="TODOS">Todos los sectores</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="filterEstadoServicio">Estado Servicio</label>
+          <select id="filterEstadoServicio">
+            <option value="TODOS">Todos los estados</option>
+            <option value="ACTIVO">🟢 Activo</option>
+            <option value="SUSPENDIDO">🟡 Suspendido</option>
+            <option value="CORTADO">🔴 Cortado</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="filterCondicion">Categoría / Edad</label>
+          <select id="filterCondicion">
+            <option value="TODOS">Todas las edades</option>
+            <option value="SENIOR">👴 Tercera Edad (≥65)</option>
+            <option value="NORMAL">👤 Normal (&lt;65)</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <label for="filterCuenta">Cuenta Corriente</label>
+          <select id="filterCuenta">
+            <option value="TODOS">Todos los estados</option>
+            <option value="AL_DIA">✅ Al Día</option>
+            <option value="EN_MORA">⚠️ En Mora</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Table Card -->
+    <div class="table-container-card">
+      <div class="table-header-info">
+        <span id="tableCountLabel">Cargando socios...</span>
+        <span class="table-perf-indicator">⚡ Respuesta Local DB: <strong id="queryPerfMs">0 ms</strong></span>
+      </div>
+      <div class="table-responsive">
+        <table class="data-table" id="sociosTable">
+          <thead>
+            <tr>
+              <th>Socio / Titular</th>
+              <th>Cédula / RUC</th>
+              <th>Edad / Categoría</th>
+              <th>Sector</th>
+              <th>Alcantarillado</th>
+              <th>Tarifa Base</th>
+              <th>Cuenta Corriente</th>
+              <th>Estado</th>
+              <th style="text-align: right;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="sociosTableBody">
+            <!-- Renderizado dinámico -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL CREAR / EDITAR SOCIO -->
+  <div id="modalSocioForm" class="modal-overlay" style="display: none;">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div>
+          <h2 id="modalFormTitle" style="font-size: 1.25rem; font-weight: 700; color: #0f172a;">
+            ➕ Registrar Nuevo Socio
+          </h2>
+          <p style="font-size: 0.85rem; color: #64748b; margin-top: 2px;">
+            Padrón de Socios - Cálculo dinámico de 3ra Edad y Tarifación Base
+          </p>
+        </div>
+        <button class="btn-close-modal" id="btnCloseFormModal">&times;</button>
+      </div>
+      <form id="formSocio" class="form-grid-modal">
+        <input type="hidden" id="formSocioId" />
+
+        <div class="form-section-title">👤 Datos Personales e Identificación</div>
+
+        <div class="form-group">
+          <label for="inputCedula">Cédula / RUC *</label>
+          <input type="text" id="inputCedula" placeholder="Ej. 0923456781" maxlength="13" required />
+          <span class="field-help" id="cedulaValidationMsg">10 dígitos para persona natural</span>
+        </div>
+
+        <div class="form-group">
+          <label for="inputNombres">Nombres Completos *</label>
+          <input type="text" id="inputNombres" placeholder="Ej. Juan Alberto" required />
+        </div>
+
+        <div class="form-group">
+          <label for="inputApellidos">Apellidos Completos *</label>
+          <input type="text" id="inputApellidos" placeholder="Ej. Pérez Zambrano" required />
+        </div>
+
+        <div class="form-group">
+          <label for="inputFechaNac">Fecha de Nacimiento *</label>
+          <input type="date" id="inputFechaNac" value="1985-01-01" required />
+          <span class="field-help">Se calculará la categoría y tarifa automáticamente</span>
+        </div>
+
+        <!-- Indicador Reactivo de Tercera Edad y Tarifa -->
+        <div class="form-group full-width">
+          <div class="tariff-preview-card" id="tariffPreviewCard"></div>
+        </div>
+
+        <div class="form-section-title">📍 Ubicación y Datos del Servicio</div>
+
+        <div class="form-group">
+          <label for="selectSector">Sector / Barrio Comunitario *</label>
+          <select id="selectSector" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="inputMedidor">Número de Medidor</label>
+          <input type="text" id="inputMedidor" placeholder="Ej. MED-10450" />
+        </div>
+
+        <div class="form-group">
+          <label for="inputTelefono">Teléfono de Contacto</label>
+          <input type="tel" id="inputTelefono" placeholder="Ej. 0991234567" />
+        </div>
+
+        <div class="form-group">
+          <label for="inputFechaAfil">Fecha de Afiliación / Unión</label>
+          <input type="date" id="inputFechaAfil" required />
+        </div>
+
+        <div class="form-group full-width">
+          <label for="inputDireccion">Dirección de Domicilio / Referencia</label>
+          <input type="text" id="inputDireccion" placeholder="Ej. Calle Principal s/n frente a la cancha comunal" />
+        </div>
+
+        <div class="form-group">
+          <label for="selectEstado">Estado del Servicio</label>
+          <select id="selectEstado">
+            <option value="ACTIVO" selected>🟢 Activo</option>
+            <option value="SUSPENDIDO">🟡 Suspendido</option>
+            <option value="CORTADO">🔴 Cortado</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label" style="margin-top: 1.75rem;">
+            <input type="checkbox" id="checkAlcantarillado" checked />
+            <span><strong>Posee Servicio de Alcantarillado</strong> (+1.00$/mes)</span>
+          </label>
+        </div>
+
+        <div class="modal-actions full-width">
+          <button type="button" class="btn btn-secondary" id="btnCancelFormModal">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btnSaveSocioSubmit">💾 Guardar Socio</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL FICHA DE DETALLE -->
+  <div id="modalSocioDetail" class="modal-overlay" style="display: none;">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div class="socio-detail-title-group">
+          <div class="socio-avatar" id="detailAvatar">👤</div>
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 id="detailNombre" style="font-size: 1.35rem; font-weight: 700; color: #0f172a; margin: 0;"></h2>
+              <span class="status-badge" id="detailStatusBadge">ACTIVO</span>
+            </div>
+            <p style="font-size: 0.85rem; color: #64748b; margin-top: 4px;">
+              Código: <strong id="detailCodigo"></strong> &nbsp;|&nbsp; Cédula: <strong id="detailCedula"></strong>
+            </p>
+          </div>
+        </div>
+        <button class="btn-close-modal" id="btnCloseDetailModal">&times;</button>
+      </div>
+
+      <div class="socio-detail-body">
+        <div class="detail-column">
+          <h3 class="detail-section-heading">📋 Información del Abonado</h3>
+          
+          <div class="detail-item">
+            <span class="detail-label">Categoría Tarifaria:</span>
+            <span class="detail-value" id="detailCategoriaBadge"></span>
+          </div>
+
+          <div class="detail-item">
+            <span class="detail-label">Edad Calculada:</span>
+            <span class="detail-value" id="detailEdad"></span>
+          </div>
+
+          <div class="detail-item">
+            <span class="detail-label">Sector / Barrio:</span>
+            <span class="detail-value" id="detailSector"></span>
+          </div>
+
+          <div class="detail-item">
+            <span class="detail-label">N° de Medidor:</span>
+            <span class="detail-value" id="detailMedidor"></span>
+          </div>
+
+          <div class="detail-item">
+            <span class="detail-label">Servicio Alcantarillado:</span>
+            <span class="detail-value" id="detailAlcantarillado"></span>
+          </div>
+
+          <div class="detail-item">
+            <span class="detail-label">Fecha de Afiliación:</span>
+            <span class="detail-value" id="detailAfiliacion"></span>
+          </div>
+
+          <div class="detail-item">
+            <span class="detail-label">Teléfono:</span>
+            <span class="detail-value" id="detailTelefono"></span>
+          </div>
+
+          <div class="detail-item full-span">
+            <span class="detail-label">Dirección:</span>
+            <span class="detail-value" id="detailDireccion"></span>
+          </div>
+        </div>
+
+        <div class="detail-column">
+          <h3 class="detail-section-heading">💳 Estado de Cuenta Corriente</h3>
+
+          <div class="account-status-card" id="detailAccountCard">
+            <div class="account-status-header">
+              <span class="account-status-icon" id="detailAccountIcon">✅</span>
+              <div>
+                <strong style="font-size: 1.05rem;" id="detailAccountTitle">AL DÍA CON SUS PAGOS</strong>
+                <p style="font-size: 0.8rem; margin: 2px 0 0 0; opacity: 0.9;" id="detailAccountSubtitle">
+                  Sin valores adeudados pendientes
+                </p>
+              </div>
+            </div>
+            <div class="account-debt-info" id="detailDebtInfo" style="display: none;">
+              <div class="debt-total">
+                <span>Total Deuda Acumulada:</span>
+                <strong id="detailDebtAmount">$0.00 USD</strong>
+              </div>
+              <div style="font-size: 0.8rem; color: #b91c1c; margin-top: 4px;" id="detailDebtSince">
+                Desde: -
+              </div>
+            </div>
+          </div>
+
+          <h3 class="detail-section-heading" style="margin-top: 1.25rem;">💧 Desglose de Tarifa Base Mensual</h3>
+          <div class="tariff-breakdown-box">
+            <div class="breakdown-row">
+              <span>Cuota Fija Base (30 m³):</span>
+              <span id="detailTarifaBaseMonto">$7.00</span>
+            </div>
+            <div class="breakdown-row">
+              <span>Servicio de Alcantarillado:</span>
+              <span id="detailTarifaAlcantMonto">+$1.00</span>
+            </div>
+            <div class="breakdown-divider"></div>
+            <div class="breakdown-row total">
+              <span><strong>Total Cuota Mensual Fija:</strong></span>
+              <span class="text-accent" style="font-size: 1.15rem; font-weight: 700;" id="detailTarifaTotalMonto">
+                $8.00 USD
+              </span>
+            </div>
+          </div>
+
+          <div class="service-status-controller" style="margin-top: 1.25rem;">
+            <label style="font-size: 0.85rem; color: #64748b; display: block; margin-bottom: 6px; font-weight: 600;">
+              Cambiar Estado del Servicio:
+            </label>
+            <div style="display: flex; gap: 6px;">
+              <button class="btn btn-sm btn-outline" id="btnDetailSetActivo">🟢 Activo</button>
+              <button class="btn btn-sm btn-outline" id="btnDetailSetSuspendido">🟡 Suspender</button>
+              <button class="btn btn-sm btn-outline" id="btnDetailSetCortado">🔴 Cortar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 1.5rem; justify-content: space-between; padding: 0 1.5rem 1.5rem;">
+        <button type="button" class="btn btn-secondary" id="btnDetailEdit">✏️ Editar Información</button>
+        <button type="button" class="btn btn-primary" id="btnDetailClose">Cerrar Ficha</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="socios.js"></script>
+</body>
+</html>

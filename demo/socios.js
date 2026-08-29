@@ -1,12 +1,17 @@
-/**
- * SIGA-Comunitario • Demostrador Offline-First (Módulo 1: Padrón de Socios)
- * Persistencia Local con IndexedDB + Outbox Sync Queue + Tarifación Dinámica
- */
+import { requireAuth } from './auth.js';
+import { injectAppLayout } from './shared-layout.js';
+import { Swal } from './sweetalert.js';
+
+// Guard de autenticación
+const currentUser = requireAuth(['ADMIN', 'CAJERO']);
+
+if (currentUser) {
+  injectAppLayout('socios');
+}
 
 const DB_NAME = 'SIGAComunitarioDemoDB';
 const DB_VERSION = 2;
 let db = null;
-let isOnline = true;
 
 const TARIFAS_CONFIG = {
   BASE_NORMAL: 7.00,
@@ -118,7 +123,6 @@ const SOCIOS_INICIALES = [
   }
 ];
 
-// 1. Inicialización de IndexedDB
 function initIndexedDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -132,6 +136,10 @@ function initIndexedDB() {
       }
       if (!dbInstance.objectStoreNames.contains('sectores')) {
         dbInstance.createObjectStore('sectores', { keyPath: 'id' });
+      }
+      if (!dbInstance.objectStoreNames.contains('lecturas')) {
+        const lecturasStore = dbInstance.createObjectStore('lecturas', { keyPath: 'id' });
+        lecturasStore.createIndex('periodo_sector', ['periodo', 'sectorId'], { unique: false });
       }
       if (!dbInstance.objectStoreNames.contains('sync_queue')) {
         const queueStore = dbInstance.createObjectStore('sync_queue', { keyPath: 'id' });
@@ -177,7 +185,6 @@ function countStore(storeName) {
   });
 }
 
-// 2. Utilidades de Negocio
 function calcularEdad(fechaNacimiento) {
   if (!fechaNacimiento) return 0;
   const hoy = new Date();
@@ -204,7 +211,6 @@ function calcularTarifaBaseEstimada(es3raEdadFlag, tieneAlcantFlag) {
   return Number((base + alcant).toFixed(2));
 }
 
-// 3. Operaciones de Persistencia Local con Outbox Pattern
 async function getAllSocios() {
   const start = performance.now();
   return new Promise((resolve) => {
@@ -223,7 +229,8 @@ async function getAllSocios() {
         };
       });
       const latency = (performance.now() - start).toFixed(1);
-      updateLatencyMeter(latency);
+      const el = document.querySelector('#perfMeter span');
+      if (el) el.textContent = `${latency} ms`;
       resolve(list);
     };
   });
@@ -264,13 +271,14 @@ async function saveSocioLocal(socioData, isEdit = false) {
       action: isEdit ? 'UPDATE' : 'CREATE',
       payload: record,
       localTimestamp: new Date().toLocaleTimeString(),
-      status: isOnline ? 'SYNCED' : 'PENDING'
+      status: 'SYNCED'
     };
     queueStore.add(mutation);
 
     tx.oncomplete = () => {
       const latency = (performance.now() - start).toFixed(1);
-      updateLatencyMeter(latency);
+      const el = document.querySelector('#perfMeter span');
+      if (el) el.textContent = `${latency} ms`;
       resolve(record);
     };
 
@@ -294,41 +302,6 @@ async function getSocioById(id) {
   });
 }
 
-async function getOutboxMutations() {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['sync_queue'], 'readonly');
-    const req = tx.objectStore('sync_queue').getAll();
-    req.onsuccess = () => resolve(req.result.reverse());
-  });
-}
-
-async function processOutboxSync() {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['sync_queue'], 'readwrite');
-    const store = tx.objectStore('sync_queue');
-    const req = store.getAll();
-
-    req.onsuccess = () => {
-      const mutations = req.result;
-      let count = 0;
-      mutations.forEach((m) => {
-        if (m.status === 'PENDING') {
-          m.status = 'SYNCED';
-          store.put(m);
-          count++;
-        }
-      });
-      tx.oncomplete = () => resolve(count);
-    };
-  });
-}
-
-// 4. UI y Controladores
-function updateLatencyMeter(latency) {
-  const el = document.querySelector('#perfMeter span');
-  if (el) el.textContent = `${latency} ms`;
-}
-
 let cachedSectores = [];
 let activeSocioDetail = null;
 
@@ -339,7 +312,6 @@ async function renderUI() {
   const socios = await getAllSocios();
   renderMetrics(socios);
   renderSociosTable(socios);
-  renderOutboxTable();
 }
 
 function populateSectoresDropdowns(sectores) {
@@ -421,7 +393,7 @@ function renderSociosTable(allSocios) {
   if (filtrados.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="9" style="text-align: center; color: #94a3b8; padding: 2.5rem;">
+        <td colspan="9" style="text-align: center; color: #64748b; padding: 2.5rem;">
           🔍 No se encontraron socios con los filtros aplicados.
         </td>
       </tr>
@@ -439,6 +411,7 @@ function renderSociosTable(allSocios) {
         ? 'status-badge-suspended'
         : 'status-badge-cut';
 
+    // Se mantiene ÚNICAMENTE el botón de Ver Ficha (eliminando redundancia de editar)
     tr.innerHTML = `
       <td>
         <div class="socio-cell-user">
@@ -455,12 +428,12 @@ function renderSociosTable(allSocios) {
           <span class="age-badge ${socio.esTerceraEdad ? 'badge-senior' : 'badge-normal'}">
             ${socio.esTerceraEdad ? '👴 3ra Edad ($5)' : '👤 Normal ($7)'}
           </span>
-          <span style="font-size: 0.75rem; color: #94a3b8;">${socio.edadCalculada} años</span>
+          <span style="font-size: 0.75rem; color: #64748b;">${socio.edadCalculada} años</span>
         </div>
       </td>
       <td><span class="sector-tag">${socio.nombreSector || socio.sectorId}</span></td>
       <td>${socio.tieneAlcantarillado ? '<span class="tag-yes">+$1.00 SÍ</span>' : '<span class="tag-no">NO</span>'}</td>
-      <td><strong class="text-accent">$${socio.tarifaBaseMensual.toFixed(2)}</strong><span style="font-size:0.75rem;color:#94a3b8;">/mes</span></td>
+      <td><strong class="text-accent">$${socio.tarifaBaseMensual.toFixed(2)}</strong><span style="font-size:0.75rem;color:#64748b;">/mes</span></td>
       <td>
         ${
           isMora
@@ -471,52 +444,20 @@ function renderSociosTable(allSocios) {
       <td><span class="status-badge ${statusClass}">${socio.estadoServicio}</span></td>
       <td style="text-align: right;">
         <div class="action-buttons-group">
-          <button class="btn-icon btn-view" title="Ver Ficha">👁️</button>
-          <button class="btn-icon btn-edit" title="Editar">✏️</button>
+          <button class="btn-icon btn-view" title="Ver Ficha del Socio" style="width: auto; padding: 0.25rem 0.6rem; gap: 4px; font-size: 0.82rem; font-weight: 600;">
+            👁️ Ver Ficha
+          </button>
         </div>
       </td>
     `;
 
     tr.querySelector('.btn-view').addEventListener('click', () => openDetailModal(socio));
-    tr.querySelector('.btn-edit').addEventListener('click', () => openFormModal(socio));
 
     tbody.appendChild(tr);
   });
 }
 
-async function renderOutboxTable() {
-  const mutations = await getOutboxMutations();
-  const tbody = document.getElementById('outboxTableBody');
-  const badge = document.getElementById('queueBadge');
-
-  const pendingCount = mutations.filter((m) => m.status === 'PENDING').length;
-  badge.textContent = `${pendingCount} pendientes en Outbox`;
-
-  if (mutations.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 1.5rem;">No hay operaciones en la cola.</td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = '';
-  mutations.slice(0, 6).forEach((m) => {
-    const tr = document.createElement('tr');
-    const isSynced = m.status === 'SYNCED';
-    tr.innerHTML = `
-      <td><span class="badge-code">${m.id}</span></td>
-      <td><strong>${m.entity}</strong></td>
-      <td><span class="sector-tag">${m.action}</span></td>
-      <td>${m.localTimestamp}</td>
-      <td>
-        <span class="status-badge ${isSynced ? 'status-badge-active' : 'status-badge-suspended'}">
-          ${isSynced ? '✓ SINCRONIZADO' : '⏳ PENDIENTE OUTBOX'}
-        </span>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-// 5. Modales (Formulario y Ficha)
+// Modales
 const modalForm = document.getElementById('modalSocioForm');
 const modalDetail = document.getElementById('modalSocioDetail');
 const inputFechaNac = document.getElementById('inputFechaNac');
@@ -546,9 +487,9 @@ function updateTariffPreview() {
       </div>
     </div>
     <div class="tariff-preview-details">
-      <span>🔹 Cuota Base: <strong>$${tarifaBase.toFixed(2)}</strong></span>
+      <span>🔹 Cuota Base ($30 m³): <strong>$${tarifaBase.toFixed(2)}</strong></span>
       <span>🔹 Alcantarillado: <strong>${tieneAlcant ? '+$' + TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2) : 'No aplica ($0.00)'}</strong></span>
-      <span style="color: #94a3b8; font-size: 0.8rem;">* Excedente >30 m³ se factura a $0.10/m³ adicional.</span>
+      <span style="color: #64748b; font-size: 0.8rem;">* Excedente >30 m³ se factura a $0.10/m³ adicional.</span>
     </div>
   `;
 }
@@ -559,11 +500,11 @@ checkAlcantarillado.addEventListener('change', updateTariffPreview);
 inputCedula.addEventListener('input', () => {
   const val = inputCedula.value.trim();
   if (val.length === 10) {
-    cedulaValidationMsg.textContent = '✓ Cédula válida';
-    cedulaValidationMsg.style.color = '#10b981';
+    cedulaValidationMsg.textContent = '✓ Cédula válida (10 dígitos)';
+    cedulaValidationMsg.style.color = '#059669';
   } else {
     cedulaValidationMsg.textContent = `${val.length}/10 dígitos`;
-    cedulaValidationMsg.style.color = '#94a3b8';
+    cedulaValidationMsg.style.color = '#64748b';
   }
 });
 
@@ -651,33 +592,49 @@ function closeDetailModal() {
   modalDetail.style.display = 'none';
 }
 
-// 6. Configuración de Event Listeners
-document.getElementById('btnOpenCreateSocio').addEventListener('click', () => openFormModal());
-document.getElementById('btnCloseFormModal').addEventListener('click', closeFormModal);
-document.getElementById('btnCancelFormModal').addEventListener('click', closeFormModal);
-document.getElementById('btnCloseDetailModal').addEventListener('click', closeDetailModal);
-document.getElementById('btnDetailClose').addEventListener('click', closeDetailModal);
+document.getElementById('btnOpenCreateSocio')?.addEventListener('click', () => openFormModal());
+document.getElementById('btnCloseFormModal')?.addEventListener('click', closeFormModal);
+document.getElementById('btnCancelFormModal')?.addEventListener('click', closeFormModal);
+document.getElementById('btnCloseDetailModal')?.addEventListener('click', closeDetailModal);
+document.getElementById('btnDetailClose')?.addEventListener('click', closeDetailModal);
 
-document.getElementById('btnDetailEdit').addEventListener('click', () => {
+document.getElementById('btnDetailEdit')?.addEventListener('click', () => {
   closeDetailModal();
   if (activeSocioDetail) openFormModal(activeSocioDetail);
 });
 
 async function handleStatusChange(status) {
   if (activeSocioDetail) {
+    const confirmRes = await Swal.fire({
+      icon: 'question',
+      title: '¿Cambiar Estado del Servicio?',
+      text: `¿Está seguro de cambiar el estado operativo de ${activeSocioDetail.nombreCompleto} a "${status}"?`,
+      showCancelButton: true,
+      confirmButtonText: 'Sí, Cambiar Estado',
+      cancelButtonText: 'Cancelar'
+    });
+
+    if (!confirmRes.isConfirmed) return;
+
     await updateSocioServicio(activeSocioDetail.id, status);
     activeSocioDetail.estadoServicio = status;
     closeDetailModal();
     renderUI();
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Estado Actualizado',
+      text: `El socio ahora se encuentra en estado "${status}".`
+    });
   }
 }
 
-document.getElementById('btnDetailSetActivo').addEventListener('click', () => handleStatusChange('ACTIVO'));
-document.getElementById('btnDetailSetSuspendido').addEventListener('click', () => handleStatusChange('SUSPENDIDO'));
-document.getElementById('btnDetailSetCortado').addEventListener('click', () => handleStatusChange('CORTADO'));
+document.getElementById('btnDetailSetActivo')?.addEventListener('click', () => handleStatusChange('ACTIVO'));
+document.getElementById('btnDetailSetSuspendido')?.addEventListener('click', () => handleStatusChange('SUSPENDIDO'));
+document.getElementById('btnDetailSetCortado')?.addEventListener('click', () => handleStatusChange('CORTADO'));
 
 // Form Submit
-document.getElementById('formSocio').addEventListener('submit', async (e) => {
+document.getElementById('formSocio')?.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const id = document.getElementById('formSocioId').value;
@@ -725,60 +682,18 @@ document.getElementById('formSocio').addEventListener('submit', async (e) => {
   await saveSocioLocal(socioData, isEdit);
   closeFormModal();
   renderUI();
+
+  Swal.fire({
+    icon: 'success',
+    title: isEdit ? 'Socio Actualizado' : 'Socio Registrado',
+    text: `Los datos de ${socioData.nombreCompleto} fueron guardados exitosamente en IndexedDB.`
+  });
 });
 
 // Filtros reactivos
 ['filterBusqueda', 'filterSector', 'filterEstadoServicio', 'filterCondicion', 'filterCuenta'].forEach((id) => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', () => getAllSocios().then(renderSociosTable));
-});
-
-// Network Simulator Toggle
-const toggleNetworkBtn = document.getElementById('toggleNetworkBtn');
-const networkBanner = document.getElementById('networkBanner');
-const networkStatusText = document.getElementById('networkStatusText');
-const bannerTitle = document.getElementById('bannerTitle');
-const bannerDesc = document.getElementById('bannerDesc');
-
-toggleNetworkBtn.addEventListener('click', async () => {
-  isOnline = !isOnline;
-  if (isOnline) {
-    toggleNetworkBtn.className = 'btn-network online';
-    networkStatusText.textContent = 'Simulador: EN LÍNEA';
-    networkBanner.className = 'status-banner banner-online';
-    bannerTitle.textContent = 'Conexión Activa';
-    bannerDesc.textContent = 'Los datos se persisten en IndexedDB y se sincronizan en segundo plano vía Outbox.';
-    await processOutboxSync();
-    renderOutboxTable();
-  } else {
-    toggleNetworkBtn.className = 'btn-network offline';
-    networkStatusText.textContent = 'Simulador: FUERA DE LÍNEA';
-    networkBanner.className = 'status-banner banner-offline';
-    bannerTitle.textContent = 'Modo Fuera de Línea (Offline)';
-    bannerDesc.textContent = 'Sin conexión. Todas las mutaciones se almacenan localmente en la cola Outbox.';
-  }
-});
-
-document.getElementById('btnSyncNow').addEventListener('click', async () => {
-  if (!isOnline) {
-    alert('El simulador está en modo FUERA DE LÍNEA. Cambie a EN LÍNEA para sincronizar.');
-    return;
-  }
-  const count = await processOutboxSync();
-  renderOutboxTable();
-  alert(`✓ Se sincronizaron ${count} operaciones de la cola.`);
-});
-
-// Tabs
-document.querySelectorAll('.nav-tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.nav-tab-btn').forEach((b) => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
-
-    btn.classList.add('active');
-    const tabId = btn.getAttribute('data-tab');
-    document.getElementById(`tab-${tabId}`)?.classList.add('active');
-  });
 });
 
 // Inicializar al cargar

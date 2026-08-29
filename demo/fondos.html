@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contraloría y Fondos • SIGA-Comunitario</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="module-placeholder-card">
+      <div class="placeholder-icon">🏛️</div>
+      <span class="placeholder-badge">Próximo en el Pipeline: Módulo 4</span>
+      <h2 style="font-size: 1.5rem; font-weight: 800; color: #0f172a; margin: 12px 0 8px;">
+        4. Contraloría y Destino de Fondos (Libro Mayor 3 Columnas)
+      </h2>
+      <p style="color: #64748b; max-width: 620px; line-height: 1.6; margin-bottom: 20px;">
+        Estructura estricta de 3 Columnas (Ingresos, Egresos, Saldo) para los 6 fondos comunitarios: Padre/Parroquia ($2), Mantenimiento/Operación ($4), Lector ($0.50), Mortuorio ($0.50), Pro-mejoras y Multas.
+      </p>
+      <div style="display: flex; gap: 0.75rem;">
+        <a href="socios.html" class="btn btn-secondary">⬅️ Padrón de Socios (M1)</a>
+        <a href="lecturas.html" class="btn btn-primary">⏱️ Toma de Lecturas (M2)</a>
+      </div>
+    </div>
+  </div>
+  <script type="module">
+    import { requireAuth } from './auth.js';
+    import { injectAppLayout } from './shared-layout.js';
+    const user = requireAuth(['ADMIN', 'CAJERO']);
+    if (user) injectAppLayout('fondos');
+  </script>
+</body>
+</html>
