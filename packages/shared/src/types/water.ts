@@ -1,18 +1,43 @@
-﻿export interface ClienteAgua {
-  id: string; // UUIDv4 o CUID generado localmente
-  codigoCliente: string; // Ej: "SEC-01-045"
+export type EstadoServicio = 'ACTIVO' | 'SUSPENDIDO' | 'CORTADO';
+export type EstadoCuenta = 'AL_DIA' | 'EN_MORA';
+
+export interface Sector {
+  id: string;
+  nombre: string;
+  codigo: string;
+  descripcion?: string;
+}
+
+export interface SocioAgua {
+  id: string; // UUIDv4
+  codigoSocio: string; // Ej: "SEC-01-045"
+  nombres: string;
+  apellidos: string;
   nombreCompleto: string;
-  identificacion: string;
-  telefono?: string;
-  direccion: string;
+  cedulaRuc: string;
+  fechaNacimiento: string; // "YYYY-MM-DD"
+  edadCalculada: number;
+  esTerceraEdad: boolean; // >= 65 años -> true ($5.00), else false ($7.00)
+  fechaAfiliacion: string; // "YYYY-MM-DD"
   sectorId: string;
-  tarifaId: string;
-  medidorNumero: string;
-  estado: 'ACTIVO' | 'SUSPENDIDO' | 'INACTIVO';
+  nombreSector?: string;
+  direccion?: string;
+  telefono?: string;
+  medidorNumero?: string;
+  tieneAlcantarillado: boolean; // +$1.00/mes
+  estadoServicio: EstadoServicio;
+  estadoCuenta: EstadoCuenta;
+  mesesAdeudados: number;
+  montoTotalAdeudado: number;
+  fechaDeudaAntigua?: string;
+  tarifaBaseMensual: number; // 7.00 o 5.00 (+1.00 si tiene alcantarillado)
   createdAt: string; // ISO 8601
   updatedAt: string;
   version: number;
 }
+
+// Alias de compatibilidad
+export type ClienteAgua = SocioAgua;
 
 export interface LecturaMedidor {
   id: string;
@@ -60,3 +85,13 @@ export interface TarifaAgua {
   costoM3Exceso: number;
   activo: boolean;
 }
+
+export const TARIFAS_CONFIG = {
+  BASE_NORMAL: 7.00,
+  BASE_TERCERA_EDAD: 5.00,
+  RECARGO_ALCANTARILLADO: 1.00,
+  EXCEDENTE_POR_M3: 0.10,
+  LIMITE_BASE_M3: 30,
+  EDAD_TERCERA_EDAD: 65,
+} as const;
+
