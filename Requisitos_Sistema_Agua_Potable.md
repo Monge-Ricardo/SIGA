@@ -162,11 +162,11 @@ Cada pago de cuota básica normal de $7.00 se fracciona automáticamente al mome
 
 ## 4. ROLES DE USUARIO Y PERMISOS
 
-| Rol | Pantallas y Acceso Permitido | Restricciones |
+| Rol | Pantallas y Acceso Permitido | Responsabilidades y Restricciones |
 | :--- | :--- | :--- |
-| **Rol Lector** | Captura de lectura actual por sector; vista de lectura anterior y nombres de socio. | Sin acceso a montos de dinero, reportes contables ni cobro en caja. |
-| **Rol Cobrador / Tesorero** | Módulo de Cobros en Caja, Emisión de comprobantes, Gestión de Socios, Registro de Ingresos/Egresos. | No puede alterar lecturas históricas cerradas sin autorización. |
-| **Rol Administrador / Directiva** | Control total: Configuración de tarifas, Cierre mensual, Informes trimestrales/semestrales/anuales, Auditoría y Contraloría. | Acceso completo. |
+| **Rol Lector** | Captura rápida de lectura actual por sector; visualización de número de medidor, nombres del socio y lectura anterior. | **Restringido:** Sin acceso a montos de dinero, emisión de facturas, cobros en caja ni reportes contables. |
+| **Rol Cobrador / Tesorero (Operador Integral)** | **Manejo Integral del Sistema:**<br>• Gestión de Padrón de Socios (altas, bajas lógicas, edición, historial de cuenta corriente).<br>• Consulta y gestión de lecturas de micromedición.<br>• Facturación, Liquidación y Cobros en Caja (emisión de comprobantes/recibos).<br>• Gestión de Fondos Comunitarios en 3 Columnas (registro de ingresos automáticos y registro de egresos autorizados con comprobantes).<br>• Generación y consulta de **TODOS los Reportes e Informes** (mensuales, trimestrales, semestrales, anuales, morosidad/cartera vencida, reportes por sector y libro mayor de contraloría). | No puede modificar la configuración global de tarifas ni gestionar cuentas de usuario sin rol de administrador. No altera lecturas históricas de períodos cerrados sin autorización. |
+| **Rol Administrador / Directiva (Gobernanza y Configuración)** | **Gobernanza y Parámetros del Sistema:**<br>• Gestión de Usuarios del Sistema (creación, edición y asignación de roles: lectores, cajeros/tesoreros, administradores).<br>• Configuración de Tarifas y Reglas (tarifa normal $7.00, 3ra edad $5.00, límite base 30 m³, excedente $0.10/m³, recargo alcantarillado $1.00, porcentajes/montos de distribución de fondos).<br>• Cierre oficial de períodos mensuales y reaperturas excepcionales.<br>• Auditoría general del sistema y configuración de persistencia/sincronización con Supabase. | Enfoque exclusivo en gobernanza, configuración tarifaria y administración de accesos. |
 
 ---
 

@@ -1,7 +1,6 @@
-﻿import { Router } from 'express';
-import { handleBatchSync } from '../controllers/syncController.js';
+import { Router } from '../core/http.ts';
+import { handleBatchSync } from '../controllers/syncController.ts';
 
-export const syncRouter = Router();
+export const syncRouter = new Router();
 
-// Endpoint central para recibir lote de mutaciones Outbox
-syncRouter.post('/sync', handleBatchSync);
+syncRouter.post('/', handleBatchSync);

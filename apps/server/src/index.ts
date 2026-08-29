@@ -1,25 +1,28 @@
-﻿import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import compression from 'compression';
-import { apiRouter } from './routes/apiRoutes.js';
-import { errorHandler } from './middlewares/errorHandler.js';
-import { centralDb } from './db/connection.js';
+import './core/env.ts';
+import { express } from './core/http.ts';
+import { apiRouter } from './routes/apiRoutes.ts';
+import { errorHandler } from './middlewares/errorHandler.ts';
+import { centralDb } from './db/connection.ts';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Middlewares de seguridad y optimización de ancho de banda
-app.use(helmet());
-app.use(compression());
-app.use(cors());
-app.use(express.json({ limit: '2mb' }));
-
+app.setErrorHandler(errorHandler);
 app.use('/api/v1', apiRouter);
-app.use(errorHandler);
+
+app.get('/', (_req, res) => {
+  res.json({
+    sistema: 'Sistema de Gestión de Agua Potable y Alcantarillado Comunitario (SIGA-Comunitario)',
+    version: '1.0.0',
+    documentacion_api: '/api/v1/health',
+    entorno: process.env.NODE_ENV || 'development',
+    supabaseConectado: centralDb.cloud.isEnabled()
+  });
+});
 
 centralDb.connect().then(() => {
   app.listen(PORT, () => {
-    console.log(`🚀 [Server] Backend Offline-First escuchando en http://localhost:${PORT}`);
+    console.log(`🚀 [Server] SIGA-Comunitario Backend escuchando en http://localhost:${PORT}`);
+    console.log(`📡 [API] Endpoints base listos en http://localhost:${PORT}/api/v1`);
   });
 });

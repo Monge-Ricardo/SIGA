@@ -1,0 +1,547 @@
+{
+  "info": {
+    "name": "SIGA-Comunitario API",
+    "_postman_id": "c1f7a8b2-4d29-4a92-93cb-98f5a6b7e012",
+    "description": "Colección de pruebas REST para el Sistema de Gestión de Agua Potable y Alcantarillado Comunitario (SIGA-Comunitario) con soporte Offline-First, SQLite y Supabase.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Autenticación (Auth)",
+      "item": [
+        {
+          "name": "Login - Cajero / Tesorero (Operador Principal)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.environment.set('jwtToken', json.token);",
+                  "  console.log('jwtToken guardado:', json.token);",
+                  "}",
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Usuario tiene rol CAJERO', () => pm.expect(json.usuario.rol).to.eql('CAJERO'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"cajero\",\n  \"password\": \"Cajero123*\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Login - Administrador (Gobernanza)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "  pm.environment.set('adminToken', json.token);",
+                  "  pm.environment.set('jwtToken', json.token);",
+                  "}",
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"Admin123*\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Login - Lector (Micromedición)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) pm.environment.set('lectorToken', json.token);",
+                  "pm.test('Status code is 200', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"lector\",\n  \"password\": \"Lector123*\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Consultar Perfil (Me)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
+          }
+        },
+        {
+          "name": "Registrar Usuario (Admin Only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"nuevo_cajero\",\n  \"password\": \"ClaveSegura2026*\",\n  \"nombreCompleto\": \"Carlos Asistente Tesorería\",\n  \"rol\": \"CAJERO\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Gobernanza y Tarifas (Admin)",
+      "item": [
+        {
+          "name": "Consultar Configuración de Tarifas",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/tarifas", "host": ["{{baseUrl}}"], "path": ["admin", "tarifas"] }
+          }
+        },
+        {
+          "name": "Actualizar Tarifas (Admin Only)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cargoFijoNormal\": 7.00,\n  \"cargoFijoTerceraEdad\": 5.00,\n  \"limiteBaseM3\": 30.00,\n  \"costoExcedenteM3\": 0.10,\n  \"recargoAlcantarillado\": 1.00\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/tarifas", "host": ["{{baseUrl}}"], "path": ["admin", "tarifas"] }
+          }
+        },
+        {
+          "name": "Listar Usuarios del Sistema",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/usuarios", "host": ["{{baseUrl}}"], "path": ["admin", "usuarios"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Sectores Geográficos",
+      "item": [
+        {
+          "name": "Listar Sectores",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.length > 0) {",
+                  "  pm.environment.set('sectorId', json.data[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/sectores", "host": ["{{baseUrl}}"], "path": ["sectores"] }
+          }
+        },
+        {
+          "name": "Crear Nuevo Sector",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigoSector\": \"SEC-04\",\n  \"nombreSector\": \"Sector Bellavista\",\n  \"descripcion\": \"Zona alta de expansión\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sectores", "host": ["{{baseUrl}}"], "path": ["sectores"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Padrón de Socios (Cajero / Tesorero)",
+      "item": [
+        {
+          "name": "Listar Todos los Socios",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.length > 0) {",
+                  "  pm.environment.set('socioId', json.data[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/socios", "host": ["{{baseUrl}}"], "path": ["socios"] }
+          }
+        },
+        {
+          "name": "Registrar Socio Normal (<65 años)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data) {",
+                  "  pm.environment.set('socioId', json.data.id);",
+                  "  pm.test('Socio no es 3ra edad', () => pm.expect(json.data.esTerceraEdad).to.eql(false));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombres\": \"José\",\n  \"apellidos\": \"Luna\",\n  \"cedulaRuc\": \"1710034065\",\n  \"fechaNacimiento\": \"1984-05-15\",\n  \"idSector\": \"SEC-01\",\n  \"medidorNumero\": \"MED-2026-001\",\n  \"tieneAlcantarillado\": true,\n  \"telefono\": \"0998765432\",\n  \"direccion\": \"Sector Centro Calle Principal #45\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/socios", "host": ["{{baseUrl}}"], "path": ["socios"] }
+          }
+        },
+        {
+          "name": "Registrar Socio 3ra Edad (>=65 años)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data) {",
+                  "  pm.test('Socio calculado como 3ra edad', () => pm.expect(json.data.esTerceraEdad).to.eql(true));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombres\": \"Manuel\",\n  \"apellidos\": \"Guamán\",\n  \"cedulaRuc\": \"0102938475\",\n  \"fechaNacimiento\": \"1952-11-20\",\n  \"idSector\": \"SEC-01\",\n  \"medidorNumero\": \"MED-2026-002\",\n  \"tieneAlcantarillado\": false,\n  \"direccion\": \"Sector Centro Pasaje A\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/socios", "host": ["{{baseUrl}}"], "path": ["socios"] }
+          }
+        },
+        {
+          "name": "Consultar Estado de Cuenta del Socio (Meses en Mora)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/socios/{{socioId}}/estado-cuenta", "host": ["{{baseUrl}}"], "path": ["socios", "{{socioId}}", "estado-cuenta"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Períodos y Micromedición (Lecturas)",
+      "item": [
+        {
+          "name": "Listar Períodos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.length > 0) {",
+                  "  pm.environment.set('periodoId', json.data[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/periodos", "host": ["{{baseUrl}}"], "path": ["periodos"] }
+          }
+        },
+        {
+          "name": "Registrar Toma de Lectura (L_act >= L_ant)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Status code is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Consumo calculado correctamente (45m3)', () => pm.expect(json.data.consumoTotal).to.eql(45));",
+                  "pm.test('Excedente calculado (>30m3 -> 15m3)', () => pm.expect(json.data.excedenteM3).to.eql(15));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idSocio\": \"{{socioId}}\",\n  \"lecturaAnterior\": 150,\n  \"lecturaActual\": 195,\n  \"observaciones\": \"Toma sin anomalías\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/lecturas", "host": ["{{baseUrl}}"], "path": ["lecturas"] }
+          }
+        },
+        {
+          "name": "Listar Lecturas por Sector y Período",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/lecturas", "host": ["{{baseUrl}}"], "path": ["lecturas"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Facturación y Cobros en Caja",
+      "item": [
+        {
+          "name": "Registrar Multa por Minga / Cuota Extra",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idSocio\": \"{{socioId}}\",\n  \"tipoRubro\": \"MINGA\",\n  \"monto\": 3.00,\n  \"motivo\": \"Inasistencia a minga de limpieza de captación\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/multas", "host": ["{{baseUrl}}"], "path": ["multas"] }
+          }
+        },
+        {
+          "name": "Liquidar Factura Mensual del Socio",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data) {",
+                  "  pm.environment.set('facturaId', json.data.id);",
+                  "  pm.test('Base es $7.00', () => pm.expect(json.data.valorBase).to.eql(7));",
+                  "  pm.test('Excedente 15m3 * $0.10 = $1.50', () => pm.expect(json.data.valorExcedente).to.eql(1.5));",
+                  "  pm.test('Alcantarillado = $1.00', () => pm.expect(json.data.valorAlcantarillado).to.eql(1));",
+                  "  pm.test('Multa = $3.00', () => pm.expect(json.data.valorMultas).to.eql(3));",
+                  "  pm.test('Total mes = $9.50', () => pm.expect(json.data.totalMes).to.eql(9.5));",
+                  "  pm.test('Total pagar = $12.50', () => pm.expect(json.data.totalPagar).to.eql(12.5));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idSocio\": \"{{socioId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/facturas/liquidar", "host": ["{{baseUrl}}"], "path": ["facturas", "liquidar"] }
+          }
+        },
+        {
+          "name": "Cobrar Factura en Caja (Efectivo / Transferencia)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "pm.test('Factura marcada como PAGADO', () => pm.expect(json.data.estadoPago).to.eql('PAGADO'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metodoPago\": \"EFECTIVO\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/facturas/{{facturaId}}/cobrar", "host": ["{{baseUrl}}"], "path": ["facturas", "{{facturaId}}", "cobrar"] }
+          }
+        },
+        {
+          "name": "Listar Facturas Emitidas",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/facturas", "host": ["{{baseUrl}}"], "path": ["facturas"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Contraloría y Libro Mayor (3 Columnas)",
+      "item": [
+        {
+          "name": "Consultar Catálogo de 7 Fondos",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/fondos", "host": ["{{baseUrl}}"], "path": ["fondos"] }
+          }
+        },
+        {
+          "name": "Libro Mayor de Fondos (3 Columnas: +, -, =)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/fondos/libro-mayor", "host": ["{{baseUrl}}"], "path": ["fondos", "libro-mayor"] }
+          }
+        },
+        {
+          "name": "Registrar Egreso con Comprobante",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idFondo\": \"OPERACION_MANT\",\n  \"concepto\": \"Compra de tubería PVC 2 pulgadas para reparación de fuga\",\n  \"monto\": 25.00,\n  \"numeroComprobante\": \"FAC-PROV-00123\",\n  \"beneficiario\": \"Ferretería El Constructor\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/fondos/egresos", "host": ["{{baseUrl}}"], "path": ["fondos", "egresos"] }
+          }
+        },
+        {
+          "name": "Balance General de Fondos Comunitarios",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/fondos/balance", "host": ["{{baseUrl}}"], "path": ["fondos", "balance"] }
+          }
+        },
+        {
+          "name": "Control y Liquidación del Fondo del Padre (Parroquia)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/fondos/liquidacion-padre", "host": ["{{baseUrl}}"], "path": ["fondos", "liquidacion-padre"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Reportes y Auditoría",
+      "item": [
+        {
+          "name": "Reporte de Morosidad y Cartera Vencida",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/reportes/morosidad", "host": ["{{baseUrl}}"], "path": ["reportes", "morosidad"] }
+          }
+        },
+        {
+          "name": "Reporte Consolidado por Sector Geográfico",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/reportes/por-sector", "host": ["{{baseUrl}}"], "path": ["reportes", "por-sector"] }
+          }
+        },
+        {
+          "name": "Informe General de Gestión Comunitaria",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwtToken}}" }],
+            "url": { "raw": "{{baseUrl}}/reportes/consolidado", "host": ["{{baseUrl}}"], "path": ["reportes", "consolidado"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Sincronización Offline-First (Outbox Batch)",
+      "item": [
+        {
+          "name": "POST /api/v1/sync (Lote de Mutaciones Offline)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwtToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientId\": \"terminal-caja-pwa-01\",\n  \"lastSyncTimestamp\": \"2026-08-29T12:00:00.000Z\",\n  \"mutations\": [\n    {\n      \"id\": \"mut-001\",\n      \"entity\": \"clientes\",\n      \"entityId\": \"soc-sync-01\",\n      \"action\": \"CREATE\",\n      \"payload\": {\n        \"codigoSocio\": \"SOC-SYNC-99\",\n        \"nombres\": \"Fausto\",\n        \"apellidos\": \"Morales\",\n        \"cedulaRuc\": \"0102938475\",\n        \"fechaNacimiento\": \"1980-01-01\",\n        \"idSector\": \"SEC-01\",\n        \"medidorNumero\": \"MED-SYNC-99\",\n        \"tieneAlcantarillado\": true,\n        \"direccion\": \"Sector La Loma\"\n      },\n      \"localTimestamp\": \"2026-08-29T17:30:00.000Z\",\n      \"status\": \"PENDING\",\n      \"retryCount\": 0,\n      \"version\": 1\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sync", "host": ["{{baseUrl}}"], "path": ["sync"] }
+          }
+        }
+      ]
+    }
+  ]
+}

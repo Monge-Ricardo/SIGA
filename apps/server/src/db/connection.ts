@@ -1,26 +1,27 @@
-﻿/**
- * Conector de Base de Datos Central (PostgreSQL / SQLite para desarrollo)
- */
-export interface CentralDBConfig {
-  connectionString?: string;
-  maxConnections: number;
-}
+import { sqliteDb, SQLiteDatabase } from './sqlite.ts';
+import { supabaseClient, SupabaseClient } from './supabase.ts';
 
 export class CentralDatabase {
   private isConnected = false;
+  public local: SQLiteDatabase = sqliteDb;
+  public cloud: SupabaseClient = supabaseClient;
 
   public async connect(): Promise<void> {
-    console.log('[CentralDB] Conectando a base de datos central de sincronización...');
+    console.log('[CentralDB] Inicializando motor de base de datos dual (SQLite Local + Supabase)...');
     this.isConnected = true;
   }
 
   public async disconnect(): Promise<void> {
-    console.log('[CentralDB] Desconectado de base de datos.');
+    console.log('[CentralDB] Cerrando conexiones de base de datos.');
     this.isConnected = false;
   }
 
-  public getStatus(): boolean {
-    return this.isConnected;
+  public getStatus(): { isConnected: boolean; local: boolean; cloud: boolean } {
+    return {
+      isConnected: this.isConnected,
+      local: true,
+      cloud: this.cloud.isEnabled()
+    };
   }
 }
 

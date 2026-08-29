@@ -1,10 +1,17 @@
-﻿export type RolUsuario = 'ADMIN' | 'CAJERO' | 'LECTOR' | 'AUDITOR';
+export type RolUsuario = 'ADMIN' | 'CAJERO' | 'LECTOR' | 'AUDITOR';
 
 export interface Usuario {
   id: string;
-  nombre: string;
-  email: string;
+  username: string;
+  nombreCompleto: string;
   rol: RolUsuario;
   activo: boolean;
-  ultimoAccesoOffline?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthSession {
+  token: string;
+  expiresIn: string;
+  usuario: Usuario;
 }

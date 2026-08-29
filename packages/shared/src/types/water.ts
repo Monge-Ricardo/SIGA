@@ -1,62 +1,142 @@
-﻿export interface ClienteAgua {
-  id: string; // UUIDv4 o CUID generado localmente
-  codigoCliente: string; // Ej: "SEC-01-045"
-  nombreCompleto: string;
-  identificacion: string;
+export type EstadoSocio = 'ACTIVO' | 'SUSPENDIDO' | 'CORTADO';
+
+export interface Socio {
+  id: string; // UUIDv4
+  codigoSocio: string; // Ej: "SOC-0012"
+  nombres: string;
+  apellidos: string;
+  cedulaRuc: string;
+  fechaNacimiento: string; // "YYYY-MM-DD"
+  esTerceraEdad?: boolean; // Calculado dinámicamente: edad >= 65
+  fechaUnion: string; // "YYYY-MM-DD"
+  idSector: string;
+  nombreSector?: string;
+  medidorNumero: string;
+  tieneAlcantarillado: boolean; // Recargo +$1.00/mes
   telefono?: string;
   direccion: string;
-  sectorId: string;
-  tarifaId: string;
-  medidorNumero: string;
-  estado: 'ACTIVO' | 'SUSPENDIDO' | 'INACTIVO';
-  createdAt: string; // ISO 8601
-  updatedAt: string;
+  estado: EstadoSocio;
   version: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface LecturaMedidor {
+// Alias para compatibilidad con cliente existente
+export type ClienteAgua = Socio;
+
+export interface Sector {
   id: string;
-  clienteId: string;
-  periodo: string; // "YYYY-MM"
+  codigoSector: string;
+  nombreSector: string;
+  descripcion?: string;
+  activo: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type EstadoPeriodo = 'ABIERTO' | 'CERRADO' | 'FACTURADO';
+
+export interface Periodo {
+  id: string;
+  periodoCodigo: string; // "YYYY-MM"
+  nombre: string; // "Agosto 2026"
+  fechaInicio: string;
+  fechaFin: string;
+  estado: EstadoPeriodo;
+  createdAt: string;
+}
+
+export interface Lectura {
+  id: string;
+  idSocio: string;
+  idPeriodo: string;
   lecturaAnterior: number;
   lecturaActual: number;
-  consumoM3: number;
+  consumoTotal: number; // lecturaActual - lecturaAnterior
+  excedenteM3: number; // max(0, consumoTotal - 30)
   fechaLectura: string;
-  lectorResponsableId: string;
+  idLector: string;
   observaciones?: string;
-  fotoMedidorUrl?: string; // Cache local / blob encolado
+  fotoMedidorUrl?: string;
+  version: number;
   createdAt: string;
   updatedAt: string;
-  version: number;
 }
 
-export interface CobroRecibo {
+// Alias para compatibilidad
+export type LecturaMedidor = Lectura;
+
+export type TipoMultaRubro = 'MINGA' | 'ASAMBLEA' | 'RECONEXION' | 'CUOTA_EXTRA' | 'OTRO';
+
+export interface MultaRubro {
   id: string;
-  numeroRecibo: string;
-  clienteId: string;
-  lecturaId?: string;
-  periodo: string; // "YYYY-MM"
-  montoBase: number;
-  montoExceso: number;
-  montoMora: number;
-  montoOtros: number;
-  montoTotal: number;
-  estado: 'PENDIENTE' | 'PAGADO' | 'ANULADO';
+  idSocio: string;
+  idPeriodo?: string;
+  tipoRubro: TipoMultaRubro;
+  monto: number;
+  motivo: string;
+  pagado: boolean;
+  idFactura?: string;
+  createdAt: string;
+}
+
+export type EstadoPagoFactura = 'PENDIENTE' | 'PAGADO' | 'ANULADO';
+export type MetodoPago = 'EFECTIVO' | 'TRANSFERENCIA' | 'MOVIL';
+
+export interface Factura {
+  id: string;
+  numeroFactura: string; // Ej: "FAC-2026-0001"
+  idSocio: string;
+  socioNombre?: string;
+  socioCedula?: string;
+  idPeriodo: string;
+  periodoCodigo?: string;
+  idLectura?: string;
+  esTerceraEdad: boolean;
+  valorBase: number; // $7.00 o $5.00
+  consumoM3: number;
+  excedenteM3: number;
+  valorExcedente: number; // excedenteM3 * $0.10
+  valorAlcantarillado: number; // $1.00 o $0.00
+  valorMultas: number;
+  valorDeudaAnterior: number;
+  totalMes: number; // valorBase + valorExcedente + valorAlcantarillado
+  totalPagar: number; // totalMes + valorMultas + valorDeudaAnterior
+  estadoPago: EstadoPagoFactura;
   fechaVencimiento: string;
   fechaPago?: string;
-  metodoPago?: 'EFECTIVO' | 'TRANSFERENCIA' | 'MOVIL';
-  cajeroResponsableId?: string;
-  movimientoCajaId?: string;
+  metodoPago?: MetodoPago;
+  idCajero?: string;
+  version: number;
   createdAt: string;
   updatedAt: string;
-  version: number;
 }
 
-export interface TarifaAgua {
+// Alias para compatibilidad
+export type CobroRecibo = Factura;
+
+export interface TarifaConfig {
   id: string;
-  nombre: string;
-  cargoFijoBase: number;
-  limiteBaseM3: number;
-  costoM3Exceso: number;
+  cargoFijoNormal: number; // $7.00
+  cargoFijoTerceraEdad: number; // $5.00
+  limiteBaseM3: number; // 30.00 m³
+  costoExcedenteM3: number; // $0.10
+  recargoAlcantarillado: number; // $1.00
+  repartoNormalPadre: number; // $2.00
+  repartoNormalOperacion: number; // $4.00
+  repartoNormalLector: number; // $0.50
+  repartoNormalMortuorio: number; // $0.50
   activo: boolean;
+  createdAt: string;
+}
+
+export interface EstadoCuentaSocio {
+  socio: Socio;
+  alDia: boolean;
+  mesesAdeudados: number;
+  deudaTotalPendiente: number;
+  fechaDeudaMasAntigua?: string;
+  facturasPendientes: Factura[];
+  multasPendientes: MultaRubro[];
+  historialFacturas: Factura[];
 }
