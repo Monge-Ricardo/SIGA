@@ -1,4 +1,6 @@
 import http, { IncomingMessage, ServerResponse } from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export interface Request extends IncomingMessage {
   path: string;
@@ -23,13 +25,29 @@ interface Route {
   handlers: Handler[];
 }
 
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf'
+};
+
 export class Router {
   public routes: Route[] = [];
   public middlewares: { prefix: string; handlers: Handler[] }[] = [];
 
-  private addRoute(method: string, path: string, ...handlers: Handler[]): this {
+  private addRoute(method: string, pathStr: string, ...handlers: Handler[]): this {
     const paramNames: string[] = [];
-    const normalizedPath = path.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+    const normalizedPath = pathStr.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
 
     const regexStr = '^' + normalizedPath
       .replace(/:([a-zA-Z0-9_]+)/g, (_match, paramName) => {
@@ -47,24 +65,24 @@ export class Router {
     return this;
   }
 
-  public get(path: string, ...handlers: Handler[]): this {
-    return this.addRoute('GET', path, ...handlers);
+  public get(pathStr: string, ...handlers: Handler[]): this {
+    return this.addRoute('GET', pathStr, ...handlers);
   }
 
-  public post(path: string, ...handlers: Handler[]): this {
-    return this.addRoute('POST', path, ...handlers);
+  public post(pathStr: string, ...handlers: Handler[]): this {
+    return this.addRoute('POST', pathStr, ...handlers);
   }
 
-  public put(path: string, ...handlers: Handler[]): this {
-    return this.addRoute('PUT', path, ...handlers);
+  public put(pathStr: string, ...handlers: Handler[]): this {
+    return this.addRoute('PUT', pathStr, ...handlers);
   }
 
-  public patch(path: string, ...handlers: Handler[]): this {
-    return this.addRoute('PATCH', path, ...handlers);
+  public patch(pathStr: string, ...handlers: Handler[]): this {
+    return this.addRoute('PATCH', pathStr, ...handlers);
   }
 
-  public delete(path: string, ...handlers: Handler[]): this {
-    return this.addRoute('DELETE', path, ...handlers);
+  public delete(pathStr: string, ...handlers: Handler[]): this {
+    return this.addRoute('DELETE', pathStr, ...handlers);
   }
 
   public use(prefixOrHandler: string | Handler | Router, ...handlersOrRouter: (Handler | Router)[]): this {
@@ -99,10 +117,18 @@ export class Router {
 
 export class ExpressApp extends Router {
   private server: http.Server | null = null;
+  private staticDirs: string[] = [];
   private errorHandler: (err: Error, req: Request, res: Response, next?: any) => void = (err, _req, res) => {
     console.error('[HTTP Server Error]', err);
     res.status(500).json({ error: 'Error interno del servidor.', message: err.message });
   };
+
+  public serveStatic(dirPath: string): this {
+    if (fs.existsSync(dirPath)) {
+      this.staticDirs.push(dirPath);
+    }
+    return this;
+  }
 
   public setErrorHandler(handler: (err: Error, req: Request, res: Response, next?: any) => void): void {
     this.errorHandler = handler;
@@ -137,7 +163,7 @@ export class ExpressApp extends Router {
         }
       };
 
-      // Headers de seguridad (Helmet equivalent) y CORS
+      // Headers de seguridad y CORS
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('X-XSS-Protection', '1; mode=block');
@@ -162,6 +188,32 @@ export class ExpressApp extends Router {
       });
       req.query = queryObj;
       req.params = {};
+
+      // 1. Manejo de Archivos Estáticos Frontend si es GET
+      if (req.method === 'GET' && !req.path.startsWith('/api/')) {
+        for (const dir of this.staticDirs) {
+          let relativeFilePath = req.path === '/' ? 'login.html' : req.path.replace(/^\//, '');
+          let filePath = path.join(dir, relativeFilePath);
+
+          if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            const ext = path.extname(filePath).toLowerCase();
+            const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+            res.setHeader('Content-Type', contentType);
+            fs.createReadStream(filePath).pipe(res);
+            return;
+          }
+
+          // Intento fallback con .html
+          if (!path.extname(filePath)) {
+            const htmlPath = `${filePath}.html`;
+            if (fs.existsSync(htmlPath) && fs.statSync(htmlPath).isFile()) {
+              res.setHeader('Content-Type', 'text/html; charset=utf-8');
+              fs.createReadStream(htmlPath).pipe(res);
+              return;
+            }
+          }
+        }
+      }
 
       // Parsear Body si es POST/PUT/PATCH
       if (['POST', 'PUT', 'PATCH'].includes(req.method || '')) {
