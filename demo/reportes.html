@@ -5,29 +5,272 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Reportes y Auditoría • SIGA-Comunitario</title>
   <link rel="stylesheet" href="styles.css" />
+  <style>
+    .reports-tabs {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 2px solid #e2e8f0;
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.25rem;
+    }
+    .report-tab-btn {
+      padding: 0.65rem 1.25rem;
+      border-radius: 6px 6px 0 0;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-bottom: none;
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: #64748b;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: all 0.15s;
+    }
+    .report-tab-btn.active {
+      background: #ffffff;
+      color: #0284c7;
+      border-color: #0284c7;
+      border-bottom: 2px solid #ffffff;
+      margin-bottom: -2px;
+    }
+    .kpi-cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .kpi-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 1.25rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .kpi-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+    }
+    .kpi-value {
+      font-size: 1.6rem;
+      font-weight: 900;
+      color: #0f172a;
+      margin-top: 0.35rem;
+    }
+    @media print {
+      .app-header, .app-nav, .status-banner, .reports-tabs, .btn, .no-print {
+        display: none !important;
+      }
+      body {
+        background: white !important;
+        color: black !important;
+        font-size: 12pt;
+      }
+      .card {
+        box-shadow: none !important;
+        border: 1px solid #000 !important;
+      }
+    }
+  </style>
 </head>
 <body>
   <div class="container">
-    <div class="module-placeholder-card">
-      <div class="placeholder-icon">📊</div>
-      <span class="placeholder-badge">Próximo en el Pipeline: Módulo 5</span>
-      <h2 style="font-size: 1.5rem; font-weight: 800; color: #0f172a; margin: 12px 0 8px;">
-        5. Reportes, Consultas y Auditoría
-      </h2>
-      <p style="color: #64748b; max-width: 620px; line-height: 1.6; margin-bottom: 20px;">
-        Generación de informes mensuales, trimestrales, semestrales y anuales. Reportes de Cartera Vencida por sector y liquidación de entrega al Padre.
-      </p>
-      <div style="display: flex; gap: 0.75rem;">
-        <a href="socios.html" class="btn btn-secondary">⬅️ Padrón de Socios (M1)</a>
-        <a href="lecturas.html" class="btn btn-primary">⏱️ Toma de Lecturas (M2)</a>
+    <!-- Header de Módulo -->
+    <div class="module-header" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.4rem; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 0.5rem;">
+          <span>📊</span> Módulo 5: Reportes, Consultas y Auditoría
+        </h2>
+        <p style="font-size: 0.85rem; color: #64748b; margin-top: 0.25rem;">
+          Informes de Morosidad, Cartera Vencida, Balances por Sector y Rendición de Cuentas para Asambleas
+        </p>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem;" class="no-print">
+        <button class="btn btn-primary" id="btnImprimirReporte">
+          🖨️ Imprimir / Guardar PDF
+        </button>
+        <button class="btn btn-secondary" id="btnRefrescarReportes">
+          🔄 Actualizar Datos
+        </button>
+      </div>
+    </div>
+
+    <!-- Pestañas de Reportes -->
+    <div class="reports-tabs no-print">
+      <button class="report-tab-btn active" data-tab="morosidad">
+        <span>🚨</span> 1. Morosidad y Cartera Vencida
+      </button>
+      <button class="report-tab-btn" data-tab="sectores">
+        <span>📍</span> 2. Consolidado por Sector
+      </button>
+      <button class="report-tab-btn" data-tab="gestion">
+        <span>📑</span> 3. Informe General de Gestión
+      </button>
+    </div>
+
+    <!-- Pestaña 1: Morosidad y Cartera Vencida -->
+    <div id="tabContentMorosidad" class="report-content-panel">
+      <div class="kpi-cards-grid">
+        <div class="kpi-card" style="border-left: 4px solid #ef4444;">
+          <div class="kpi-label">Socios con Deuda Activa</div>
+          <div class="kpi-value" id="kpiTotalMorosos" style="color: #ef4444;">0</div>
+        </div>
+        <div class="kpi-card" style="border-left: 4px solid #f97316;">
+          <div class="kpi-label">Monto Total en Mora</div>
+          <div class="kpi-value" id="kpiMontoMora">$0.00</div>
+        </div>
+        <div class="kpi-card" style="border-left: 4px solid #dc2626;">
+          <div class="kpi-label">Casos para Corte (≥ 3 meses)</div>
+          <div class="kpi-value" id="kpiCasosCorte" style="color: #dc2626;">0</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding: 1.25rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0;">
+            Listado Nominal de Cartera Vencida
+          </h3>
+
+          <div style="display: flex; gap: 0.5rem;" class="no-print">
+            <select id="filtroMesesMora" class="form-control" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1;">
+              <option value="0">Todos los Atrasados (≥ 1 mes)</option>
+              <option value="2">Mora Media (≥ 2 meses)</option>
+              <option value="3">Corte Preventivo Inmediato (≥ 3 meses)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table" id="tablaMorosidad">
+            <thead>
+              <tr>
+                <th>Código / Socio</th>
+                <th>Cédula</th>
+                <th>Sector</th>
+                <th>Medidor</th>
+                <th style="text-align: center;">Meses en Mora</th>
+                <th>Deuda Más Antigua</th>
+                <th style="text-align: right; color: #dc2626;">Total Adeudado</th>
+                <th style="text-align: center;">Estado</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyMorosidad">
+              <tr>
+                <td colspan="8" style="text-align: center; padding: 2rem; color: #64748b;">
+                  Cargando reporte de morosidad...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pestaña 2: Consolidado por Sector -->
+    <div id="tabContentSectores" class="report-content-panel" style="display: none;">
+      <div class="card" style="padding: 1.25rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0 0 1rem 0;">
+          Consolidado Operativo y Financiero por Sector Geográfico
+        </h3>
+
+        <div class="table-responsive">
+          <table class="table" id="tablaPorSector">
+            <thead>
+              <tr>
+                <th>Sector Geográfico</th>
+                <th style="text-align: center;">Total Socios</th>
+                <th style="text-align: right;">Consumo Total (m³)</th>
+                <th style="text-align: right;">Total Facturado ($)</th>
+                <th style="text-align: right; color: #16a34a;">Recaudado en Caja ($)</th>
+                <th style="text-align: right; color: #dc2626;">Cartera Vencida ($)</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyPorSector">
+              <tr>
+                <td colspan="6" style="text-align: center; padding: 2rem; color: #64748b;">
+                  Cargando balance por sectores...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pestaña 3: Informe General de Gestión -->
+    <div id="tabContentGestion" class="report-content-panel" style="display: none;">
+      <div class="card" style="padding: 1.75rem;" id="informeAsambleaBox">
+        <div style="text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 1rem; margin-bottom: 1.5rem;">
+          <h1 style="font-size: 1.5rem; font-weight: 900; margin: 0; color: #0f172a;">
+            JUNTA ADMINISTRADORA DE AGUA POTABLE Y SANEAMIENTO
+          </h1>
+          <p style="font-size: 0.95rem; font-weight: 600; color: #475569; margin: 0.25rem 0 0 0;">
+            INFORME OFICIAL DE GESTIÓN Y RENDICIÓN DE CUENTAS COMUNITARIA
+          </p>
+          <div style="font-size: 0.8rem; color: #64748b; margin-top: 0.25rem;" id="informeFechaEmision">
+            Fecha de Emisión: 2026-08-31
+          </div>
+        </div>
+
+        <div class="kpi-cards-grid" style="margin-bottom: 1.5rem;">
+          <div class="kpi-card">
+            <div class="kpi-label">Padrón de Socios Activos</div>
+            <div class="kpi-value" id="gestionTotalSocios">0</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Ingresos Totales Recaudados</div>
+            <div class="kpi-value" id="gestionTotalIngresos" style="color: #16a34a;">$0.00</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Egresos Ejecutados</div>
+            <div class="kpi-value" id="gestionTotalEgresos" style="color: #dc2626;">$0.00</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Superávit / Saldo Comunitario</div>
+            <div class="kpi-value" id="gestionSaldoNeto" style="color: #0284c7;">$0.00</div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1rem;">
+          <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem;">
+            <h4 style="font-size: 0.95rem; font-weight: 700; color: #1e293b; margin: 0 0 0.75rem 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem;">
+              💧 Desglose de Recaudación por Rubro
+            </h4>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.88rem;" id="desgloseRubrosBox">
+              Cargando rubros...
+            </div>
+          </div>
+
+          <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem;">
+            <h4 style="font-size: 0.95rem; font-weight: 700; color: #1e293b; margin: 0 0 0.75rem 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem;">
+              🏛️ Estado de los 7 Fondos Comunitarios
+            </h4>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.88rem;" id="desgloseFondosBox">
+              Cargando fondos...
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px dashed #cbd5e1; display: flex; justify-content: space-around; text-align: center;">
+          <div>
+            <div style="width: 200px; border-bottom: 1px solid #000; margin-bottom: 0.5rem;"></div>
+            <div style="font-size: 0.85rem; font-weight: 700;">Presidente de la Junta</div>
+            <div style="font-size: 0.75rem; color: #64748b;">Directiva General</div>
+          </div>
+          <div>
+            <div style="width: 200px; border-bottom: 1px solid #000; margin-bottom: 0.5rem;"></div>
+            <div style="font-size: 0.85rem; font-weight: 700;">Tesorero / Recaudador</div>
+            <div style="font-size: 0.75rem; color: #64748b;">Control de Caja y Fondos</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
-  <script type="module">
-    import { requireAuth } from './auth.js';
-    import { injectAppLayout } from './shared-layout.js';
-    const user = requireAuth(['ADMIN', 'CAJERO']);
-    if (user) injectAppLayout('reportes');
-  </script>
+
+  <script type="module" src="reportes.js"></script>
 </body>
 </html>

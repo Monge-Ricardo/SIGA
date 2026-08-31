@@ -71,7 +71,8 @@ export function injectAppLayout(activePageId) {
     { id: 'lecturas', href: 'lecturas.html', icon: '⏱️', label: '2. Toma de Lecturas', roles: ['ADMIN', 'CAJERO', 'LECTOR'] },
     { id: 'caja', href: 'caja.html', icon: '💵', label: '3. Caja y Cobros', roles: ['ADMIN', 'CAJERO'] },
     { id: 'fondos', href: 'fondos.html', icon: '🏛️', label: '4. Fondos (3 Col)', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'reportes', href: 'reportes.html', icon: '📊', label: '5. Reportes & Auditoría', roles: ['ADMIN', 'CAJERO'] }
+    { id: 'reportes', href: 'reportes.html', icon: '📊', label: '5. Reportes & Auditoría', roles: ['ADMIN', 'CAJERO'] },
+    { id: 'admin', href: 'admin.html', icon: '👑', label: '6. Gobernanza & Tarifas', roles: ['ADMIN'] }
   ];
 
   // Filtrar solo los módulos que pertenecen al rol activo
