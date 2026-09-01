@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "app-agua-monorepo",
   "version": "1.0.0",
   "private": true,
@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "start": "node --experimental-strip-types apps/server/src/index.ts",
     "dev": "npm run dev --workspace=@app-agua/client & npm run dev --workspace=@app-agua/server",
     "dev:client": "npm run dev --workspace=@app-agua/client",
     "dev:server": "npm run dev --workspace=@app-agua/server",

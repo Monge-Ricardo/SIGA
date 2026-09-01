@@ -1,5 +1,6 @@
 import './core/env.ts';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { express } from './core/http.ts';
 import { apiRouter } from './routes/apiRoutes.ts';
 import { errorHandler } from './middlewares/errorHandler.ts';
@@ -7,10 +8,12 @@ import { centralDb } from './db/connection.ts';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 app.setErrorHandler(errorHandler);
 
-// Servir la aplicación Web Frontend desde la carpeta demo
+// Servir la aplicación Web Frontend desde la carpeta demo (soporta ejecución desde raíz o subcarpeta)
+app.serveStatic(path.resolve(__dirname, '..', '..', '..', 'demo'));
 app.serveStatic(path.resolve(process.cwd(), 'demo'));
 app.serveStatic(path.resolve(process.cwd(), '..', '..', 'demo'));
 app.serveStatic(path.resolve(process.cwd(), 'apps', 'client', 'public'));
