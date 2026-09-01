@@ -302,7 +302,7 @@ export class ExpressApp extends Router {
     });
 
     const numericPort = typeof port === 'string' ? parseInt(port, 10) : port;
-    this.server.listen(numericPort, callback);
+    this.server.listen(numericPort, '0.0.0.0', callback);
     return this.server;
   }
 }
