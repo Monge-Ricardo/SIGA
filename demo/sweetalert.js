@@ -1,19 +1,10 @@
 /**
- * SIGA-Comunitario • SweetAlert Offline Utility
+ * SIGA-Comunitario • SweetAlert Offline Utility (JavaScript Puro)
  * Soporte 100% Local-First para modales interactivos de alerta y confirmación.
  */
 
 class SweetAlertOffline {
-  public fire(options: {
-    title?: string;
-    text?: string;
-    html?: string;
-    icon?: 'success' | 'error' | 'warning' | 'info' | 'question';
-    showCancelButton?: boolean;
-    confirmButtonText?: string;
-    cancelButtonText?: string;
-    confirmButtonColor?: string;
-  }): Promise<{ isConfirmed: boolean }> {
+  fire(options = {}) {
     return new Promise((resolve) => {
       // Eliminar alerta previa si existe
       document.querySelector('.swal-overlay')?.remove();
@@ -21,7 +12,7 @@ class SweetAlertOffline {
       const overlay = document.createElement('div');
       overlay.className = 'swal-overlay';
 
-      const iconsMap: Record<string, string> = {
+      const iconsMap = {
         success: '✅',
         error: '❌',
         warning: '⚠️',
@@ -53,7 +44,7 @@ class SweetAlertOffline {
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      const cleanup = (isConfirmed: boolean) => {
+      const cleanup = (isConfirmed) => {
         overlay.classList.add('swal-closing');
         setTimeout(() => {
           overlay.remove();
@@ -71,7 +62,7 @@ class SweetAlertOffline {
 }
 
 export const Swal = new SweetAlertOffline();
-// Global window assignment
+
 if (typeof window !== 'undefined') {
-  (window as any).Swal = Swal;
+  window.Swal = Swal;
 }
