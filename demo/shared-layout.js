@@ -27,9 +27,18 @@ export function injectAppLayout(activePageId) {
   const sidebar = document.createElement('aside');
   sidebar.className = 'app-sidebar-left';
 
+  const isCajeroOAdmin = user?.rol === 'CAJERO' || user?.rol === 'ADMIN';
+
   const allMenuItems = [
     { id: 'socios', href: 'socios.html', icon: '👥', label: '1. Padrón de Socios', desc: 'Abonados y 3ra edad', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'lecturas', href: 'lecturas.html', icon: '⏱️', label: '2. Toma de Lecturas', desc: 'Micromedición por sector', roles: ['ADMIN', 'CAJERO', 'LECTOR'] },
+    { 
+      id: 'lecturas', 
+      href: 'lecturas.html', 
+      icon: isCajeroOAdmin ? '📋' : '⏱️', 
+      label: isCajeroOAdmin ? '2. Revisión de Lecturas' : '2. Toma de Lecturas', 
+      desc: isCajeroOAdmin ? 'Auditoría, edición y cierre de ciclo' : 'Captura en ruta por sector', 
+      roles: ['ADMIN', 'CAJERO', 'LECTOR'] 
+    },
     { id: 'caja', href: 'caja.html', icon: '💵', label: '3. Caja y Cobros', desc: 'Liquidación y recibos', roles: ['ADMIN', 'CAJERO'] },
     { id: 'fondos', href: 'fondos.html', icon: '🏛️', label: '4. Fondos (3 Col)', desc: 'Libro Mayor Ing/Egr/Saldo', roles: ['ADMIN', 'CAJERO'] },
     { id: 'reportes', href: 'reportes.html', icon: '📊', label: '5. Reportes & Auditoría', desc: 'Morosidad y asamblea', roles: ['ADMIN', 'CAJERO'] },

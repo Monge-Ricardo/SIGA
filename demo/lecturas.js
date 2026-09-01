@@ -209,6 +209,27 @@ let cachedLecturas = [];
 const rowStateMap = new Map();
 
 async function renderLecturasUI() {
+  const isCajeroOAdmin = currentUser?.rol === 'CAJERO' || currentUser?.rol === 'ADMIN';
+
+  // Adaptar encabezado dinámico
+  const titleEl = document.getElementById('moduleTitleLecturas');
+  const subEl = document.getElementById('moduleSubtitleLecturas');
+  const btnCierre = document.getElementById('btnCierreCiclo');
+
+  if (isCajeroOAdmin) {
+    if (titleEl) titleEl.innerHTML = '📋 Módulo 2: Revisión de Lecturas y Cierre de Ciclo';
+    if (subEl) {
+      subEl.textContent = 'Auditoría de micromedición en campo, edición de lecturas, detección de consumos atípicos y cierre oficial del ciclo para emisión de planillas a Caja.';
+    }
+    if (btnCierre) btnCierre.style.display = 'inline-flex';
+  } else {
+    if (titleEl) titleEl.innerHTML = '⏱️ Módulo 2: Toma de Lecturas en Campo';
+    if (subEl) {
+      subEl.textContent = 'Captura rápida de lecturas en ruta por sector. Al ingresar la lectura se guarda y sincroniza automáticamente con el servidor central.';
+    }
+    if (btnCierre) btnCierre.style.display = 'none';
+  }
+
   const periodo = document.getElementById('selectPeriodo').value;
 
   cachedSocios = await getAllSocios();
@@ -222,7 +243,7 @@ async function renderLecturasUI() {
 function populateSectorSelect(sectores) {
   const select = document.getElementById('selectSectorRuta');
   const currentVal = select.value;
-  select.innerHTML = '<option value="TODOS">Todos los sectores (Ruta completa)</option>';
+  select.innerHTML = '<option value="TODOS">Todos los sectores comunitarios</option>';
 
   sectores.forEach((sec) => {
     const opt = document.createElement('option');
@@ -237,6 +258,7 @@ function populateSectorSelect(sectores) {
 }
 
 function renderTableAndMetrics() {
+  const isCajeroOAdmin = currentUser?.rol === 'CAJERO' || currentUser?.rol === 'ADMIN';
   const sectorFilter = document.getElementById('selectSectorRuta').value;
   const searchFilter = document.getElementById('searchSocioLectura').value.toLowerCase().trim();
   const periodo = document.getElementById('selectPeriodo').value;
@@ -267,8 +289,8 @@ function renderTableAndMetrics() {
   if (filtrados.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="7" style="text-align: center; padding: 2rem; color: #64748b;">
-          No se encontraron socios activos en la ruta seleccionada.
+        <td colspan="7" style="text-align: center; padding: 2.5rem; color: #64748b;">
+          No se encontraron abonados en la ruta o sector seleccionado.
         </td>
       </tr>
     `;
@@ -319,6 +341,7 @@ function renderTableAndMetrics() {
           value="${lact !== undefined ? lact : ''}"
           min="${lant}"
           placeholder="${lant}"
+          title="${isCajeroOAdmin ? 'Revisar / Modificar Lectura' : 'Ingresar Lectura en Campo'}"
         />
       </td>
       <td style="text-align: right;" id="consumo-cell-${socio.id}">
@@ -333,7 +356,7 @@ function renderTableAndMetrics() {
       <td style="text-align: center;" id="action-cell-${socio.id}">
         ${
           isSaved
-            ? `<span class="badge-status badge-al-dia" title="Guardada">✅ Lista</span>`
+            ? `<span class="badge-status badge-al-dia" title="Guardada y sincronizada">✅ Revisada</span>`
             : `<button class="btn btn-sm btn-outline btn-save-row" id="btn-save-${socio.id}" disabled>💾 Guardar</button>`
         }
       </td>
@@ -346,7 +369,7 @@ function renderTableAndMetrics() {
     const consumoCell = tr.querySelector(`#consumo-cell-${socio.id}`);
     const actionCell = tr.querySelector(`#action-cell-${socio.id}`);
 
-    inputLact.addEventListener('input', () => {
+    const handleInputReading = async (autoSave = false) => {
       const valStr = inputLact.value.trim();
       if (valStr === '') {
         inputLact.classList.remove('input-invalid', 'input-valid');
@@ -361,7 +384,7 @@ function renderTableAndMetrics() {
         inputLact.classList.add('input-invalid');
         inputLact.classList.remove('input-valid');
         if (btnSave) btnSave.disabled = true;
-        consumoCell.innerHTML = `<span class="error-msg-mini">⚠️ $L_{act} < L_{ant}$</span>`;
+        consumoCell.innerHTML = `<span class="error-msg-mini" style="color:#dc2626; font-size:0.75rem;">⚠️ $L_{act} < L_{ant}$</span>`;
         rowStateMap.delete(socio.id);
       } else {
         inputLact.classList.remove('input-invalid');
@@ -375,7 +398,7 @@ function renderTableAndMetrics() {
           ${exc > 0 ? `<span class="excess-pill">+${exc} exc</span>` : ''}
         `;
 
-        rowStateMap.set(socio.id, {
+        const lecturaRecord = {
           clienteId: socio.id,
           nombreSocio: socio.nombreCompleto,
           sectorId: socio.sectorId,
@@ -385,7 +408,28 @@ function renderTableAndMetrics() {
           consumoM3: cons,
           excedenteM3: exc,
           valid: true
-        });
+        };
+
+        rowStateMap.set(socio.id, lecturaRecord);
+
+        // Auto-guardado al presionar Enter o perder foco
+        if (autoSave) {
+          await saveLecturaLocal(lecturaRecord);
+          cachedLecturas = await getLecturasPeriodo(periodo);
+          actionCell.innerHTML = `<span class="badge-status badge-al-dia">✅ Revisada</span>`;
+          inputLact.classList.remove('input-valid');
+          inputLact.classList.add('input-saved');
+          recalcOverallMetrics(filtrados);
+        }
+      }
+    };
+
+    inputLact.addEventListener('input', () => handleInputReading(false));
+    inputLact.addEventListener('change', () => handleInputReading(true));
+    inputLact.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleInputReading(true);
       }
     });
 
@@ -398,7 +442,7 @@ function renderTableAndMetrics() {
         await saveLecturaLocal(state);
 
         cachedLecturas = await getLecturasPeriodo(periodo);
-        actionCell.innerHTML = `<span class="badge-status badge-al-dia">✅ Lista</span>`;
+        actionCell.innerHTML = `<span class="badge-status badge-al-dia">✅ Revisada</span>`;
         inputLact.classList.remove('input-valid');
         inputLact.classList.add('input-saved');
 
@@ -414,13 +458,20 @@ function updateMetrics(totalSocios, tomadas, consumo, excedente) {
   const pendientes = Math.max(0, totalSocios - tomadas);
   const pct = totalSocios > 0 ? Math.round((tomadas / totalSocios) * 100) : 0;
 
-  document.getElementById('metricTotalRuta').textContent = totalSocios;
-  document.getElementById('metricLecturasTomadas').textContent = tomadas;
-  document.getElementById('metricLecturasPendientes').textContent = pendientes;
-  document.getElementById('metricProgresoBar').style.width = `${pct}%`;
-  document.getElementById('metricProgresoLabel').textContent = `${pct}% de la ruta completada`;
-  document.getElementById('metricConsumoTotal').textContent = `${consumo} m³`;
-  document.getElementById('metricExcedenteTotal').textContent = `${excedente} m³ de excedente ($${(excedente * 0.10).toFixed(2)})`;
+  const elTotal = document.getElementById('metricTotalMedidores');
+  if (elTotal) elTotal.textContent = totalSocios;
+  const elTomadas = document.getElementById('metricLecturasTomadas');
+  if (elTomadas) elTomadas.textContent = tomadas;
+  const elPendientes = document.getElementById('metricLecturasPendientes');
+  if (elPendientes) elPendientes.textContent = pendientes;
+  const elProgresoBar = document.getElementById('metricProgresoBar');
+  if (elProgresoBar) elProgresoBar.style.width = `${pct}%`;
+  const elProgresoLabel = document.getElementById('metricProgresoLabel');
+  if (elProgresoLabel) elProgresoLabel.textContent = `${pct}% revisado / tomado`;
+  const elConsumo = document.getElementById('metricConsumoTotal');
+  if (elConsumo) elConsumo.textContent = `${consumo} m³`;
+  const elExcedente = document.getElementById('metricExcedenteTotal');
+  if (elExcedente) elExcedente.textContent = `${excedente} m³ de excedente ($${(excedente * 0.10).toFixed(2)})`;
 }
 
 async function recalcOverallMetrics(sociosRuta) {
@@ -445,6 +496,10 @@ document.getElementById('btnGuardarLote')?.addEventListener('click', async () =>
   const periodo = document.getElementById('selectPeriodo').value;
   let savedCount = 0;
 
+  const btnLote = document.getElementById('btnGuardarLote');
+  btnLote.disabled = true;
+  btnLote.textContent = '⏳ Guardando lote...';
+
   for (const [socioId, state] of rowStateMap.entries()) {
     if (state && state.valid) {
       await saveLecturaLocal(state);
@@ -452,11 +507,14 @@ document.getElementById('btnGuardarLote')?.addEventListener('click', async () =>
     }
   }
 
+  btnLote.disabled = false;
+  btnLote.textContent = '💾 Guardar Todo el Lote';
+
   if (savedCount === 0) {
     Swal.fire({
       icon: 'info',
-      title: 'Sin Cambios',
-      text: 'No hay lecturas nuevas modificadas para guardar.'
+      title: 'Sin Cambios Nuevos',
+      text: 'No hay lecturas pendientes o modificadas por guardar.'
     });
     return;
   }
@@ -465,47 +523,76 @@ document.getElementById('btnGuardarLote')?.addEventListener('click', async () =>
   renderTableAndMetrics();
   Swal.fire({
     icon: 'success',
-    title: 'Lote Guardado',
-    text: `Se guardaron exitosamente ${savedCount} lecturas en el servidor.`
+    title: 'Lote Sincronizado',
+    text: `Se sincronizaron exitosamente ${savedCount} lecturas en el servidor central.`
   });
 });
 
-// Cierre de Ciclo Mensual
+// Cierre de Ciclo Mensual (Acción Oficial del Cajero / Tesorero)
 document.getElementById('btnCierreCiclo')?.addEventListener('click', async () => {
   const periodo = document.getElementById('selectPeriodo').value;
-
-  const result = await Swal.fire({
-    icon: 'question',
-    title: '¿Cerrar Ciclo Mensual?',
-    text: `¿Desea cerrar la facturación del período ${periodo}? Las lecturas actuales pasarán a ser las lecturas anteriores del siguiente período.`,
-    showCancelButton: true,
-    confirmButtonText: 'Sí, Cerrar Ciclo',
-    cancelButtonText: 'Cancelar'
-  });
-
-  if (!result.isConfirmed) return;
 
   const lecturas = await getLecturasPeriodo(periodo);
   if (lecturas.length === 0) {
     Swal.fire({
       icon: 'warning',
-      title: 'Sin Lecturas',
-      text: 'No existen lecturas registradas para cerrar en este período.'
+      title: 'Sin Lecturas para Cerrar',
+      text: 'No existen lecturas registradas en este período para liquidar a Caja.'
     });
     return;
   }
 
-  lecturas.forEach((l) => {
-    BASELINE_LECTURAS[l.clienteId] = l.lecturaActual;
+  const result = await Swal.fire({
+    icon: 'question',
+    title: `¿Cerrar Ciclo ${periodo} y Liquidar a Caja?`,
+    text: `Se cerrará la revisión de ${lecturas.length} lecturas y se generarán automáticamente las planillas del mes para su cobro en Caja.`,
+    showCancelButton: true,
+    confirmButtonText: '🔒 Sí, Cerrar Ciclo y Liquidar',
+    cancelButtonText: 'Cancelar'
   });
 
-  Swal.fire({
-    icon: 'success',
-    title: 'Ciclo Cerrado',
-    text: `El ciclo ${periodo} fue cerrado exitosamente con ${lecturas.length} lecturas consolidadas.`
-  });
+  if (!result.isConfirmed) return;
 
-  renderLecturasUI();
+  const btnCierre = document.getElementById('btnCierreCiclo');
+  btnCierre.disabled = true;
+  btnCierre.textContent = '⏳ Liquidando planillas...';
+
+  try {
+    // 1. Liquidación masiva del período en el Backend API
+    const resLiquidacion = await apiFetch('/api/v1/facturas/liquidar-periodo', {
+      method: 'POST',
+      body: JSON.stringify({ idPeriodo: periodo })
+    });
+
+    // 2. Cerrar período formalmente
+    await apiFetch(`/api/v1/periodos/${periodo}/cerrar`, {
+      method: 'POST'
+    }).catch(() => {});
+
+    Swal.fire({
+      icon: 'success',
+      title: '¡Ciclo Cerrado Exitosamente!',
+      html: `
+        <p>Se generaron <strong>${resLiquidacion.data?.totalLiquidados || lecturas.length} planillas</strong> listas para cobro en el Módulo de Caja.</p>
+        <p style="margin-top: 8px; font-size: 0.85rem; color: #64748b;">Las lecturas actuales pasan a ser el punto de partida del siguiente período.</p>
+      `,
+      confirmButtonText: '💵 Ir a Caja y Cobros'
+    }).then((r) => {
+      if (r.isConfirmed) {
+        window.location.href = 'caja.html';
+      }
+    });
+  } catch (err) {
+    Swal.fire({
+      icon: 'error',
+      title: 'Error al liquidar período',
+      text: err.message
+    });
+  } finally {
+    btnCierre.disabled = false;
+    btnCierre.textContent = '🔒 Cerrar Ciclo y Liquidar a Caja';
+    renderLecturasUI();
+  }
 });
 
 // Listeners de filtros
