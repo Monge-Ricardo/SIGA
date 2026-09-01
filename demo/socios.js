@@ -1,4 +1,4 @@
-import { requireAuth } from './auth.js';
+import { requireAuth, getAuthToken } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 
@@ -7,6 +7,26 @@ const currentUser = requireAuth(['ADMIN', 'CAJERO']);
 
 if (currentUser) {
   injectAppLayout('socios');
+}
+
+async function apiFetch(url, options = {}) {
+  const token = getAuthToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {})
+  };
+  try {
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `Error ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    console.warn(`[API Socios] Error ${url}:`, err.message);
+    throw err;
+  }
 }
 
 const DB_NAME = 'SIGAComunitarioDemoDB';
@@ -246,6 +266,53 @@ async function getAllSectores() {
 
 async function saveSocioLocal(socioData, isEdit = false) {
   const start = performance.now();
+
+  // 1. Intentar persistir en el Backend REST API
+  try {
+    if (isEdit && socioData.id) {
+      await apiFetch(`/api/v1/socios/${socioData.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          nombres: socioData.nombres,
+          apellidos: socioData.apellidos,
+          cedulaRuc: socioData.cedulaRuc,
+          fechaNacimiento: socioData.fechaNacimiento,
+          fechaAfiliacion: socioData.fechaAfiliacion,
+          idSector: socioData.sectorId,
+          direccion: socioData.direccion,
+          telefono: socioData.telefono,
+          medidorNumero: socioData.medidorNumero,
+          tieneAlcantarillado: socioData.tieneAlcantarillado,
+          estado: socioData.estadoServicio
+        })
+      });
+    } else {
+      const res = await apiFetch('/api/v1/socios', {
+        method: 'POST',
+        body: JSON.stringify({
+          nombres: socioData.nombres,
+          apellidos: socioData.apellidos,
+          cedulaRuc: socioData.cedulaRuc,
+          fechaNacimiento: socioData.fechaNacimiento,
+          fechaAfiliacion: socioData.fechaAfiliacion,
+          idSector: socioData.sectorId,
+          direccion: socioData.direccion,
+          telefono: socioData.telefono,
+          medidorNumero: socioData.medidorNumero,
+          tieneAlcantarillado: socioData.tieneAlcantarillado,
+          estado: socioData.estadoServicio || 'ACTIVO'
+        })
+      });
+      if (res.data?.id) {
+        socioData.id = res.data.id;
+        socioData.codigoSocio = res.data.codigoSocio;
+      }
+    }
+  } catch (apiErr) {
+    console.warn('[Socios] Fallback local para guardar socio:', apiErr.message);
+  }
+
+  // 2. Persistir en IndexedDB local
   return new Promise((resolve, reject) => {
     const tx = db.transaction(['socios', 'sync_queue'], 'readwrite');
     const sociosStore = tx.objectStore('socios');
@@ -259,7 +326,7 @@ async function saveSocioLocal(socioData, isEdit = false) {
     if (isEdit) {
       sociosStore.put(record);
     } else {
-      record.id = 'soc-' + crypto.randomUUID().slice(0, 8);
+      if (!record.id) record.id = 'soc-' + crypto.randomUUID().slice(0, 8);
       record.createdAt = new Date().toISOString();
       sociosStore.add(record);
     }

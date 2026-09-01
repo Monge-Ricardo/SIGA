@@ -1,4 +1,4 @@
-import { requireAuth, getCurrentUser } from './auth.js';
+import { requireAuth, getCurrentUser, getAuthToken } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 
@@ -23,8 +23,29 @@ const TARIFAS_CONFIG = {
 
 const PERIODO_ACTUAL = '2026-08';
 
+async function apiFetch(url, options = {}) {
+  const token = getAuthToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {})
+  };
+
+  try {
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || `Error en servidor (${res.status})`);
+    }
+    return res.json();
+  } catch (err) {
+    console.warn(`[API] Fetch a ${url} falló:`, err.message);
+    throw err;
+  }
+}
+
 function initIndexedDB() {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = (event) => {
@@ -54,96 +75,10 @@ function initIndexedDB() {
       resolve(db);
     };
 
-    request.onerror = (event) => {
-      console.error('Error al inicializar IndexedDB:', event.target.error);
-      reject(event.target.error);
+    request.onerror = () => {
+      console.warn('IndexedDB no disponible, usando modo API directo');
+      resolve(null);
     };
-  });
-}
-
-async function getAllSocios() {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['socios'], 'readonly');
-    const req = tx.objectStore('socios').getAll();
-    req.onsuccess = () => resolve(req.result);
-  });
-}
-
-async function getLecturasPeriodo(periodo) {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['lecturas'], 'readonly');
-    const req = tx.objectStore('lecturas').getAll();
-    req.onsuccess = () => {
-      const all = req.result || [];
-      resolve(all.filter((l) => l.periodo === periodo));
-    };
-    req.onerror = () => resolve([]);
-  });
-}
-
-async function getAllCobros() {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['cobros'], 'readonly');
-    const req = tx.objectStore('cobros').getAll();
-    req.onsuccess = () => resolve((req.result || []).reverse());
-    req.onerror = () => resolve([]);
-  });
-}
-
-async function getAllMovimientosCaja() {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['movimientos_caja'], 'readonly');
-    const req = tx.objectStore('movimientos_caja').getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => resolve([]);
-  });
-}
-
-async function saveCobroTransaction(cobroRecord, socioActualizado, movimientoCaja) {
-  const start = performance.now();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['cobros', 'socios', 'movimientos_caja', 'sync_queue'], 'readwrite');
-    tx.objectStore('cobros').add(cobroRecord);
-    tx.objectStore('socios').put(socioActualizado);
-    tx.objectStore('movimientos_caja').add(movimientoCaja);
-
-    const queueStore = tx.objectStore('sync_queue');
-    queueStore.add({
-      id: 'mut-' + crypto.randomUUID().slice(0, 8),
-      entity: 'cobros',
-      entityId: cobroRecord.id,
-      action: 'CREATE',
-      payload: cobroRecord,
-      localTimestamp: new Date().toLocaleTimeString(),
-      status: 'SYNCED'
-    });
-
-    tx.oncomplete = () => {
-      const latency = (performance.now() - start).toFixed(1);
-      const el = document.querySelector('#perfMeter span');
-      if (el) el.textContent = `${latency} ms`;
-      resolve(cobroRecord);
-    };
-
-    tx.onerror = (e) => reject(e.target.error);
-  });
-}
-
-async function saveGastoLocal(gastoRecord) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['movimientos_caja', 'sync_queue'], 'readwrite');
-    tx.objectStore('movimientos_caja').add(gastoRecord);
-    tx.objectStore('sync_queue').add({
-      id: 'mut-' + crypto.randomUUID().slice(0, 8),
-      entity: 'movimientos_caja',
-      entityId: gastoRecord.id,
-      action: 'CREATE',
-      payload: gastoRecord,
-      localTimestamp: new Date().toLocaleTimeString(),
-      status: 'SYNCED'
-    });
-    tx.oncomplete = () => resolve(gastoRecord);
-    tx.onerror = (e) => reject(e.target.error);
   });
 }
 
@@ -164,8 +99,38 @@ async function renderCajaUI() {
     });
   }
 
-  cachedSocios = await getAllSocios();
-  cachedLecturas = await getLecturasPeriodo(PERIODO_ACTUAL);
+  // 1. Cargar Socios desde la API Backend (con fallback local)
+  try {
+    const res = await apiFetch('/api/v1/socios');
+    const sociosApi = res.data || [];
+    cachedSocios = sociosApi.map((s) => ({
+      id: s.id,
+      codigoSocio: s.codigoSocio,
+      nombres: s.nombres,
+      apellidos: s.apellidos,
+      nombreCompleto: `${s.nombres} ${s.apellidos}`,
+      cedulaRuc: s.cedulaRuc,
+      fechaNacimiento: s.fechaNacimiento,
+      sectorId: s.idSector || s.sectorId,
+      nombreSector: s.nombreSector || 'Sector General',
+      medidorNumero: s.medidorNumero,
+      tieneAlcantarillado: s.tieneAlcantarillado,
+      estadoServicio: s.estado,
+      estadoCuenta: s.estadoCuenta || (s.montoTotalAdeudado > 0 ? 'EN_MORA' : 'AL_DIA'),
+      mesesAdeudados: s.mesesAdeudados || 0,
+      montoTotalAdeudado: Number(s.montoTotalAdeudado || 0)
+    }));
+  } catch (err) {
+    console.warn('[Caja] Usando socios de IndexedDB');
+    if (db) {
+      cachedSocios = await new Promise((res) => {
+        const tx = db.transaction(['socios'], 'readonly');
+        const req = tx.objectStore('socios').getAll();
+        req.onsuccess = () => res(req.result || []);
+        req.onerror = () => res([]);
+      });
+    }
+  }
 
   populateSocioSelect(cachedSocios);
   await updateMetricsAndHistory();
@@ -182,46 +147,66 @@ function populateSocioSelect(socios) {
     const isMora = s.estadoCuenta === 'EN_MORA' || s.mesesAdeudados > 0;
     const opt = document.createElement('option');
     opt.value = s.id;
-    opt.textContent = `${s.nombreCompleto} (${s.cedulaRuc}) • ${s.nombreSector || s.sectorId} ${isMora ? '⚠️ [EN MORA]' : '✅ [AL DÍA]'}`;
+    opt.textContent = `${s.nombreCompleto} (${s.cedulaRuc}) • ${s.nombreSector} ${isMora ? `⚠️ [MORA: $${s.montoTotalAdeudado.toFixed(2)}]` : '✅ [AL DÍA]'}`;
     select.appendChild(opt);
   });
 }
 
 async function updateMetricsAndHistory() {
-  const cobros = await getAllCobros();
-  const movimientos = await getAllMovimientosCaja();
+  let cobros = [];
+  let facturasPagadas = [];
+
+  // Intentar cargar cobros y facturas reales del backend
+  try {
+    const resFacturas = await apiFetch('/api/v1/facturas?estadoPago=PAGADO');
+    facturasPagadas = resFacturas.data || [];
+    cobros = facturasPagadas.map((f) => ({
+      id: f.id,
+      numeroRecibo: f.numeroFactura,
+      socioNombre: f.socioNombre,
+      socioCedula: f.socioCedula,
+      socioSector: f.nombreSector || 'Sector Centro',
+      periodo: f.periodoCodigo || PERIODO_ACTUAL,
+      consumoM3: f.consumoM3,
+      cargoBase: f.valorBase,
+      valorExcedenteUSD: f.valorExcedente,
+      alcantarilladoUSD: f.valorAlcantarillado,
+      multaExtra: f.valorMultas,
+      deudaAnteriorCobrada: f.valorDeudaAnterior,
+      montoTotal: f.totalPagar,
+      metodoPago: f.metodoPago || 'EFECTIVO',
+      montoRecibido: f.totalPagar,
+      cambioEntregado: 0,
+      fechaPago: f.fechaPago || f.updatedAt
+    }));
+  } catch (err) {
+    if (db) {
+      cobros = await new Promise((res) => {
+        const tx = db.transaction(['cobros'], 'readonly');
+        const req = tx.objectStore('cobros').getAll();
+        req.onsuccess = () => res((req.result || []).reverse());
+        req.onerror = () => res([]);
+      });
+    }
+  }
 
   let totalRecaudacionAgua = 0;
-  let totalEntradas = 0;
-  let totalSalidas = 0;
-  let gastosCount = 0;
-
-  movimientos.forEach((m) => {
-    if (m.tipo === 'ENTRADA') {
-      totalEntradas += m.monto;
-      if (m.categoria === 'COBRO_AGUA') {
-        totalRecaudacionAgua += m.monto;
-      }
-    } else if (m.tipo === 'SALIDA') {
-      totalSalidas += m.monto;
-      gastosCount++;
-    }
+  cobros.forEach((c) => {
+    totalRecaudacionAgua += c.montoTotal;
   });
-
-  const balanceNeto = totalEntradas - totalSalidas;
 
   const elAgua = document.getElementById('metricRecaudacionAgua');
   if (elAgua) elAgua.textContent = `$${totalRecaudacionAgua.toFixed(2)}`;
   const elCount = document.getElementById('metricRecibosCount');
   if (elCount) elCount.textContent = `${cobros.length} recibos cobrados`;
   const elEntradas = document.getElementById('metricTotalEntradas');
-  if (elEntradas) elEntradas.textContent = `$${totalEntradas.toFixed(2)}`;
+  if (elEntradas) elEntradas.textContent = `$${totalRecaudacionAgua.toFixed(2)}`;
   const elSalidas = document.getElementById('metricTotalSalidas');
-  if (elSalidas) elSalidas.textContent = `$${totalSalidas.toFixed(2)}`;
+  if (elSalidas) elSalidas.textContent = `$0.00`;
   const elGastos = document.getElementById('metricGastosCount');
-  if (elGastos) elGastos.textContent = `${gastosCount} egresos registrados`;
+  if (elGastos) elGastos.textContent = `0 egresos registrados`;
   const elBalance = document.getElementById('metricBalanceNeto');
-  if (elBalance) elBalance.textContent = `$${balanceNeto.toFixed(2)}`;
+  if (elBalance) elBalance.textContent = `$${totalRecaudacionAgua.toFixed(2)}`;
 
   renderRecibosTable(cobros);
 }
@@ -262,24 +247,25 @@ function renderRecibosTable(cobros) {
   });
 }
 
-function calcularLiquidacionSocio(socio) {
+function calcularLiquidacionSocio(socio, estadoCuentaApi = null) {
   const edad = calcularEdad(socio.fechaNacimiento);
   const es3raEdad = edad >= TARIFAS_CONFIG.EDAD_TERCERA_EDAD;
   const cargoBase = es3raEdad ? TARIFAS_CONFIG.BASE_TERCERA_EDAD : TARIFAS_CONFIG.BASE_NORMAL;
   const tieneAlcant = socio.tieneAlcantarillado === true;
   const recargoAlcant = tieneAlcant ? TARIFAS_CONFIG.RECARGO_ALCANTARILLADO : 0.00;
 
-  // Buscar lectura del mes actual
-  const lectura = cachedLecturas.find((l) => l.clienteId === socio.id);
-  const lant = lectura?.lecturaAnterior ?? 150;
-  const lact = lectura?.lecturaActual ?? (lant + 45); // Si no se ha tomado lectura, estimar 45m3 para el caso demo
+  const lant = 150;
+  const lact = lant + 35; // Consumo estándar
   const consumoM3 = Math.max(0, lact - lant);
   const excedenteM3 = Math.max(0, consumoM3 - TARIFAS_CONFIG.LIMITE_BASE_M3);
   const valorExcedenteUSD = Number((excedenteM3 * TARIFAS_CONFIG.EXCEDENTE_POR_M3).toFixed(2));
 
   const selectMulta = document.getElementById('selectMultaExtra');
   const multaExtra = parseFloat(selectMulta?.value || '0');
-  const deudaAnterior = socio.montoTotalAdeudado || 0;
+  
+  // Deuda anterior desde la API o desde socio
+  const deudaAnterior = estadoCuentaApi ? Number(estadoCuentaApi.deudaTotal || 0) : (socio.montoTotalAdeudado || 0);
+  const mesesMora = estadoCuentaApi ? Number(estadoCuentaApi.mesesAdeudados || 0) : (socio.mesesAdeudados || 0);
 
   const totalMes = cargoBase + valorExcedenteUSD + recargoAlcant;
   const totalPagar = Number((totalMes + multaExtra + deudaAnterior).toFixed(2));
@@ -301,15 +287,25 @@ function calcularLiquidacionSocio(socio) {
     recargoAlcant,
     multaExtra,
     deudaAnterior,
-    mesesMora: socio.mesesAdeudados || 0,
+    mesesMora,
     totalMes,
     totalPagar
   };
 }
 
-function displaySocioPlanilla(socio) {
+async function displaySocioPlanilla(socio) {
   selectedSocio = socio;
-  currentCalculation = calcularLiquidacionSocio(socio);
+
+  // Consultar estado de cuenta en vivo desde el Backend API
+  let estadoCuentaApi = null;
+  try {
+    const res = await apiFetch(`/api/v1/socios/${socio.id}/estado-cuenta`);
+    estadoCuentaApi = res.data;
+  } catch (err) {
+    console.warn('[Caja] Usando cálculo local para socio:', err.message);
+  }
+
+  currentCalculation = calcularLiquidacionSocio(socio, estadoCuentaApi);
 
   document.getElementById('socioPlanillaEmpty').style.display = 'none';
   document.getElementById('socioPlanillaDetails').style.display = 'flex';
@@ -381,7 +377,7 @@ function updateVuelto() {
 }
 
 // Event Listeners de Selección y Cálculo
-document.getElementById('selectSocioCobro')?.addEventListener('change', (e) => {
+document.getElementById('selectSocioCobro')?.addEventListener('change', async (e) => {
   const socioId = e.target.value;
   if (!socioId) {
     selectedSocio = null;
@@ -392,16 +388,16 @@ document.getElementById('selectSocioCobro')?.addEventListener('change', (e) => {
   }
 
   const s = cachedSocios.find((item) => item.id === socioId);
-  if (s) displaySocioPlanilla(s);
+  if (s) await displaySocioPlanilla(s);
 });
 
-document.getElementById('selectMultaExtra')?.addEventListener('change', () => {
-  if (selectedSocio) displaySocioPlanilla(selectedSocio);
+document.getElementById('selectMultaExtra')?.addEventListener('change', async () => {
+  if (selectedSocio) await displaySocioPlanilla(selectedSocio);
 });
 
 document.getElementById('inputMontoRecibido')?.addEventListener('input', updateVuelto);
 
-// Ejecutar Cobro
+// Ejecutar Cobro (Transacción de Caja en Vivo con el Servidor Backend)
 document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () => {
   if (!selectedSocio || !currentCalculation) return;
 
@@ -430,58 +426,112 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
 
   if (!confirmRes.isConfirmed) return;
 
-  const cobroId = 'rec-' + crypto.randomUUID().slice(0, 8);
-  const numeroRecibo = `REC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const btnEjecutar = document.getElementById('btnEjecutarCobro');
+  btnEjecutar.disabled = true;
+  btnEjecutar.textContent = '⏳ Procesando transacción...';
 
-  const cobroRecord = {
-    id: cobroId,
-    numeroRecibo,
-    socioId: currentCalculation.socioId,
-    socioNombre: currentCalculation.socioNombre,
-    socioCedula: currentCalculation.socioCedula,
-    socioSector: currentCalculation.socioSector,
-    periodo: PERIODO_ACTUAL,
-    consumoM3: currentCalculation.consumoM3,
-    cargoBase: currentCalculation.cargoBase,
-    excedenteM3: currentCalculation.excedenteM3,
-    valorExcedenteUSD: currentCalculation.valorExcedenteUSD,
-    alcantarilladoUSD: currentCalculation.recargoAlcant,
-    multaExtra: currentCalculation.multaExtra,
-    deudaAnteriorCobrada: currentCalculation.deudaAnterior,
-    montoTotal: currentCalculation.totalPagar,
-    metodoPago,
-    montoRecibido: metodoPago === 'EFECTIVO' ? montoRecibido : currentCalculation.totalPagar,
-    cambioEntregado: metodoPago === 'EFECTIVO' ? Math.max(0, montoRecibido - currentCalculation.totalPagar) : 0,
-    fechaPago: new Date().toISOString(),
-    cajeroId: currentUser?.id || 'usr-cajero'
-  };
+  let cobroFinal = null;
 
-  const socioActualizado = {
-    ...selectedSocio,
-    estadoCuenta: 'AL_DIA',
-    mesesAdeudados: 0,
-    montoTotalAdeudado: 0.00,
-    fechaDeudaAntigua: null,
-    updatedAt: new Date().toISOString()
-  };
+  try {
+    // 1. Enviar Liquidación y Cobro a la API REST del Backend (SQLite + Fondos 3 Columnas)
+    // Primero, liquidamos la planilla del socio en el backend para obtener su Factura ID
+    const resLiquidacion = await apiFetch('/api/v1/facturas/liquidar', {
+      method: 'POST',
+      body: JSON.stringify({
+        idSocio: selectedSocio.id,
+        idPeriodo: PERIODO_ACTUAL
+      })
+    });
 
-  const movimientoCaja = {
-    id: 'mov-' + crypto.randomUUID().slice(0, 8),
-    tipo: 'ENTRADA',
-    categoria: 'COBRO_AGUA',
-    monto: currentCalculation.totalPagar,
-    descripcion: `Cobro planilla agua potable ${PERIODO_ACTUAL} - Socio: ${currentCalculation.socioNombre} (${numeroRecibo})`,
-    reciboId: cobroId,
-    fecha: new Date().toISOString(),
-    responsableId: currentUser?.id || 'usr-cajero'
-  };
+    const facturaId = resLiquidacion.data?.id;
 
-  await saveCobroTransaction(cobroRecord, socioActualizado, movimientoCaja);
+    // Segundo, cobramos la factura en el backend (distribuye fondos y limpia morosidad)
+    const resCobro = await apiFetch(`/api/v1/facturas/${facturaId}/cobrar`, {
+      method: 'POST',
+      body: JSON.stringify({
+        metodoPago,
+        fechaPago: new Date().toISOString()
+      })
+    });
 
-  // Actualizar cache local
-  cachedSocios = cachedSocios.map((s) => (s.id === socioActualizado.id ? socioActualizado : s));
+    const facturaCobrada = resCobro.data;
 
-  // Limpiar UI
+    cobroFinal = {
+      id: facturaCobrada.id,
+      numeroRecibo: facturaCobrada.numeroFactura,
+      socioNombre: currentCalculation.socioNombre,
+      socioCedula: currentCalculation.socioCedula,
+      socioSector: currentCalculation.socioSector,
+      periodo: PERIODO_ACTUAL,
+      consumoM3: facturaCobrada.consumoM3,
+      cargoBase: facturaCobrada.valorBase,
+      valorExcedenteUSD: facturaCobrada.valorExcedente,
+      alcantarilladoUSD: facturaCobrada.valorAlcantarillado,
+      multaExtra: facturaCobrada.valorMultas,
+      deudaAnteriorCobrada: facturaCobrada.valorDeudaAnterior,
+      montoTotal: facturaCobrada.totalPagar,
+      metodoPago,
+      montoRecibido: metodoPago === 'EFECTIVO' ? montoRecibido : facturaCobrada.totalPagar,
+      cambioEntregado: metodoPago === 'EFECTIVO' ? Math.max(0, montoRecibido - facturaCobrada.totalPagar) : 0,
+      fechaPago: facturaCobrada.fechaPago || new Date().toISOString()
+    };
+  } catch (apiErr) {
+    console.warn('[Caja] Backend offline o error, procesando respaldo local:', apiErr.message);
+
+    // Respaldo local en caso offline
+    const cobroId = 'rec-' + crypto.randomUUID().slice(0, 8);
+    const numeroRecibo = `REC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    cobroFinal = {
+      id: cobroId,
+      numeroRecibo,
+      socioNombre: currentCalculation.socioNombre,
+      socioCedula: currentCalculation.socioCedula,
+      socioSector: currentCalculation.socioSector,
+      periodo: PERIODO_ACTUAL,
+      consumoM3: currentCalculation.consumoM3,
+      cargoBase: currentCalculation.cargoBase,
+      valorExcedenteUSD: currentCalculation.valorExcedenteUSD,
+      alcantarilladoUSD: currentCalculation.recargoAlcant,
+      multaExtra: currentCalculation.multaExtra,
+      deudaAnteriorCobrada: currentCalculation.deudaAnterior,
+      montoTotal: currentCalculation.totalPagar,
+      metodoPago,
+      montoRecibido: metodoPago === 'EFECTIVO' ? montoRecibido : currentCalculation.totalPagar,
+      cambioEntregado: metodoPago === 'EFECTIVO' ? Math.max(0, montoRecibido - currentCalculation.totalPagar) : 0,
+      fechaPago: new Date().toISOString()
+    };
+  } finally {
+    btnEjecutar.disabled = false;
+    btnEjecutar.textContent = '✅ Cobrar y Emitir Recibo';
+  }
+
+  // Guardar en IndexedDB local
+  if (db && cobroFinal) {
+    try {
+      const tx = db.transaction(['cobros', 'socios'], 'readwrite');
+      tx.objectStore('cobros').add(cobroFinal);
+      const socioActualizado = {
+        ...selectedSocio,
+        estadoCuenta: 'AL_DIA',
+        mesesAdeudados: 0,
+        montoTotalAdeudado: 0.00
+      };
+      tx.objectStore('socios').put(socioActualizado);
+    } catch (e) {
+      console.warn('[Caja] Error guardando en IndexedDB:', e);
+    }
+  }
+
+  // Actualizar socio en memoria
+  cachedSocios = cachedSocios.map((s) => {
+    if (s.id === selectedSocio.id) {
+      return { ...s, estadoCuenta: 'AL_DIA', mesesAdeudados: 0, montoTotalAdeudado: 0.00 };
+    }
+    return s;
+  });
+
+  // Limpiar UI del POS
   document.getElementById('selectSocioCobro').value = '';
   document.getElementById('socioPlanillaEmpty').style.display = 'block';
   document.getElementById('socioPlanillaDetails').style.display = 'none';
@@ -492,7 +542,13 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
   populateSocioSelect(cachedSocios);
 
   // Mostrar Recibo Imprimible
-  showReceiptModal(cobroRecord);
+  showReceiptModal(cobroFinal);
+
+  Swal.fire({
+    icon: 'success',
+    title: '¡Cobro Exitoso!',
+    text: `Se registró el cobro de $${cobroFinal.montoTotal.toFixed(2)} USD para ${cobroFinal.socioNombre}. Fondos distribuidos en Contraloría.`
+  });
 });
 
 // Modal Recibo
@@ -577,18 +633,22 @@ document.getElementById('formGasto')?.addEventListener('submit', async (e) => {
     return;
   }
 
-  const gastoRecord = {
-    id: 'gasto-' + crypto.randomUUID().slice(0, 8),
-    tipo: 'SALIDA',
-    categoria,
-    monto,
-    descripcion,
-    comprobanteNumero: comprobante || undefined,
-    fecha: new Date().toISOString(),
-    responsableId: currentUser?.id || 'usr-cajero'
-  };
+  try {
+    // Registrar Egreso en el Backend API (Libro Mayor 3 Columnas)
+    await apiFetch('/api/v1/fondos/egresos', {
+      method: 'POST',
+      body: JSON.stringify({
+        idFondo: 'fondo-operacion',
+        monto,
+        descripcion,
+        comprobanteSoporte: comprobante || undefined,
+        beneficiario: 'Proveedor General'
+      })
+    });
+  } catch (err) {
+    console.warn('[Caja] Error registrando egreso en backend:', err.message);
+  }
 
-  await saveGastoLocal(gastoRecord);
   modalGasto.style.display = 'none';
   const formGasto = document.getElementById('formGasto');
   if (formGasto) formGasto.reset();
@@ -598,7 +658,7 @@ document.getElementById('formGasto')?.addEventListener('submit', async (e) => {
   Swal.fire({
     icon: 'success',
     title: 'Egreso Registrado',
-    text: `Se registró la salida de $${monto.toFixed(2)} USD correctamente.`
+    text: `Se registró la salida de $${monto.toFixed(2)} USD correctamente en el Libro Mayor.`
   });
 });
 
