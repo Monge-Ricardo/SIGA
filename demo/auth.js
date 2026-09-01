@@ -1,5 +1,5 @@
 /**
- * SIGA-Comunitario • Módulo de Autenticación y Control de Roles
+ * SIGA-Comunitario • Módulo de Autenticación
  */
 
 export const USERS_SEED = [
@@ -10,7 +10,7 @@ export const USERS_SEED = [
     nombre: 'Tesorero / Cobrador General',
     passwords: ['Cajero123*', 'cajero', 'caja'],
     rol: 'CAJERO',
-    cargo: 'Tesorero / Recaudador Integral (Maneja todo el sistema)'
+    cargo: 'Tesorero / Recaudador Integral'
   },
   {
     id: 'usr-admin',
@@ -49,17 +49,15 @@ export function getAuthToken() {
   return localStorage.getItem(TOKEN_STORAGE_KEY) || '';
 }
 
-export async function login(identifier, password, rolEsperado = null) {
+export async function login(identifier, password) {
   const cleanId = (identifier || '').trim();
   const cleanPass = (password || '').trim();
 
   if (!cleanId || !cleanPass) {
-    throw new Error('Debe ingresar el usuario o correo y la contraseña.');
+    throw new Error('Por favor ingrese su usuario o correo y contraseña.');
   }
 
-  let serverUser = null;
-
-  // 1. Intento rápido contra el backend HTTP con Timeout de 2.5s
+  // 1. Intento de autenticación contra la API REST (/api/v1/auth/login)
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2500);
@@ -74,7 +72,7 @@ export async function login(identifier, password, rolEsperado = null) {
 
     if (res.ok) {
       const data = await res.json();
-      serverUser = {
+      const sessionUser = {
         id: data.usuario.id,
         nombre: data.usuario.nombreCompleto,
         username: data.usuario.username,
@@ -82,48 +80,23 @@ export async function login(identifier, password, rolEsperado = null) {
         cargo: data.usuario.rol === 'ADMIN' ? 'Administrador General' : data.usuario.rol === 'CAJERO' ? 'Tesorero / Recaudador' : 'Lector de Campo',
         loggedAt: new Date().toISOString()
       };
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionUser));
       localStorage.setItem(TOKEN_STORAGE_KEY, data.token || '');
-    } else {
-      const errJson = await res.json().catch(() => ({}));
-      if (errJson.error) {
-        console.warn('[Auth Server]', errJson.error);
-      }
+      return sessionUser;
     }
   } catch (netErr) {
-    console.warn('[Auth] Conexión local fallback:', netErr);
+    console.warn('[Auth] Servidor no disponible o timeout, validando localmente:', netErr);
   }
 
-  // 2. Si el servidor respondió con éxito
-  if (serverUser) {
-    if (rolEsperado && serverUser.rol !== rolEsperado) {
-      throw new Error(`Este usuario pertenece al rol ${serverUser.rol}, no a ${rolEsperado}. Seleccione el rol correcto.`);
-    }
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(serverUser));
-    return serverUser;
-  }
-
-  // 3. Fallback de autenticación local inmediata
+  // 2. Respaldo de autenticación local
   const localUser = USERS_SEED.find((u) => {
     const matchUser = u.username.toLowerCase() === cleanId.toLowerCase() || u.email.toLowerCase() === cleanId.toLowerCase();
     const matchPass = u.passwords.includes(cleanPass);
-    const matchRol = !rolEsperado || u.rol === rolEsperado;
-    return matchUser && matchPass && matchRol;
+    return matchUser && matchPass;
   });
 
   if (!localUser) {
-    // Comprobar si el usuario existe pero la clave o el rol es incorrecto
-    const userExistente = USERS_SEED.find(
-      (u) => u.username.toLowerCase() === cleanId.toLowerCase() || u.email.toLowerCase() === cleanId.toLowerCase()
-    );
-
-    if (userExistente) {
-      if (rolEsperado && userExistente.rol !== rolEsperado) {
-        throw new Error(`El usuario "${cleanId}" tiene el rol ${userExistente.rol}. Seleccione la pestaña correspondiente.`);
-      }
-      throw new Error('Contraseña incorrecta. Por favor intente nuevamente.');
-    }
-
-    throw new Error('Usuario no encontrado. Verifique el usuario seleccionado.');
+    throw new Error('Credenciales incorrectas. Verifique su usuario y contraseña.');
   }
 
   const sessionUser = {

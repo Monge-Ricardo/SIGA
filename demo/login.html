@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Acceso por Roles • SIGA-Comunitario</title>
+  <title>Iniciar Sesión • SIGA-Comunitario</title>
   <link rel="stylesheet" href="styles.css" />
   <style>
     body {
@@ -14,111 +14,59 @@
       background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
       padding: 1.5rem;
       font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
     }
     .login-wrapper {
       width: 100%;
-      max-width: 480px;
+      max-width: 420px;
       background: #ffffff;
       border: 1px solid var(--border-color, #e2e8f0);
       border-radius: 12px;
-      padding: 2rem;
+      padding: 2.25rem;
       box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
     }
     .login-brand {
       text-align: center;
-      margin-bottom: 1.5rem;
+      margin-bottom: 2rem;
     }
     .login-icon {
       font-size: 2.75rem;
       display: inline-block;
       margin-bottom: 0.25rem;
     }
-    
-    /* Selector de Roles por Pestañas */
-    .roles-selector-tabs {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 0.4rem;
-      background: #f1f5f9;
-      padding: 0.35rem;
-      border-radius: 8px;
-      margin-bottom: 1.25rem;
-    }
-    .role-tab-btn {
-      padding: 0.6rem 0.4rem;
-      border: none;
-      background: transparent;
-      border-radius: 6px;
-      font-weight: 700;
-      font-size: 0.8rem;
-      color: #64748b;
-      cursor: pointer;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.25rem;
-      transition: all 0.15s;
-    }
-    .role-tab-btn span {
-      font-size: 1.2rem;
-    }
-    .role-tab-btn.active {
-      background: #ffffff;
-      color: #0284c7;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.06);
-    }
-    .role-tab-btn.active.role-cajero {
-      color: #15803d;
-      border-bottom: 2px solid #16a34a;
-    }
-    .role-tab-btn.active.role-admin {
-      color: #4338ca;
-      border-bottom: 2px solid #6366f1;
-    }
-    .role-tab-btn.active.role-lector {
-      color: #b45309;
-      border-bottom: 2px solid #f59e0b;
-    }
-
-    .role-info-banner {
-      background: #f8fafc;
-      border: 1px solid #e2e8f0;
-      border-radius: 6px;
-      padding: 0.65rem 0.85rem;
-      margin-bottom: 1.25rem;
-      font-size: 0.82rem;
-      color: #334155;
-    }
-    .role-info-title {
-      font-weight: 800;
-      display: flex;
-      align-items: center;
-      gap: 0.35rem;
-      margin-bottom: 0.2rem;
-    }
-
     .form-group {
-      margin-bottom: 1rem;
+      margin-bottom: 1.25rem;
     }
     .form-group label {
       display: block;
       font-weight: 700;
-      font-size: 0.85rem;
+      font-size: 0.875rem;
       color: #334155;
-      margin-bottom: 0.35rem;
+      margin-bottom: 0.4rem;
     }
     .form-control-input {
       width: 100%;
-      padding: 0.65rem 0.85rem;
+      padding: 0.7rem 0.85rem;
       border: 1px solid #cbd5e1;
       border-radius: 6px;
       font-size: 0.95rem;
       box-sizing: border-box;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
     .form-control-input:focus {
       outline: none;
       border-color: #0284c7;
       box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
+    }
+    .error-box {
+      color: #dc2626;
+      font-size: 0.85rem;
+      background: #fef2f2;
+      padding: 0.75rem;
+      border-radius: 6px;
+      border: 1px solid #fecaca;
+      margin-bottom: 1.25rem;
+      display: none;
     }
   </style>
 </head>
@@ -126,165 +74,55 @@
   <div class="login-wrapper">
     <div class="login-brand">
       <div class="login-icon">💧</div>
-      <h1 style="font-size: 1.45rem; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; margin: 0;">
+      <h1 style="font-size: 1.5rem; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; margin: 0;">
         SIGA-Comunitario
       </h1>
-      <p style="font-size: 0.82rem; color: #64748b; margin-top: 0.25rem;">
-        Acceso al Sistema según Rol Autorizado
+      <p style="font-size: 0.875rem; color: #64748b; margin-top: 0.35rem;">
+        Gestión de Agua Potable y Control de Fondos
       </p>
     </div>
 
-    <!-- 1. Selector de Rol -->
-    <div style="font-size: 0.78rem; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 0.5rem; text-align: center;">
-      Seleccione su Rol de Acceso:
-    </div>
-
-    <div class="roles-selector-tabs">
-      <button type="button" class="role-tab-btn active role-cajero" id="tabRolCajero" data-role="CAJERO" data-user="cajero">
-        <span>💵</span>
-        <div>Tesorero / Caja</div>
-      </button>
-
-      <button type="button" class="role-tab-btn role-admin" id="tabRolAdmin" data-role="ADMIN" data-user="admin">
-        <span>👑</span>
-        <div>Administrador</div>
-      </button>
-
-      <button type="button" class="role-tab-btn role-lector" id="tabRolLector" data-role="LECTOR" data-user="lector">
-        <span>⏱️</span>
-        <div>Lector Campo</div>
-      </button>
-    </div>
-
-    <!-- Descripción Dinámica del Rol Seleccionado -->
-    <div class="role-info-banner" id="roleInfoBanner">
-      <div class="role-info-title" id="roleInfoTitle" style="color: #15803d;">
-        <span>💵</span> Rol: Tesorera / Cobradora (Operador Integral)
-      </div>
-      <div id="roleInfoDesc" style="color: #475569;">
-        Acceso total a: Padrón de Socios, Lecturas, Caja y Cobros, Fondos 3 Columnas y Reportes.
-      </div>
-    </div>
-
-    <!-- Formulario de Acceso -->
     <form id="formLogin">
       <div class="form-group">
-        <label for="loginUser">Nombre de Usuario / Correo</label>
+        <label for="loginUser">Usuario o Correo Electrónico</label>
         <input 
           type="text" 
           id="loginUser" 
           class="form-control-input" 
-          value="cajero"
+          placeholder="ej: cajero, admin o lector" 
           required 
           autocomplete="username"
+          autofocus
         />
       </div>
 
       <div class="form-group">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.35rem;">
-          <label for="loginPassword" style="margin: 0;">Contraseña</label>
-          <span style="font-size: 0.75rem; color: #64748b;" id="passHint">Pista: Cajero123*</span>
-        </div>
+        <label for="loginPassword">Contraseña</label>
         <input 
           type="password" 
           id="loginPassword" 
           class="form-control-input" 
-          placeholder="Ingrese su contraseña" 
+          placeholder="••••••••" 
           required 
           autocomplete="current-password"
         />
       </div>
 
-      <div id="loginError" style="color: #dc2626; font-size: 0.82rem; display: none; background: #fef2f2; padding: 0.6rem; border-radius: 6px; border: 1px solid #fecaca; margin-bottom: 1rem;"></div>
+      <div id="loginError" class="error-box"></div>
 
       <button 
         type="submit" 
         id="btnSubmit" 
         class="btn btn-primary" 
-        style="width: 100%; padding: 0.75rem; font-size: 1rem; font-weight: 700; border-radius: 6px; background: #16a34a; border-color: #15803d; color: white; cursor: pointer;"
+        style="width: 100%; padding: 0.75rem; font-size: 1rem; font-weight: 700; border-radius: 6px; background: #0284c7; border: none; color: white; cursor: pointer;"
       >
-        🔐 Iniciar Sesión como Cajero / Tesorería
+        Iniciar Sesión
       </button>
     </form>
   </div>
 
   <script type="module">
     import { login } from './auth.js';
-
-    let activeRole = 'CAJERO';
-
-    const ROLE_CONFIGS = {
-      CAJERO: {
-        title: '💵 Rol: Tesorera / Cobradora (Operador Integral)',
-        color: '#15803d',
-        btnBg: '#16a34a',
-        btnBorder: '#15803d',
-        btnText: '🔐 Iniciar Sesión como Cajero / Tesorería',
-        desc: 'Acceso total a: Padrón de Socios, Lecturas, Caja y Cobros, Fondos 3 Columnas y Reportes.',
-        defaultUser: 'cajero',
-        passHint: 'Pista: Cajero123*',
-        targetUrl: 'socios.html'
-      },
-      ADMIN: {
-        title: '👑 Rol: Administrador General (Gobernanza)',
-        color: '#4338ca',
-        btnBg: '#4f46e5',
-        btnBorder: '#4338ca',
-        btnText: '🔐 Iniciar Sesión como Administrador',
-        desc: 'Acceso a Gobernanza, Configuración de Tarifas, Usuarios del Sistema, Sectores y Reportes.',
-        defaultUser: 'admin',
-        passHint: 'Pista: Admin123*',
-        targetUrl: 'socios.html'
-      },
-      LECTOR: {
-        title: '⏱️ Rol: Operador de Micromedición (Lector)',
-        color: '#b45309',
-        btnBg: '#d97706',
-        btnBorder: '#b45309',
-        btnText: '🔐 Iniciar Sesión como Lector de Campo',
-        desc: 'Acceso exclusivo a la interfaz de toma de lecturas mensuales de micromedición por sector.',
-        defaultUser: 'lector',
-        passHint: 'Pista: Lector123*',
-        targetUrl: 'lecturas.html'
-      }
-    };
-
-    function selectRole(role) {
-      activeRole = role;
-      const cfg = ROLE_CONFIGS[role];
-
-      // Actualizar pestañas
-      document.querySelectorAll('.role-tab-btn').forEach((btn) => {
-        btn.classList.remove('active');
-        if (btn.getAttribute('data-role') === role) {
-          btn.classList.add('active');
-        }
-      });
-
-      // Actualizar banner y form
-      document.getElementById('roleInfoTitle').textContent = cfg.title;
-      document.getElementById('roleInfoTitle').style.color = cfg.color;
-      document.getElementById('roleInfoDesc').textContent = cfg.desc;
-      document.getElementById('passHint').textContent = cfg.passHint;
-
-      const inputUser = document.getElementById('loginUser');
-      inputUser.value = cfg.defaultUser;
-
-      const btnSubmit = document.getElementById('btnSubmit');
-      btnSubmit.textContent = cfg.btnText;
-      btnSubmit.style.background = cfg.btnBg;
-      btnSubmit.style.borderColor = cfg.btnBorder;
-
-      document.getElementById('loginPassword').value = '';
-      document.getElementById('loginError').style.display = 'none';
-    }
-
-    document.querySelectorAll('.role-tab-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const role = btn.getAttribute('data-role');
-        selectRole(role);
-      });
-    });
 
     const showError = (msg) => {
       const errEl = document.getElementById('loginError');
@@ -298,19 +136,21 @@
       const pass = document.getElementById('loginPassword').value;
       const btn = document.getElementById('btnSubmit');
 
-      const originalText = btn.textContent;
       btn.disabled = true;
-      btn.textContent = '⏳ Verificando credenciales...';
+      btn.textContent = 'Verificando...';
+      document.getElementById('loginError').style.display = 'none';
 
       try {
-        const u = await login(identifier, pass, activeRole);
-        const target = ROLE_CONFIGS[u.rol]?.targetUrl || (u.rol === 'LECTOR' ? 'lecturas.html' : 'socios.html');
-        window.location.href = target;
+        const u = await login(identifier, pass);
+        if (u.rol === 'LECTOR') {
+          window.location.href = 'lecturas.html';
+        } else {
+          window.location.href = 'socios.html';
+        }
       } catch (err) {
-        showError(err.message || 'Error al iniciar sesión.');
-      } finally {
+        showError(err.message || 'Credenciales incorrectas.');
         btn.disabled = false;
-        btn.textContent = originalText;
+        btn.textContent = 'Iniciar Sesión';
       }
     });
   </script>
