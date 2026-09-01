@@ -148,12 +148,18 @@ export class ExpressApp extends Router {
       res.json = function (data: any) {
         if (!res.headersSent) {
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
           res.end(JSON.stringify(data, null, 2));
         }
       };
 
       res.send = function (data: any) {
         if (!res.headersSent) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
           if (typeof data === 'object') {
             res.json(data);
           } else {
@@ -163,13 +169,16 @@ export class ExpressApp extends Router {
         }
       };
 
-      // Headers de seguridad y CORS
+      // Headers de seguridad, No-Cache y CORS
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('X-Frame-Options', 'DENY');
       res.setHeader('X-XSS-Protection', '1; mode=block');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
 
       // Preflight OPTIONS
       if (req.method === 'OPTIONS') {
@@ -199,6 +208,9 @@ export class ExpressApp extends Router {
             const ext = path.extname(filePath).toLowerCase();
             const contentType = MIME_TYPES[ext] || 'application/octet-stream';
             res.setHeader('Content-Type', contentType);
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
             fs.createReadStream(filePath).pipe(res);
             return;
           }
@@ -208,6 +220,9 @@ export class ExpressApp extends Router {
             const htmlPath = `${filePath}.html`;
             if (fs.existsSync(htmlPath) && fs.statSync(htmlPath).isFile()) {
               res.setHeader('Content-Type', 'text/html; charset=utf-8');
+              res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+              res.setHeader('Pragma', 'no-cache');
+              res.setHeader('Expires', '0');
               fs.createReadStream(htmlPath).pipe(res);
               return;
             }

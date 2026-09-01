@@ -10,9 +10,9 @@ export function injectAppLayout(activePageId) {
   header.className = 'app-header';
 
   const roleColors = {
-    ADMIN: { bg: '#e0e7ff', text: '#4338ca', label: '👑 ADMIN' },
+    ADMIN: { bg: '#e0e7ff', text: '#4338ca', label: '👑 ADMINISTRADOR' },
     CAJERO: { bg: '#dcfce7', text: '#15803d', label: '💵 TESORERÍA / CAJA' },
-    LECTOR: { bg: '#fef3c7', text: '#b45309', label: '⏱️ ROL LECTOR' }
+    LECTOR: { bg: '#fef3c7', text: '#b45309', label: '⏱️ MICROMEDICIÓN' }
   };
   const roleInfo = roleColors[user?.rol] || { bg: '#f1f5f9', text: '#475569', label: user?.rol || 'USUARIO' };
 
@@ -20,27 +20,27 @@ export function injectAppLayout(activePageId) {
     <div class="brand">
       <div class="brand-icon">💧</div>
       <div>
-        <h1 class="brand-title">SIGA-Comunitario • App Agua & Caja</h1>
-        <p class="brand-subtitle">Gestión Integral de Agua Potable y Control de Fondos (Offline-First)</p>
+        <h1 class="brand-title">SIGA-Comunitario</h1>
+        <p class="brand-subtitle">Gestión Integral de Agua Potable y Control de Fondos</p>
       </div>
     </div>
     <div class="header-controls">
-      <!-- Info Usuario y Logout -->
-      <div class="user-session-pill">
-        <div class="user-avatar-mini">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</div>
+      <!-- Info Usuario y Botón Cerrar Sesión Prominente -->
+      <div class="user-session-pill" style="display: flex; align-items: center; gap: 0.75rem; background: #f8fafc; border: 1px solid #cbd5e1; padding: 0.4rem 0.75rem; border-radius: 8px;">
+        <div class="user-avatar-mini" style="font-size: 1.3rem;">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</div>
         <div class="user-session-text">
-          <div class="user-session-name">${user?.nombre || user?.username || 'Usuario'}</div>
-          <span class="user-role-badge" style="background: ${roleInfo.bg}; color: ${roleInfo.text};">${roleInfo.label}</span>
+          <div class="user-session-name" style="font-weight: 800; font-size: 0.85rem; color: #0f172a;">${user?.nombre || user?.username || 'Usuario'}</div>
+          <span class="user-role-badge" style="background: ${roleInfo.bg}; color: ${roleInfo.text}; font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.45rem; border-radius: 4px;">${roleInfo.label}</span>
         </div>
-        <button class="btn btn-sm btn-logout" id="btnLogoutHeader" title="Cerrar Sesión">
+        <button class="btn btn-logout" id="btnLogoutHeader" title="Cerrar Sesión Seguramente">
           🚪 Cerrar Sesión
         </button>
       </div>
 
-      <div class="badge-perf" id="perfMeter">⚡ Latencia DB: <span>0.0 ms</span></div>
+      <div class="badge-perf" id="perfMeter">⚡ Latencia: <span>0.0 ms</span></div>
       <button id="toggleNetworkBtn" class="btn-network online">
         <span class="pulse-dot"></span>
-        <span id="networkStatusText">Simulador: EN LÍNEA</span>
+        <span id="networkStatusText">En Línea</span>
       </button>
     </div>
   `;
@@ -62,7 +62,7 @@ export function injectAppLayout(activePageId) {
     </div>
   `;
 
-  // 3. Navigation Bar (El Cajero/Tesorero maneja todos los módulos operativos y de reportes)
+  // 3. Navigation Bar
   const nav = document.createElement('nav');
   nav.className = 'app-nav';
 
@@ -100,8 +100,9 @@ export function injectAppLayout(activePageId) {
   container.insertBefore(banner, container.firstChild);
   container.insertBefore(header, container.firstChild);
 
-  // Logout listener
-  document.getElementById('btnLogoutHeader')?.addEventListener('click', () => {
+  // Botón de Cerrar Sesión
+  document.getElementById('btnLogoutHeader')?.addEventListener('click', (e) => {
+    e.preventDefault();
     logout();
   });
 
@@ -123,13 +124,13 @@ function initNetworkSimulator() {
     isOnlineSimulator = !isOnlineSimulator;
     if (isOnlineSimulator) {
       toggleNetworkBtn.className = 'btn-network online';
-      networkStatusText.textContent = 'Simulador: EN LÍNEA';
+      networkStatusText.textContent = 'En Línea';
       networkBanner.className = 'status-banner banner-online';
       bannerTitle.textContent = 'Conexión Activa';
       bannerDesc.textContent = 'Los datos se guardan en IndexedDB local y se sincronizan con SQLite / Supabase.';
     } else {
       toggleNetworkBtn.className = 'btn-network offline';
-      networkStatusText.textContent = 'Simulador: FUERA DE LÍNEA';
+      networkStatusText.textContent = 'Fuera de Línea';
       networkBanner.className = 'status-banner banner-offline';
       bannerTitle.textContent = 'Modo Fuera de Línea (Offline)';
       bannerDesc.textContent = 'Sin conexión. Todas las mutaciones se almacenan localmente en la cola Outbox.';

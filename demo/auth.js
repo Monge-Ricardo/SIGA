@@ -1,5 +1,5 @@
 /**
- * SIGA-Comunitario • Módulo de Autenticación
+ * SIGA-Comunitario • Módulo de Autenticación y Manejo de Tokens
  */
 
 export const USERS_SEED = [
@@ -36,7 +36,7 @@ const AUTH_STORAGE_KEY = 'SIGA_AUTH_USER';
 const TOKEN_STORAGE_KEY = 'SIGA_AUTH_TOKEN';
 
 export function getCurrentUser() {
-  const data = localStorage.getItem(AUTH_STORAGE_KEY);
+  const data = sessionStorage.getItem(AUTH_STORAGE_KEY) || localStorage.getItem(AUTH_STORAGE_KEY);
   if (!data) return null;
   try {
     return JSON.parse(data);
@@ -46,7 +46,7 @@ export function getCurrentUser() {
 }
 
 export function getAuthToken() {
-  return localStorage.getItem(TOKEN_STORAGE_KEY) || '';
+  return sessionStorage.getItem(TOKEN_STORAGE_KEY) || localStorage.getItem(TOKEN_STORAGE_KEY) || '';
 }
 
 export async function login(identifier, password) {
@@ -80,12 +80,15 @@ export async function login(identifier, password) {
         cargo: data.usuario.rol === 'ADMIN' ? 'Administrador General' : data.usuario.rol === 'CAJERO' ? 'Tesorero / Recaudador' : 'Lector de Campo',
         loggedAt: new Date().toISOString()
       };
+      
+      sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionUser));
+      sessionStorage.setItem(TOKEN_STORAGE_KEY, data.token || '');
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionUser));
       localStorage.setItem(TOKEN_STORAGE_KEY, data.token || '');
       return sessionUser;
     }
   } catch (netErr) {
-    console.warn('[Auth] Servidor no disponible o timeout, validando localmente:', netErr);
+    console.warn('[Auth] Servidor local o timeout, validando credenciales locales:', netErr);
   }
 
   // 2. Respaldo de autenticación local
@@ -109,36 +112,50 @@ export async function login(identifier, password) {
     loggedAt: new Date().toISOString()
   };
 
+  sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionUser));
+  sessionStorage.setItem(TOKEN_STORAGE_KEY, 'local-session-jwt');
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(sessionUser));
   localStorage.setItem(TOKEN_STORAGE_KEY, 'local-session-jwt');
   return sessionUser;
 }
 
 export function logout() {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+  sessionStorage.clear();
   localStorage.removeItem(AUTH_STORAGE_KEY);
   localStorage.removeItem(TOKEN_STORAGE_KEY);
-  window.location.href = 'login.html';
+  window.location.replace('login.html');
 }
 
 /**
- * Guardia de autenticación para páginas MPA.
+ * Guardia de autenticación para páginas protegidas.
+ * Se asegura de que no se pueda volver atrás con el botón 'Atrás' del navegador tras cerrar sesión.
  */
 export function requireAuth(allowedRoles = []) {
   const user = getCurrentUser();
   if (!user) {
-    window.location.href = 'login.html';
+    window.location.replace('login.html');
     return null;
   }
 
   if (allowedRoles.length > 0 && !allowedRoles.includes(user.rol)) {
-    alert(`Acceso Restringido: Tu rol de ${user.cargo} (${user.rol}) no tiene permisos para este módulo.`);
+    alert(`Acceso Restringido: Tu rol (${user.rol}) no tiene permisos para este módulo.`);
     if (user.rol === 'LECTOR') {
-      window.location.href = 'lecturas.html';
+      window.location.replace('lecturas.html');
     } else {
-      window.location.href = 'socios.html';
+      window.location.replace('socios.html');
     }
     return null;
   }
+
+  // Prevención de bfcache (Back-Forward Cache del navegador)
+  window.addEventListener('pageshow', (event) => {
+    const currentUser = getCurrentUser();
+    if (!currentUser) {
+      window.location.replace('login.html');
+    }
+  });
 
   return user;
 }
