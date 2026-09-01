@@ -5,9 +5,8 @@ export function injectAppLayout(activePageId) {
   const container = document.querySelector('.container');
   if (!container) return;
 
-  // 1. Top Header
-  const header = document.createElement('header');
-  header.className = 'app-header';
+  // Añadir clase al body para el layout con sidebar
+  document.body.classList.add('has-sidebar-layout');
 
   const roleColors = {
     ADMIN: { bg: '#e0e7ff', text: '#4338ca', label: '👑 ADMINISTRADOR' },
@@ -16,36 +15,96 @@ export function injectAppLayout(activePageId) {
   };
   const roleInfo = roleColors[user?.rol] || { bg: '#f1f5f9', text: '#475569', label: user?.rol || 'USUARIO' };
 
-  header.innerHTML = `
-    <div class="brand">
-      <div class="brand-icon">💧</div>
+  // Crear o reutilizar el wrapper de layout
+  let layoutWrapper = document.querySelector('.app-layout-wrapper');
+  if (!layoutWrapper) {
+    layoutWrapper = document.createElement('div');
+    layoutWrapper.className = 'app-layout-wrapper';
+    document.body.appendChild(layoutWrapper);
+  }
+
+  // 1. Navbar / Sidebar Izquierdo
+  const sidebar = document.createElement('aside');
+  sidebar.className = 'app-sidebar-left';
+
+  const allMenuItems = [
+    { id: 'socios', href: 'socios.html', icon: '👥', label: '1. Padrón de Socios', desc: 'Abonados y 3ra edad', roles: ['ADMIN', 'CAJERO'] },
+    { id: 'lecturas', href: 'lecturas.html', icon: '⏱️', label: '2. Toma de Lecturas', desc: 'Micromedición por sector', roles: ['ADMIN', 'CAJERO', 'LECTOR'] },
+    { id: 'caja', href: 'caja.html', icon: '💵', label: '3. Caja y Cobros', desc: 'Liquidación y recibos', roles: ['ADMIN', 'CAJERO'] },
+    { id: 'fondos', href: 'fondos.html', icon: '🏛️', label: '4. Fondos (3 Col)', desc: 'Libro Mayor Ing/Egr/Saldo', roles: ['ADMIN', 'CAJERO'] },
+    { id: 'reportes', href: 'reportes.html', icon: '📊', label: '5. Reportes & Auditoría', desc: 'Morosidad y asamblea', roles: ['ADMIN', 'CAJERO'] },
+    { id: 'admin', href: 'admin.html', icon: '👑', label: '6. Gobernanza & Tarifas', desc: 'Parámetros del sistema', roles: ['ADMIN'] }
+  ];
+
+  const permittedItems = allMenuItems.filter(
+    (item) => !user || item.roles.includes(user.rol)
+  );
+
+  sidebar.innerHTML = `
+    <!-- Brand / Logo -->
+    <div class="sidebar-brand-box">
+      <div class="sidebar-brand-icon">💧</div>
       <div>
-        <h1 class="brand-title">SIGA-Comunitario</h1>
-        <p class="brand-subtitle">Gestión Integral de Agua Potable y Control de Fondos</p>
+        <div class="sidebar-brand-title">SIGA-Comunitario</div>
+        <div class="sidebar-brand-sub">Junta de Agua Potable</div>
       </div>
     </div>
-    <div class="header-controls">
-      <!-- Info Usuario y Botón Cerrar Sesión Prominente -->
-      <div class="user-session-pill" style="display: flex; align-items: center; gap: 0.75rem; background: #f8fafc; border: 1px solid #cbd5e1; padding: 0.4rem 0.75rem; border-radius: 8px;">
-        <div class="user-avatar-mini" style="font-size: 1.3rem;">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</div>
-        <div class="user-session-text">
-          <div class="user-session-name" style="font-weight: 800; font-size: 0.85rem; color: #0f172a;">${user?.nombre || user?.username || 'Usuario'}</div>
-          <span class="user-role-badge" style="background: ${roleInfo.bg}; color: ${roleInfo.text}; font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.45rem; border-radius: 4px;">${roleInfo.label}</span>
-        </div>
-        <button class="btn btn-logout" id="btnLogoutHeader" title="Cerrar Sesión Seguramente">
-          🚪 Cerrar Sesión
+
+    <!-- Perfil del Usuario Activo -->
+    <div class="sidebar-user-card">
+      <div class="sidebar-user-avatar">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</div>
+      <div class="sidebar-user-info">
+        <div class="sidebar-user-name">${user?.nombre || user?.username || 'Usuario'}</div>
+        <span class="sidebar-role-pill" style="background: ${roleInfo.bg}; color: ${roleInfo.text};">
+          ${roleInfo.label}
+        </span>
+      </div>
+    </div>
+
+    <!-- Menú de Pestañas del Cobrador y Operador -->
+    <nav class="sidebar-nav-menu">
+      <div class="sidebar-nav-label">MÓDULOS DEL SISTEMA</div>
+      <ul class="sidebar-nav-list">
+        ${permittedItems
+          .map((item) => {
+            const isActive = item.id === activePageId;
+            return `
+              <li class="sidebar-nav-item">
+                <a href="${item.href}" class="sidebar-nav-link ${isActive ? 'active' : ''}">
+                  <span class="nav-link-icon">${item.icon}</span>
+                  <div class="nav-link-text">
+                    <span class="nav-link-title">${item.label}</span>
+                    <span class="nav-link-desc">${item.desc}</span>
+                  </div>
+                </a>
+              </li>
+            `;
+          })
+          .join('')}
+      </ul>
+    </nav>
+
+    <!-- Footer del Sidebar: Estado de Red y Logout -->
+    <div class="sidebar-footer-box">
+      <div class="sidebar-status-row">
+        <button id="toggleNetworkBtn" class="btn-network-sidebar online">
+          <span class="pulse-dot"></span>
+          <span id="networkStatusText">En Línea</span>
         </button>
+        <span class="badge-perf-sidebar" id="perfMeter">⚡ 0.0 ms</span>
       </div>
 
-      <div class="badge-perf" id="perfMeter">⚡ Latencia: <span>0.0 ms</span></div>
-      <button id="toggleNetworkBtn" class="btn-network online">
-        <span class="pulse-dot"></span>
-        <span id="networkStatusText">En Línea</span>
+      <button class="btn btn-sidebar-logout" id="btnLogoutSidebar" title="Cerrar sesión de forma segura">
+        🚪 Cerrar Sesión
       </button>
     </div>
   `;
 
-  // 2. Banner de Red
+  // 2. Área de Contenido Principal (Derecha)
+  const mainContent = document.createElement('main');
+  mainContent.className = 'app-main-content-area';
+
+  // Banner de Sincronización Superior
   const banner = document.createElement('div');
   banner.id = 'networkBanner';
   banner.className = 'status-banner banner-online';
@@ -62,46 +121,16 @@ export function injectAppLayout(activePageId) {
     </div>
   `;
 
-  // 3. Navigation Bar
-  const nav = document.createElement('nav');
-  nav.className = 'app-nav';
+  // Mover el contenedor dentro del área principal
+  container.parentNode.removeChild(container);
+  mainContent.appendChild(banner);
+  mainContent.appendChild(container);
 
-  const allMenuItems = [
-    { id: 'socios', href: 'socios.html', icon: '👥', label: '1. Padrón de Socios', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'lecturas', href: 'lecturas.html', icon: '⏱️', label: '2. Toma de Lecturas', roles: ['ADMIN', 'CAJERO', 'LECTOR'] },
-    { id: 'caja', href: 'caja.html', icon: '💵', label: '3. Caja y Cobros', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'fondos', href: 'fondos.html', icon: '🏛️', label: '4. Fondos (3 Col)', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'reportes', href: 'reportes.html', icon: '📊', label: '5. Reportes & Auditoría', roles: ['ADMIN', 'CAJERO'] },
-    { id: 'admin', href: 'admin.html', icon: '👑', label: '6. Gobernanza & Tarifas', roles: ['ADMIN'] }
-  ];
+  layoutWrapper.appendChild(sidebar);
+  layoutWrapper.appendChild(mainContent);
 
-  // Filtrar solo los módulos que pertenecen al rol activo
-  const permittedItems = allMenuItems.filter(
-    (item) => !user || item.roles.includes(user.rol)
-  );
-
-  const ul = document.createElement('ul');
-  ul.className = 'nav-tabs';
-
-  permittedItems.forEach((item) => {
-    const isActive = item.id === activePageId;
-    const li = document.createElement('li');
-    li.innerHTML = `
-      <a href="${item.href}" class="nav-tab-btn ${isActive ? 'active' : ''}">
-        <span>${item.icon}</span> ${item.label}
-      </a>
-    `;
-    ul.appendChild(li);
-  });
-
-  nav.appendChild(ul);
-
-  container.insertBefore(nav, container.firstChild);
-  container.insertBefore(banner, container.firstChild);
-  container.insertBefore(header, container.firstChild);
-
-  // Botón de Cerrar Sesión
-  document.getElementById('btnLogoutHeader')?.addEventListener('click', (e) => {
+  // Listener para Logout
+  document.getElementById('btnLogoutSidebar')?.addEventListener('click', (e) => {
     e.preventDefault();
     logout();
   });
@@ -123,13 +152,13 @@ function initNetworkSimulator() {
   toggleNetworkBtn.addEventListener('click', () => {
     isOnlineSimulator = !isOnlineSimulator;
     if (isOnlineSimulator) {
-      toggleNetworkBtn.className = 'btn-network online';
+      toggleNetworkBtn.className = 'btn-network-sidebar online';
       networkStatusText.textContent = 'En Línea';
       networkBanner.className = 'status-banner banner-online';
       bannerTitle.textContent = 'Conexión Activa';
       bannerDesc.textContent = 'Los datos se guardan en IndexedDB local y se sincronizan con SQLite / Supabase.';
     } else {
-      toggleNetworkBtn.className = 'btn-network offline';
+      toggleNetworkBtn.className = 'btn-network-sidebar offline';
       networkStatusText.textContent = 'Fuera de Línea';
       networkBanner.className = 'status-banner banner-offline';
       bannerTitle.textContent = 'Modo Fuera de Línea (Offline)';
