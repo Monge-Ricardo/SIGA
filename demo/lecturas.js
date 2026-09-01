@@ -336,6 +336,8 @@ function renderTableAndMetrics() {
       <td style="text-align: right;">
         <input 
           type="number" 
+          inputmode="numeric"
+          pattern="[0-9]*"
           class="input-lectura-actual ${lact !== undefined ? 'input-saved' : ''}" 
           id="input-lact-${socio.id}"
           value="${lact !== undefined ? lact : ''}"

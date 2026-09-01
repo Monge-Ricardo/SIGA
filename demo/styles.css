@@ -1573,3 +1573,67 @@ body.has-sidebar-layout {
 .swal-btn-cancel:hover {
   background: #e2e8f0;
 }
+
+/* =========================================================
+   RESPONSIVE MÓVIL (ROL LECTOR EN TELÉFONO CELULAR)
+   ========================================================= */
+@media (max-width: 768px) {
+  .app-layout-wrapper {
+    flex-direction: column !important;
+  }
+
+  .app-sidebar-left {
+    width: 100% !important;
+    min-width: 100% !important;
+    min-height: auto !important;
+    position: static !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+  }
+
+  .sidebar-brand-box {
+    padding: 1rem 1.25rem !important;
+  }
+
+  .sidebar-user-card {
+    margin: 0.5rem 1.25rem !important;
+  }
+
+  .sidebar-nav-menu {
+    padding: 0.5rem !important;
+  }
+
+  .sidebar-nav-list {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.35rem !important;
+  }
+
+  .app-main-content-area {
+    padding: 0.75rem 0.5rem !important;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.5rem !important;
+  }
+
+  .input-lectura-actual {
+    font-size: 1.15rem !important;
+    font-weight: 900 !important;
+    padding: 0.55rem 0.35rem !important;
+    width: 100% !important;
+    min-width: 80px !important;
+    text-align: center !important;
+    border-radius: 6px !important;
+  }
+
+  .data-table th, .data-table td {
+    padding: 0.65rem 0.35rem !important;
+    font-size: 0.85rem !important;
+  }
+
+  .filter-row {
+    flex-direction: column !important;
+    gap: 0.75rem !important;
+  }
+}
