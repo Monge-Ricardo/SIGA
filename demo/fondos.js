@@ -290,8 +290,13 @@ function setupEventos() {
   });
 }
 
-// Inicialización
-document.addEventListener('DOMContentLoaded', async () => {
+async function initFondos() {
   setupEventos();
   await Promise.all([cargarBalanceFondos(), cargarLibroMayor()]);
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initFondos);
+} else {
+  initFondos();
+}

@@ -223,7 +223,13 @@ function setupEventos() {
   });
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function initReportes() {
   setupEventos();
   await Promise.all([cargarReporteMorosidad(), cargarReporteSectores(), cargarReporteGestion()]);
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initReportes);
+} else {
+  initReportes();
+}

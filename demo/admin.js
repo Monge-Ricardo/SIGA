@@ -205,7 +205,13 @@ function setupEventos() {
   });
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function initAdmin() {
   setupEventos();
   await Promise.all([cargarTarifas(), cargarSectores(), cargarUsuarios()]);
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initAdmin);
+} else {
+  initAdmin();
+}

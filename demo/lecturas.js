@@ -1,4 +1,4 @@
-import { requireAuth } from './auth.js';
+import { requireAuth, getAuthToken } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 
@@ -12,6 +12,26 @@ const DB_NAME = 'SIGAComunitarioDemoDB';
 const DB_VERSION = 2;
 let db = null;
 
+async function apiFetch(url, options = {}) {
+  const token = getAuthToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {})
+  };
+  try {
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `Error ${res.status}`);
+    }
+    return res.json();
+  } catch (err) {
+    console.warn(`[API Lecturas] Error ${url}:`, err.message);
+    throw err;
+  }
+}
+
 const BASELINE_LECTURAS = {
   'soc-001': 150,
   'soc-002': 210,
@@ -20,7 +40,7 @@ const BASELINE_LECTURAS = {
 };
 
 function initIndexedDB() {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = (event) => {
@@ -47,140 +67,208 @@ function initIndexedDB() {
       resolve(db);
     };
 
-    request.onerror = (event) => {
-      console.error('Error al inicializar IndexedDB:', event.target.error);
-      reject(event.target.error);
+    request.onerror = () => {
+      console.warn('IndexedDB no disponible para lecturas, usando API REST');
+      resolve(null);
     };
   });
 }
 
 async function getAllSocios() {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['socios'], 'readonly');
-    const req = tx.objectStore('socios').getAll();
-    req.onsuccess = () => resolve(req.result);
-  });
+  try {
+    const res = await apiFetch('/api/v1/socios');
+    return (res.data || []).map((s) => ({
+      id: s.id,
+      codigoSocio: s.codigoSocio,
+      nombres: s.nombres,
+      apellidos: s.apellidos,
+      nombreCompleto: `${s.nombres} ${s.apellidos}`,
+      cedulaRuc: s.cedulaRuc,
+      sectorId: s.idSector || s.sectorId,
+      nombreSector: s.nombreSector || 'Sector Centro',
+      medidorNumero: s.medidorNumero,
+      tieneAlcantarillado: s.tieneAlcantarillado,
+      estadoServicio: s.estado
+    }));
+  } catch (err) {
+    if (!db) return [];
+    return new Promise((resolve) => {
+      const tx = db.transaction(['socios'], 'readonly');
+      const req = tx.objectStore('socios').getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  }
 }
 
 async function getAllSectores() {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['sectores'], 'readonly');
-    const req = tx.objectStore('sectores').getAll();
-    req.onsuccess = () => resolve(req.result);
-  });
+  try {
+    const res = await apiFetch('/api/v1/sectores');
+    return res.data || [];
+  } catch (err) {
+    if (!db) return [];
+    return new Promise((resolve) => {
+      const tx = db.transaction(['sectores'], 'readonly');
+      const req = tx.objectStore('sectores').getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  }
 }
 
 async function getLecturasPeriodo(periodo) {
-  return new Promise((resolve) => {
-    const tx = db.transaction(['lecturas'], 'readonly');
-    const store = tx.objectStore('lecturas');
-    const req = store.getAll();
-    req.onsuccess = () => {
-      const all = req.result || [];
-      resolve(all.filter((l) => l.periodo === periodo));
-    };
-    req.onerror = () => resolve([]);
-  });
+  try {
+    const res = await apiFetch(`/api/v1/lecturas?periodoId=${encodeURIComponent(periodo)}`);
+    return (res.data || []).map((l) => ({
+      id: l.id,
+      clienteId: l.idSocio,
+      periodo: l.periodoCodigo || periodo,
+      lecturaAnterior: l.lecturaAnterior,
+      lecturaActual: l.lecturaActual,
+      consumoM3: l.consumoM3,
+      excedenteM3: l.excedenteM3,
+      observaciones: l.observaciones,
+      updatedAt: l.updatedAt
+    }));
+  } catch (err) {
+    if (!db) return [];
+    return new Promise((resolve) => {
+      const tx = db.transaction(['lecturas'], 'readonly');
+      const store = tx.objectStore('lecturas');
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const all = req.result || [];
+        resolve(all.filter((l) => l.periodo === periodo));
+      };
+      req.onerror = () => resolve([]);
+    });
+  }
 }
 
 async function saveLecturaLocal(lecturaData) {
   const start = performance.now();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['lecturas', 'sync_queue'], 'readwrite');
-    const lecturasStore = tx.objectStore('lecturas');
-    const queueStore = tx.objectStore('sync_queue');
 
-    const id = `lec-${lecturaData.clienteId}-${lecturaData.periodo}`;
-    const record = {
-      id,
-      ...lecturaData,
-      updatedAt: new Date().toISOString()
-    };
+  // 1. Enviar al Backend API (SQLite + Sincronización)
+  try {
+    await apiFetch('/api/v1/lecturas', {
+      method: 'POST',
+      body: JSON.stringify({
+        idSocio: lecturaData.clienteId,
+        idPeriodo: lecturaData.periodo,
+        lecturaActual: lecturaData.lecturaActual,
+        lecturaAnterior: lecturaData.lecturaAnterior,
+        observaciones: lecturaData.observaciones || ''
+      })
+    });
+  } catch (apiErr) {
+    console.warn('[Lecturas] Guardado local offline:', apiErr.message);
+  }
 
-    lecturasStore.put(record);
+  // 2. Guardar en IndexedDB local
+  if (db) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['lecturas', 'sync_queue'], 'readwrite');
+      const lecturasStore = tx.objectStore('lecturas');
+      const queueStore = tx.objectStore('sync_queue');
 
-    const mutation = {
-      id: 'mut-' + crypto.randomUUID().slice(0, 8),
-      entity: 'lecturas',
-      entityId: id,
-      action: 'UPSERT',
-      payload: record,
-      localTimestamp: new Date().toLocaleTimeString(),
-      status: 'SYNCED'
-    };
-    queueStore.add(mutation);
+      const id = `lec-${lecturaData.clienteId}-${lecturaData.periodo}`;
+      const record = {
+        id,
+        ...lecturaData,
+        updatedAt: new Date().toISOString()
+      };
 
-    tx.oncomplete = () => {
-      const latency = (performance.now() - start).toFixed(1);
-      const el = document.querySelector('#perfMeter span');
-      if (el) el.textContent = `${latency} ms`;
-      resolve(record);
-    };
+      lecturasStore.put(record);
 
-    tx.onerror = (e) => reject(e.target.error);
-  });
+      queueStore.add({
+        id: 'mut-' + crypto.randomUUID().slice(0, 8),
+        entity: 'lecturas',
+        entityId: id,
+        action: 'UPSERT',
+        payload: record,
+        localTimestamp: new Date().toLocaleTimeString(),
+        status: 'SYNCED'
+      });
+
+      tx.oncomplete = () => {
+        const latency = (performance.now() - start).toFixed(1);
+        const el = document.querySelector('#perfMeter span');
+        if (el) el.textContent = `${latency} ms`;
+        resolve(record);
+      };
+
+      tx.onerror = (e) => reject(e.target.error);
+    });
+  }
 }
 
+// Variables del Módulo
 let cachedSocios = [];
 let cachedSectores = [];
 let cachedLecturas = [];
 const rowStateMap = new Map();
 
 async function renderLecturasUI() {
+  const periodo = document.getElementById('selectPeriodo').value;
+
   cachedSocios = await getAllSocios();
   cachedSectores = await getAllSectores();
-
-  populateSectoresDropdown(cachedSectores);
-
-  const periodo = document.getElementById('selectPeriodo').value;
   cachedLecturas = await getLecturasPeriodo(periodo);
 
+  populateSectorSelect(cachedSectores);
   renderTableAndMetrics();
 }
 
-function populateSectoresDropdown(sectores) {
+function populateSectorSelect(sectores) {
   const select = document.getElementById('selectSectorRuta');
-  if (select && select.options.length <= 1) {
-    sectores.forEach((sec) => {
-      const opt = document.createElement('option');
-      opt.value = sec.id;
-      opt.textContent = `${sec.codigo} - ${sec.nombre}`;
-      select.appendChild(opt);
-    });
+  const currentVal = select.value;
+  select.innerHTML = '<option value="TODOS">Todos los sectores (Ruta completa)</option>';
+
+  sectores.forEach((sec) => {
+    const opt = document.createElement('option');
+    opt.value = sec.id;
+    opt.textContent = `${sec.codigo ? sec.codigo + ' - ' : ''}${sec.nombre}`;
+    select.appendChild(opt);
+  });
+
+  if (currentVal && Array.from(select.options).some((o) => o.value === currentVal)) {
+    select.value = currentVal;
   }
 }
 
 function renderTableAndMetrics() {
-  const sectorId = document.getElementById('selectSectorRuta').value;
-  const busqueda = (document.getElementById('searchSocioLectura').value || '').toLowerCase().trim();
+  const sectorFilter = document.getElementById('selectSectorRuta').value;
+  const searchFilter = document.getElementById('searchSocioLectura').value.toLowerCase().trim();
   const periodo = document.getElementById('selectPeriodo').value;
 
-  let sociosRuta = cachedSocios.filter((s) => {
-    if (sectorId !== 'TODOS' && s.sectorId !== sectorId) return false;
-    if (busqueda) {
-      const match =
-        s.nombreCompleto.toLowerCase().includes(busqueda) ||
-        s.cedulaRuc.toLowerCase().includes(busqueda) ||
-        (s.medidorNumero && s.medidorNumero.toLowerCase().includes(busqueda));
-      if (!match) return false;
-    }
-    return true;
-  });
+  let filtrados = cachedSocios.filter((s) => s.estadoServicio !== 'CORTADO');
 
-  document.getElementById('routeTableCount').textContent = `Mostrando ${sociosRuta.length} medidores en la ruta del sector`;
+  if (sectorFilter !== 'TODOS') {
+    filtrados = filtrados.filter((s) => s.sectorId === sectorFilter);
+  }
+
+  if (searchFilter) {
+    filtrados = filtrados.filter((s) => {
+      const matchNom = s.nombreCompleto?.toLowerCase().includes(searchFilter);
+      const matchCed = s.cedulaRuc?.includes(searchFilter);
+      const matchMed = s.medidorNumero?.toLowerCase().includes(searchFilter);
+      return matchNom || matchCed || matchMed;
+    });
+  }
+
+  const tbody = document.getElementById('lecturasTableBody');
+  tbody.innerHTML = '';
+  rowStateMap.clear();
 
   let totalTomadas = 0;
   let totalConsumoM3 = 0;
   let totalExcedenteM3 = 0;
 
-  const tbody = document.getElementById('lecturasTableBody');
-  tbody.innerHTML = '';
-
-  if (sociosRuta.length === 0) {
+  if (filtrados.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="8" style="text-align: center; color: #64748b; padding: 2.5rem;">
-          🔍 No se encontraron medidores con los filtros seleccionados.
+        <td colspan="7" style="text-align: center; padding: 2rem; color: #64748b;">
+          No se encontraron socios activos en la ruta seleccionada.
         </td>
       </tr>
     `;
@@ -188,16 +276,22 @@ function renderTableAndMetrics() {
     return;
   }
 
-  sociosRuta.forEach((socio) => {
-    const existingLectura = cachedLecturas.find((l) => l.clienteId === socio.id);
-    const lecturaAnterior = existingLectura?.lecturaAnterior ?? (BASELINE_LECTURAS[socio.id] || 100);
-    const lecturaActual = existingLectura?.lecturaActual ?? '';
-    const isTomada = existingLectura && existingLectura.lecturaActual !== undefined;
+  filtrados.forEach((socio) => {
+    const lecturaExistente = cachedLecturas.find((l) => l.clienteId === socio.id);
+    const lant = lecturaExistente?.lecturaAnterior ?? BASELINE_LECTURAS[socio.id] ?? 120;
+    const lact = lecturaExistente?.lecturaActual;
 
-    if (isTomada) {
+    let consumo = 0;
+    let excedente = 0;
+    let isSaved = false;
+
+    if (lact !== undefined && lact !== null) {
+      consumo = Math.max(0, lact - lant);
+      excedente = Math.max(0, consumo - 30);
+      isSaved = true;
       totalTomadas++;
-      totalConsumoM3 += (existingLectura.consumoM3 || 0);
-      totalExcedenteM3 += (existingLectura.excedenteM3 || 0);
+      totalConsumoM3 += consumo;
+      totalExcedenteM3 += excedente;
     }
 
     const tr = document.createElement('tr');
@@ -205,178 +299,126 @@ function renderTableAndMetrics() {
 
     tr.innerHTML = `
       <td>
-        <div class="socio-cell-user">
-          <div class="user-avatar-mini">${socio.esTerceraEdad ? '👴' : '👤'}</div>
-          <div>
-            <div class="user-name">${socio.nombreCompleto}</div>
-            <div class="user-code">${socio.codigoSocio} • <span class="badge-code">${socio.medidorNumero || 'MED-AUTO'}</span></div>
-          </div>
-        </div>
+        <div class="socio-cell-name">${socio.nombreCompleto}</div>
+        <div class="socio-cell-sub">${socio.codigoSocio || '-'} &bull; ${socio.cedulaRuc || '-'}</div>
       </td>
-      <td><span class="sector-tag">${socio.nombreSector || socio.sectorId}</span></td>
-      <td style="text-align: right; font-weight: 700; color: #475569;">
-        <span class="lant-val">${lecturaAnterior}</span> m³
+      <td>
+        <span class="badge-tag">${socio.nombreSector || socio.sectorId}</span>
+      </td>
+      <td>
+        <code class="medidor-code">${socio.medidorNumero || 'MED-00000'}</code>
       </td>
       <td style="text-align: right;">
-        <input
-          type="number"
-          class="reading-input"
+        <span class="lectura-ant-badge">${lant} m³</span>
+      </td>
+      <td style="text-align: right;">
+        <input 
+          type="number" 
+          class="input-lectura-actual ${lact !== undefined ? 'input-saved' : ''}" 
           id="input-lact-${socio.id}"
-          data-socio-id="${socio.id}"
-          data-lant="${lecturaAnterior}"
-          value="${lecturaActual}"
-          placeholder="${lecturaAnterior}"
-          inputmode="numeric"
+          value="${lact !== undefined ? lact : ''}"
+          min="${lant}"
+          placeholder="${lant}"
         />
-        <div class="reading-alert-msg" id="alert-${socio.id}" style="display: none;"></div>
       </td>
       <td style="text-align: right;" id="consumo-cell-${socio.id}">
         ${
-          isTomada
-            ? `<span class="consumption-pill">${existingLectura.consumoM3} m³</span>`
-            : `<span style="color: #94a3b8;">-</span>`
+          lact !== undefined
+            ? `<span class="consumption-pill">${consumo} m³</span> ${
+                excedente > 0 ? `<span class="excess-pill">+${excedente} exc</span>` : ''
+              }`
+            : '<span class="text-subtle">-</span>'
         }
       </td>
-      <td style="text-align: right;" id="excedente-cell-${socio.id}">
+      <td style="text-align: center;" id="action-cell-${socio.id}">
         ${
-          isTomada
-            ? existingLectura.excedenteM3 > 0
-              ? `<span class="excess-pill">+${existingLectura.excedenteM3} m³ (+$${(existingLectura.excedenteM3 * 0.10).toFixed(2)})</span>`
-              : `<span style="color: #64748b;">0 m³ ($0.00)</span>`
-            : `<span style="color: #94a3b8;">-</span>`
+          isSaved
+            ? `<span class="badge-status badge-al-dia" title="Guardada">✅ Lista</span>`
+            : `<button class="btn btn-sm btn-outline btn-save-row" id="btn-save-${socio.id}" disabled>💾 Guardar</button>`
         }
-      </td>
-      <td id="status-cell-${socio.id}">
-        ${
-          isTomada
-            ? `<span class="status-badge status-badge-active">✅ Tomada</span>`
-            : `<span class="status-badge status-badge-suspended">⏳ Pendiente</span>`
-        }
-      </td>
-      <td style="text-align: right;">
-        <button class="btn btn-sm btn-primary btn-save-row" id="btn-save-${socio.id}" data-socio-id="${socio.id}">
-          💾 Guardar
-        </button>
       </td>
     `;
 
-    const inputLact = tr.querySelector(`#input-lact-${socio.id}`);
-    const alertBox = tr.querySelector(`#alert-${socio.id}`);
-    const consumoCell = tr.querySelector(`#consumo-cell-${socio.id}`);
-    const excedenteCell = tr.querySelector(`#excedente-cell-${socio.id}`);
-    const btnSave = tr.querySelector(`#btn-save-${socio.id}`);
+    tbody.appendChild(tr);
 
-    function validateAndCalculate(showAlert = false) {
+    const inputLact = tr.querySelector(`#input-lact-${socio.id}`);
+    const btnSave = tr.querySelector(`#btn-save-${socio.id}`);
+    const consumoCell = tr.querySelector(`#consumo-cell-${socio.id}`);
+    const actionCell = tr.querySelector(`#action-cell-${socio.id}`);
+
+    inputLact.addEventListener('input', () => {
       const valStr = inputLact.value.trim();
       if (valStr === '') {
-        inputLact.classList.remove('reading-input-invalid');
-        alertBox.style.display = 'none';
-        consumoCell.innerHTML = '<span style="color: #94a3b8;">-</span>';
-        excedenteCell.innerHTML = '<span style="color: #94a3b8;">-</span>';
-        btnSave.disabled = false;
+        inputLact.classList.remove('input-invalid', 'input-valid');
+        if (btnSave) btnSave.disabled = true;
+        consumoCell.innerHTML = '<span class="text-subtle">-</span>';
         rowStateMap.delete(socio.id);
         return;
       }
 
-      const lactNum = parseFloat(valStr);
-      if (isNaN(lactNum)) return;
-
-      if (lactNum < lecturaAnterior) {
-        inputLact.classList.add('reading-input-invalid');
-        alertBox.textContent = `⚠️ La lectura actual ingresada (${lactNum} m³) no puede ser menor que la lectura anterior registrada (${lecturaAnterior} m³).`;
-        alertBox.style.display = 'block';
-        consumoCell.innerHTML = '<span style="color: #dc2626; font-weight: 700;">Inválido</span>';
-        excedenteCell.innerHTML = '<span style="color: #dc2626;">-</span>';
-        btnSave.disabled = true;
-        rowStateMap.set(socio.id, { valid: false, lactNum, lecturaAnterior });
-
-        if (showAlert) {
-          Swal.fire({
-            icon: 'warning',
-            title: 'Lectura Inconsistente',
-            text: `La lectura actual ingresada (${lactNum} m³) no puede ser menor que la lectura anterior registrada (${lecturaAnterior} m³). Verifique el número de medidor o si existió un reinicio del contador.`
-          });
-        }
+      const valNum = parseFloat(valStr);
+      if (isNaN(valNum) || valNum < lant) {
+        inputLact.classList.add('input-invalid');
+        inputLact.classList.remove('input-valid');
+        if (btnSave) btnSave.disabled = true;
+        consumoCell.innerHTML = `<span class="error-msg-mini">⚠️ $L_{act} < L_{ant}$</span>`;
+        rowStateMap.delete(socio.id);
       } else {
-        inputLact.classList.remove('reading-input-invalid');
-        alertBox.style.display = 'none';
-        btnSave.disabled = false;
+        inputLact.classList.remove('input-invalid');
+        inputLact.classList.add('input-valid');
+        if (btnSave) btnSave.disabled = false;
 
-        const consumo = lactNum - lecturaAnterior;
-        const excedente = Math.max(0, consumo - 30);
-        const valorExcedente = Number((excedente * 0.10).toFixed(2));
-
-        consumoCell.innerHTML = `<span class="consumption-pill">${consumo} m³</span>`;
-        if (excedente > 0) {
-          excedenteCell.innerHTML = `<span class="excess-pill">+${excedente} m³ (+$${valorExcedente.toFixed(2)})</span>`;
-        } else {
-          excedenteCell.innerHTML = `<span style="color: #64748b;">0 m³ ($0.00)</span>`;
-        }
+        const cons = valNum - lant;
+        const exc = Math.max(0, cons - 30);
+        consumoCell.innerHTML = `
+          <span class="consumption-pill" style="color:#0284c7; font-weight:700;">${cons} m³</span>
+          ${exc > 0 ? `<span class="excess-pill">+${exc} exc</span>` : ''}
+        `;
 
         rowStateMap.set(socio.id, {
-          valid: true,
           clienteId: socio.id,
-          periodo,
-          lecturaAnterior,
-          lecturaActual: lactNum,
-          consumoM3: consumo,
-          excedenteM3: excedente,
-          valorExcedenteUSD: valorExcedente,
+          nombreSocio: socio.nombreCompleto,
           sectorId: socio.sectorId,
-          lectorResponsable: currentUser?.nombre || 'Lector',
-          fechaLectura: new Date().toISOString()
+          periodo,
+          lecturaAnterior: lant,
+          lecturaActual: valNum,
+          consumoM3: cons,
+          excedenteM3: exc,
+          valid: true
         });
       }
-    }
-
-    inputLact.addEventListener('input', () => validateAndCalculate(false));
-
-    btnSave.addEventListener('click', async () => {
-      validateAndCalculate(true);
-      const state = rowStateMap.get(socio.id);
-      if (!state || !state.valid) {
-        Swal.fire({
-          icon: 'warning',
-          title: 'Lectura Inválida',
-          text: `La lectura actual ingresada no puede ser menor que la lectura anterior registrada (${lecturaAnterior} m³).`
-        });
-        return;
-      }
-
-      btnSave.disabled = true;
-      btnSave.textContent = 'Guardando...';
-
-      await saveLecturaLocal(state);
-
-      const statusCell = tr.querySelector(`#status-cell-${socio.id}`);
-      statusCell.innerHTML = `<span class="status-badge status-badge-active">✅ Tomada</span>`;
-      btnSave.textContent = '✓ Guardado';
-      btnSave.className = 'btn btn-sm btn-success';
-
-      cachedLecturas = await getLecturasPeriodo(periodo);
-      recalcOverallMetrics(sociosRuta);
-
-      Swal.fire({
-        icon: 'success',
-        title: 'Lectura Guardada',
-        text: `Se registró la lectura de ${socio.nombreCompleto} con un consumo de ${state.consumoM3} m³ (${state.excedenteM3 > 0 ? `+${state.excedenteM3} m³ excedente` : 'Consumo base'}).`
-      });
     });
 
-    tbody.appendChild(tr);
+    // Guardar fila individual
+    btnSave?.addEventListener('click', async () => {
+      const state = rowStateMap.get(socio.id);
+      if (state && state.valid) {
+        btnSave.disabled = true;
+        btnSave.textContent = '...';
+        await saveLecturaLocal(state);
+
+        cachedLecturas = await getLecturasPeriodo(periodo);
+        actionCell.innerHTML = `<span class="badge-status badge-al-dia">✅ Lista</span>`;
+        inputLact.classList.remove('input-valid');
+        inputLact.classList.add('input-saved');
+
+        recalcOverallMetrics(filtrados);
+      }
+    });
   });
 
-  updateMetrics(sociosRuta.length, totalTomadas, totalConsumoM3, totalExcedenteM3);
+  updateMetrics(filtrados.length, totalTomadas, totalConsumoM3, totalExcedenteM3);
 }
 
-function updateMetrics(totalMedidores, tomadas, consumo, excedente) {
-  const pendientes = Math.max(0, totalMedidores - tomadas);
-  const pct = totalMedidores > 0 ? ((tomadas / totalMedidores) * 100).toFixed(0) : 0;
+function updateMetrics(totalSocios, tomadas, consumo, excedente) {
+  const pendientes = Math.max(0, totalSocios - tomadas);
+  const pct = totalSocios > 0 ? Math.round((tomadas / totalSocios) * 100) : 0;
 
-  document.getElementById('metricTotalMedidores').textContent = totalMedidores;
+  document.getElementById('metricTotalRuta').textContent = totalSocios;
   document.getElementById('metricLecturasTomadas').textContent = tomadas;
-  document.getElementById('metricAvancePct').textContent = `${pct}% de la ruta completado`;
   document.getElementById('metricLecturasPendientes').textContent = pendientes;
+  document.getElementById('metricProgresoBar').style.width = `${pct}%`;
+  document.getElementById('metricProgresoLabel').textContent = `${pct}% de la ruta completada`;
   document.getElementById('metricConsumoTotal').textContent = `${consumo} m³`;
   document.getElementById('metricExcedenteTotal').textContent = `${excedente} m³ de excedente ($${(excedente * 0.10).toFixed(2)})`;
 }
@@ -424,7 +466,7 @@ document.getElementById('btnGuardarLote')?.addEventListener('click', async () =>
   Swal.fire({
     icon: 'success',
     title: 'Lote Guardado',
-    text: `Se guardaron exitosamente ${savedCount} lecturas en la base de datos local.`
+    text: `Se guardaron exitosamente ${savedCount} lecturas en el servidor.`
   });
 });
 
