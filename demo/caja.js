@@ -85,7 +85,7 @@ async function getAllCobros() {
   return new Promise((resolve) => {
     const tx = db.transaction(['cobros'], 'readonly');
     const req = tx.objectStore('cobros').getAll();
-    req.onsuccess = () => resolve(req.result.reverse());
+    req.onsuccess = () => resolve((req.result || []).reverse());
     req.onerror = () => resolve([]);
   });
 }
@@ -154,12 +154,15 @@ let selectedSocio = null;
 let currentCalculation = null;
 
 async function renderCajaUI() {
-  document.getElementById('fechaHoyBadge').textContent = new Date().toLocaleDateString('es-EC', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric'
-  });
+  const badge = document.getElementById('fechaHoyBadge');
+  if (badge) {
+    badge.textContent = new Date().toLocaleDateString('es-EC', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+  }
 
   cachedSocios = await getAllSocios();
   cachedLecturas = await getLecturasPeriodo(PERIODO_ACTUAL);
@@ -170,6 +173,7 @@ async function renderCajaUI() {
 
 function populateSocioSelect(socios) {
   const select = document.getElementById('selectSocioCobro');
+  if (!select) return;
   select.innerHTML = '<option value="">-- Buscar o seleccionar socio del padrón --</option>';
 
   const ordenados = [...socios].sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto));
@@ -206,18 +210,25 @@ async function updateMetricsAndHistory() {
 
   const balanceNeto = totalEntradas - totalSalidas;
 
-  document.getElementById('metricRecaudacionAgua').textContent = `$${totalRecaudacionAgua.toFixed(2)}`;
-  document.getElementById('metricRecibosCount').textContent = `${cobros.length} recibos cobrados`;
-  document.getElementById('metricTotalEntradas').textContent = `$${totalEntradas.toFixed(2)}`;
-  document.getElementById('metricTotalSalidas').textContent = `$${totalSalidas.toFixed(2)}`;
-  document.getElementById('metricGastosCount').textContent = `${gastosCount} egresos registrados`;
-  document.getElementById('metricBalanceNeto').textContent = `$${balanceNeto.toFixed(2)}`;
+  const elAgua = document.getElementById('metricRecaudacionAgua');
+  if (elAgua) elAgua.textContent = `$${totalRecaudacionAgua.toFixed(2)}`;
+  const elCount = document.getElementById('metricRecibosCount');
+  if (elCount) elCount.textContent = `${cobros.length} recibos cobrados`;
+  const elEntradas = document.getElementById('metricTotalEntradas');
+  if (elEntradas) elEntradas.textContent = `$${totalEntradas.toFixed(2)}`;
+  const elSalidas = document.getElementById('metricTotalSalidas');
+  if (elSalidas) elSalidas.textContent = `$${totalSalidas.toFixed(2)}`;
+  const elGastos = document.getElementById('metricGastosCount');
+  if (elGastos) elGastos.textContent = `${gastosCount} egresos registrados`;
+  const elBalance = document.getElementById('metricBalanceNeto');
+  if (elBalance) elBalance.textContent = `$${balanceNeto.toFixed(2)}`;
 
   renderRecibosTable(cobros);
 }
 
 function renderRecibosTable(cobros) {
   const tbody = document.getElementById('recibosTableBody');
+  if (!tbody) return;
   tbody.innerHTML = '';
 
   if (cobros.length === 0) {
@@ -252,10 +263,11 @@ function renderRecibosTable(cobros) {
 }
 
 function calcularLiquidacionSocio(socio) {
-  const es3raEdad = socio.esTerceraEdad;
+  const edad = calcularEdad(socio.fechaNacimiento);
+  const es3raEdad = edad >= TARIFAS_CONFIG.EDAD_TERCERA_EDAD;
   const cargoBase = es3raEdad ? TARIFAS_CONFIG.BASE_TERCERA_EDAD : TARIFAS_CONFIG.BASE_NORMAL;
-  const tieneAlcant = socio.tieneAlcantarillado;
-  const recargoAlcant = tieneAlcant ? TARIFAS_CONFIG.RECARGO_ALCANTARILLADO : 0;
+  const tieneAlcant = socio.tieneAlcantarillado === true;
+  const recargoAlcant = tieneAlcant ? TARIFAS_CONFIG.RECARGO_ALCANTARILLADO : 0.00;
 
   // Buscar lectura del mes actual
   const lectura = cachedLecturas.find((l) => l.clienteId === socio.id);
@@ -265,7 +277,8 @@ function calcularLiquidacionSocio(socio) {
   const excedenteM3 = Math.max(0, consumoM3 - TARIFAS_CONFIG.LIMITE_BASE_M3);
   const valorExcedenteUSD = Number((excedenteM3 * TARIFAS_CONFIG.EXCEDENTE_POR_M3).toFixed(2));
 
-  const multaExtra = parseFloat((document.getElementById('selectMultaExtra') as HTMLSelectElement)?.value || '0');
+  const selectMulta = document.getElementById('selectMultaExtra');
+  const multaExtra = parseFloat(selectMulta?.value || '0');
   const deudaAnterior = socio.montoTotalAdeudado || 0;
 
   const totalMes = cargoBase + valorExcedenteUSD + recargoAlcant;
@@ -337,8 +350,8 @@ function displaySocioPlanilla(socio) {
   document.getElementById('posTotalPagar').textContent = `$${currentCalculation.totalPagar.toFixed(2)} USD`;
 
   // Reset Monto Recibido
-  const inputRecibido = document.getElementById('inputMontoRecibido') as HTMLInputElement;
-  inputRecibido.value = '';
+  const inputRecibido = document.getElementById('inputMontoRecibido');
+  if (inputRecibido) inputRecibido.value = '';
   updateVuelto();
 }
 
@@ -346,8 +359,9 @@ function updateVuelto() {
   if (!currentCalculation) return;
 
   const total = currentCalculation.totalPagar;
-  const inputRecibido = document.getElementById('inputMontoRecibido') as HTMLInputElement;
+  const inputRecibido = document.getElementById('inputMontoRecibido');
   const displayCambio = document.getElementById('posCambioMonto');
+  if (!inputRecibido || !displayCambio) return;
   const recibidoVal = parseFloat(inputRecibido.value);
 
   if (isNaN(recibidoVal) || recibidoVal === 0) {
@@ -368,7 +382,7 @@ function updateVuelto() {
 
 // Event Listeners de Selección y Cálculo
 document.getElementById('selectSocioCobro')?.addEventListener('change', (e) => {
-  const socioId = (e.target as HTMLSelectElement).value;
+  const socioId = e.target.value;
   if (!socioId) {
     selectedSocio = null;
     currentCalculation = null;
@@ -391,9 +405,10 @@ document.getElementById('inputMontoRecibido')?.addEventListener('input', updateV
 document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () => {
   if (!selectedSocio || !currentCalculation) return;
 
-  const metodoPago = (document.getElementById('selectMetodoPago') as HTMLSelectElement).value;
-  const inputRecibido = document.getElementById('inputMontoRecibido') as HTMLInputElement;
-  const montoRecibido = parseFloat(inputRecibido.value);
+  const selectMetodo = document.getElementById('selectMetodoPago');
+  const metodoPago = selectMetodo ? selectMetodo.value : 'EFECTIVO';
+  const inputRecibido = document.getElementById('inputMontoRecibido');
+  const montoRecibido = parseFloat(inputRecibido?.value || '0');
 
   if (metodoPago === 'EFECTIVO' && (isNaN(montoRecibido) || montoRecibido < currentCalculation.totalPagar)) {
     Swal.fire({
@@ -409,48 +424,45 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
     title: '¿Confirmar Cobro en Caja?',
     text: `¿Registrar cobro de $${currentCalculation.totalPagar.toFixed(2)} USD para ${currentCalculation.socioNombre}?`,
     showCancelButton: true,
-    confirmButtonText: 'Sí, Cobrar Planilla',
+    confirmButtonText: 'Sí, Registrar Cobro',
     cancelButtonText: 'Cancelar'
   });
 
   if (!confirmRes.isConfirmed) return;
 
-  const cobrosActuales = await getAllCobros();
-  const nextNum = cobrosActuales.length + 1;
-  const numRecibo = `REC-2026-${String(nextNum).padStart(3, '0')}`;
-  const now = new Date().toISOString();
+  const cobroId = 'rec-' + crypto.randomUUID().slice(0, 8);
+  const numeroRecibo = `REC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
   const cobroRecord = {
-    id: 'cobro-' + crypto.randomUUID().slice(0, 8),
-    numeroRecibo: numRecibo,
-    clienteId: selectedSocio.id,
+    id: cobroId,
+    numeroRecibo,
+    socioId: currentCalculation.socioId,
     socioNombre: currentCalculation.socioNombre,
     socioCedula: currentCalculation.socioCedula,
     socioSector: currentCalculation.socioSector,
-    medidorNumero: currentCalculation.medidorNumero,
     periodo: PERIODO_ACTUAL,
-    lecturaAnterior: currentCalculation.lecturaAnterior,
-    lecturaActual: currentCalculation.lecturaActual,
     consumoM3: currentCalculation.consumoM3,
+    cargoBase: currentCalculation.cargoBase,
     excedenteM3: currentCalculation.excedenteM3,
-    montoBase: currentCalculation.cargoBase,
-    montoExceso: currentCalculation.valorExcedenteUSD,
-    montoAlcant: currentCalculation.recargoAlcant,
-    montoMultas: currentCalculation.multaExtra,
-    montoDeuda: currentCalculation.deudaAnterior,
+    valorExcedenteUSD: currentCalculation.valorExcedenteUSD,
+    alcantarilladoUSD: currentCalculation.recargoAlcant,
+    multaExtra: currentCalculation.multaExtra,
+    deudaAnteriorCobrada: currentCalculation.deudaAnterior,
     montoTotal: currentCalculation.totalPagar,
     metodoPago,
-    cajeroResponsable: currentUser?.nombre || 'Cajero',
-    fechaPago: now
+    montoRecibido: metodoPago === 'EFECTIVO' ? montoRecibido : currentCalculation.totalPagar,
+    cambioEntregado: metodoPago === 'EFECTIVO' ? Math.max(0, montoRecibido - currentCalculation.totalPagar) : 0,
+    fechaPago: new Date().toISOString(),
+    cajeroId: currentUser?.id || 'usr-cajero'
   };
 
   const socioActualizado = {
     ...selectedSocio,
     estadoCuenta: 'AL_DIA',
     mesesAdeudados: 0,
-    montoTotalAdeudado: 0,
+    montoTotalAdeudado: 0.00,
     fechaDeudaAntigua: null,
-    updatedAt: now
+    updatedAt: new Date().toISOString()
   };
 
   const movimientoCaja = {
@@ -458,82 +470,79 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
     tipo: 'ENTRADA',
     categoria: 'COBRO_AGUA',
     monto: currentCalculation.totalPagar,
-    descripcion: `Cobro planilla agua ${PERIODO_ACTUAL} - ${currentCalculation.socioNombre} (${numRecibo})`,
-    fecha: now,
-    responsableId: currentUser?.id || 'usr-cajero',
-    reciboAguaId: cobroRecord.id
+    descripcion: `Cobro planilla agua potable ${PERIODO_ACTUAL} - Socio: ${currentCalculation.socioNombre} (${numeroRecibo})`,
+    reciboId: cobroId,
+    fecha: new Date().toISOString(),
+    responsableId: currentUser?.id || 'usr-cajero'
   };
 
   await saveCobroTransaction(cobroRecord, socioActualizado, movimientoCaja);
 
-  // Actualizar listas en memoria
-  cachedSocios = await getAllSocios();
-  populateSocioSelect(cachedSocios);
+  // Actualizar cache local
+  cachedSocios = cachedSocios.map((s) => (s.id === socioActualizado.id ? socioActualizado : s));
 
-  // Mostrar Comprobante y SweetAlert
-  showReceiptModal(cobroRecord);
-  await updateMetricsAndHistory();
-
-  // Reset selección
+  // Limpiar UI
   document.getElementById('selectSocioCobro').value = '';
   document.getElementById('socioPlanillaEmpty').style.display = 'block';
   document.getElementById('socioPlanillaDetails').style.display = 'none';
+  selectedSocio = null;
+  currentCalculation = null;
 
-  Swal.fire({
-    icon: 'success',
-    title: 'Cobro Registrado',
-    text: `Se emitió el comprobante ${numRecibo} por $${cobroRecord.montoTotal.toFixed(2)} USD.`
-  });
+  await updateMetricsAndHistory();
+  populateSocioSelect(cachedSocios);
+
+  // Mostrar Recibo Imprimible
+  showReceiptModal(cobroRecord);
 });
 
 // Modal Recibo
+const modalReceipt = document.getElementById('modalReceipt');
+const btnCloseReceipt = document.getElementById('btnCloseReceipt');
+const btnPrintReceipt = document.getElementById('btnPrintReceipt');
+
 function showReceiptModal(cobro) {
-  document.getElementById('reciboNumTxt').textContent = cobro.numeroRecibo;
-  document.getElementById('reciboFechaTxt').textContent = new Date(cobro.fechaPago).toLocaleString('es-EC');
-  document.getElementById('reciboSocioTxt').textContent = cobro.socioNombre;
-  document.getElementById('reciboCedulaTxt').textContent = cobro.socioCedula;
-  document.getElementById('reciboSectorMedidorTxt').textContent = `${cobro.socioSector} • ${cobro.medidorNumero}`;
-  document.getElementById('reciboPeriodoTxt').textContent = cobro.periodo;
+  document.getElementById('reciboNumero').textContent = cobro.numeroRecibo;
+  document.getElementById('reciboFecha').textContent = new Date(cobro.fechaPago).toLocaleString('es-EC');
+  document.getElementById('reciboCajero').textContent = currentUser?.nombre || 'Tesorero General';
+  document.getElementById('reciboSocio').textContent = cobro.socioNombre;
+  document.getElementById('reciboCedula').textContent = cobro.socioCedula;
+  document.getElementById('reciboSector').textContent = cobro.socioSector;
+  document.getElementById('reciboPeriodo').textContent = cobro.periodo;
+  document.getElementById('reciboConsumo').textContent = `${cobro.consumoM3} m³`;
 
-  document.getElementById('reciboLecturasTxt').textContent = `${cobro.lecturaAnterior} / ${cobro.lecturaActual} m³`;
-  document.getElementById('reciboConsumoTxt').textContent = `${cobro.consumoM3} m³`;
+  document.getElementById('reciboBase').textContent = `$${cobro.cargoBase.toFixed(2)}`;
+  document.getElementById('reciboExcedente').textContent = `$${cobro.valorExcedenteUSD.toFixed(2)}`;
+  document.getElementById('reciboAlcant').textContent = `$${cobro.alcantarilladoUSD.toFixed(2)}`;
 
-  document.getElementById('reciboBaseTxt').textContent = `$${cobro.montoBase.toFixed(2)}`;
-  document.getElementById('reciboExcedenteTxt').textContent = `$${cobro.montoExceso.toFixed(2)}`;
-  document.getElementById('reciboAlcantTxt').textContent = cobro.montoAlcant > 0 ? `+$${cobro.montoAlcant.toFixed(2)}` : '$0.00';
-
-  const rowMultas = document.getElementById('reciboMultaRow');
-  if (cobro.montoMultas > 0) {
-    rowMultas.style.display = 'flex';
-    document.getElementById('reciboMultasTxt').textContent = `+$${cobro.montoMultas.toFixed(2)}`;
+  const rowMulta = document.getElementById('reciboRowMulta');
+  if (cobro.multaExtra > 0) {
+    rowMulta.style.display = 'flex';
+    document.getElementById('reciboMulta').textContent = `$${cobro.multaExtra.toFixed(2)}`;
   } else {
-    rowMultas.style.display = 'none';
+    rowMulta.style.display = 'none';
   }
 
-  const rowDeuda = document.getElementById('reciboDeudaRow');
-  if (cobro.montoDeuda > 0) {
+  const rowDeuda = document.getElementById('reciboRowDeuda');
+  if (cobro.deudaAnteriorCobrada > 0) {
     rowDeuda.style.display = 'flex';
-    document.getElementById('reciboDeudaTxt').textContent = `+$${cobro.montoDeuda.toFixed(2)}`;
+    document.getElementById('reciboDeuda').textContent = `$${cobro.deudaAnteriorCobrada.toFixed(2)}`;
   } else {
     rowDeuda.style.display = 'none';
   }
 
-  document.getElementById('reciboTotalTxt').textContent = `$${cobro.montoTotal.toFixed(2)} USD`;
-  document.getElementById('reciboMetodoTxt').textContent = cobro.metodoPago;
-  document.getElementById('reciboCajeroTxt').textContent = cobro.cajeroResponsable;
+  document.getElementById('reciboTotal').textContent = `$${cobro.montoTotal.toFixed(2)} USD`;
+  document.getElementById('reciboMetodo').textContent = cobro.metodoPago;
+  document.getElementById('reciboRecibido').textContent = `$${cobro.montoRecibido.toFixed(2)}`;
+  document.getElementById('reciboCambio').textContent = `$${cobro.cambioEntregado.toFixed(2)}`;
 
-  document.getElementById('modalReciboPrint').style.display = 'flex';
+  modalReceipt.style.display = 'flex';
 }
 
-document.getElementById('btnCloseReciboModal')?.addEventListener('click', () => {
-  document.getElementById('modalReciboPrint').style.display = 'none';
+btnCloseReceipt?.addEventListener('click', () => {
+  modalReceipt.style.display = 'none';
 });
 
-document.getElementById('btnDoneRecibo')?.addEventListener('click', () => {
-  document.getElementById('modalReciboPrint').style.display = 'none';
-});
-
-document.getElementById('btnPrintReciboBtn')?.addEventListener('click', () => {
+btnPrintReceipt?.addEventListener('click', () => {
   window.print();
 });
 
@@ -554,10 +563,14 @@ document.getElementById('btnCancelGasto')?.addEventListener('click', () => {
 document.getElementById('formGasto')?.addEventListener('submit', async (e) => {
   e.preventDefault();
 
-  const categoria = (document.getElementById('selectCategoriaGasto') as HTMLSelectElement).value;
-  const monto = parseFloat((document.getElementById('inputMontoGasto') as HTMLInputElement).value);
-  const descripcion = (document.getElementById('inputDescGasto') as HTMLInputElement).value.trim();
-  const comprobante = (document.getElementById('inputComprobanteGasto') as HTMLInputElement).value.trim();
+  const selectCat = document.getElementById('selectCategoriaGasto');
+  const categoria = selectCat ? selectCat.value : 'OTROS';
+  const inputMonto = document.getElementById('inputMontoGasto');
+  const monto = parseFloat(inputMonto?.value || '0');
+  const inputDesc = document.getElementById('inputDescGasto');
+  const descripcion = inputDesc ? inputDesc.value.trim() : '';
+  const inputComp = document.getElementById('inputComprobanteGasto');
+  const comprobante = inputComp ? inputComp.value.trim() : '';
 
   if (isNaN(monto) || monto <= 0 || !descripcion) {
     Swal.fire({ icon: 'warning', title: 'Datos Incompletos', text: 'Ingrese un monto y detalle válidos.' });
@@ -577,7 +590,8 @@ document.getElementById('formGasto')?.addEventListener('submit', async (e) => {
 
   await saveGastoLocal(gastoRecord);
   modalGasto.style.display = 'none';
-  (document.getElementById('formGasto') as HTMLFormElement).reset();
+  const formGasto = document.getElementById('formGasto');
+  if (formGasto) formGasto.reset();
 
   await updateMetricsAndHistory();
 
@@ -587,6 +601,18 @@ document.getElementById('formGasto')?.addEventListener('submit', async (e) => {
     text: `Se registró la salida de $${monto.toFixed(2)} USD correctamente.`
   });
 });
+
+function calcularEdad(fechaNacimiento) {
+  if (!fechaNacimiento) return 0;
+  const hoy = new Date();
+  const nac = new Date(fechaNacimiento);
+  let edad = hoy.getFullYear() - nac.getFullYear();
+  const m = hoy.getMonth() - nac.getMonth();
+  if (m < 0 || (m === 0 && hoy.getDate() < nac.getDate())) {
+    edad--;
+  }
+  return edad;
+}
 
 // Inicializar
 initIndexedDB().then(renderCajaUI);
