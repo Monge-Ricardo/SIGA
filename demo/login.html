@@ -85,42 +85,6 @@
       margin-bottom: 1.25rem;
       display: none;
     }
-    .quick-roles {
-      margin-top: 1.5rem;
-      padding-top: 1.25rem;
-      border-top: 1px solid #e2e8f0;
-      text-align: center;
-    }
-    .quick-roles-title {
-      font-size: 0.75rem;
-      color: #64748b;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 0.5rem;
-    }
-    .quick-btns-row {
-      display: flex;
-      gap: 0.4rem;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    .btn-quick-role {
-      background: #f8fafc;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      padding: 0.35rem 0.65rem;
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: #334155;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .btn-quick-role:hover {
-      background: #e0f2fe;
-      border-color: #0284c7;
-      color: #0284c7;
-    }
   </style>
 </head>
 <body>
@@ -138,7 +102,7 @@
           type="text" 
           id="loginUser" 
           class="form-control-input" 
-          placeholder="ej: cajero, admin o lector" 
+          placeholder="Ingrese su usuario o correo" 
           required 
           autocomplete="username"
           autofocus
@@ -167,16 +131,6 @@
       >
         Iniciar Sesión
       </button>
-
-      <!-- Selector Rápido de Roles para Pruebas -->
-      <div class="quick-roles">
-        <div class="quick-roles-title">Cuentas de Acceso Rápido:</div>
-        <div class="quick-btns-row">
-          <button type="button" class="btn-quick-role" data-user="cajero" data-pass="Cajero123*">💵 Tesorero (Cajero)</button>
-          <button type="button" class="btn-quick-role" data-user="admin" data-pass="Admin123*">👑 Administrador</button>
-          <button type="button" class="btn-quick-role" data-user="lector" data-pass="Lector123*">⏱️ Lector de Campo</button>
-        </div>
-      </div>
     </form>
   </div>
 
@@ -193,15 +147,6 @@
       errEl.textContent = `⚠️ ${msg}`;
       errEl.style.display = 'block';
     };
-
-    // Botones de acceso rápido
-    document.querySelectorAll('.btn-quick-role').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.getElementById('loginUser').value = btn.getAttribute('data-user');
-        document.getElementById('loginPassword').value = btn.getAttribute('data-pass');
-        document.getElementById('formLogin').dispatchEvent(new Event('submit'));
-      });
-    });
 
     document.getElementById('formLogin').addEventListener('submit', async (e) => {
       e.preventDefault();
