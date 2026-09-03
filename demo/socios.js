@@ -651,7 +651,7 @@ function closeFormModal() {
   modalForm.style.display = 'none';
 }
 
-function openDetailModal(socio) {
+async function openDetailModal(socio) {
   activeSocioDetail = socio;
   document.getElementById('detailAvatar').textContent = socio.esTerceraEdad ? '👴' : '👤';
   document.getElementById('detailNombre').textContent = socio.nombreCompleto;

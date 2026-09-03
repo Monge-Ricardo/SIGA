@@ -377,6 +377,9 @@ function renderTableAndMetrics() {
       <tr>
         <td colspan="7" style="text-align: center; padding: 2.5rem; color: #64748b;">
           No se encontraron abonados en la ruta o sector seleccionado.
+        </td>
+      </tr>
+    `;
     updateMetrics(0, 0, 0, 0);
     return;
   }
