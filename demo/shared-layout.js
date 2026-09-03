@@ -46,7 +46,7 @@ export function injectAppLayout(activePageId) {
   const isCajeroOAdmin = user?.rol === 'CAJERO' || user?.rol === 'ADMIN';
 
   const allMenuItems = [
-    { id: 'socios', href: 'socios.html', icon: '👥', label: '1. Padrón de Socios', desc: 'Abonados y medidores', roles: ['ADMIN', 'CAJERO', 'LECTOR'] },
+    { id: 'socios', href: 'socios.html', icon: '👥', label: '1. Padrón de Socios', desc: 'Abonados y medidores', roles: ['ADMIN', 'CAJERO'] },
     { 
       id: 'lecturas', 
       href: 'lecturas.html', 

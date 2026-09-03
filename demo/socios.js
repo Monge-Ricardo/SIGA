@@ -2,15 +2,11 @@ import { requireAuth, getAuthToken } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 
-// Guard de autenticación (ADMIN, CAJERO y LECTOR para consulta de rutas)
-const currentUser = requireAuth(['ADMIN', 'CAJERO', 'LECTOR']);
+// Guard de autenticación (Exclusivo ADMIN y CAJERO)
+const currentUser = requireAuth(['ADMIN', 'CAJERO']);
 
 if (currentUser) {
   injectAppLayout('socios');
-  if (currentUser.rol === 'LECTOR') {
-    const btnNew = document.getElementById('btnOpenCreateSocio');
-    if (btnNew) btnNew.style.display = 'none';
-  }
 }
 
 async function apiFetch(url, options = {}) {
