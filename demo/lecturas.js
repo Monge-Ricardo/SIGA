@@ -39,6 +39,14 @@ const BASELINE_LECTURAS = {
   'soc-004': 180
 };
 
+// Lecturas digitadas por el Lector en ruta (para revisión del Cajero)
+const LECTURAS_INICIALES_LECTOR = {
+  'soc-001': { lecturaAnterior: 150, lecturaActual: 185, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' },
+  'soc-002': { lecturaAnterior: 210, lecturaActual: 238, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' },
+  'soc-003': { lecturaAnterior: 95, lecturaActual: 122, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' },
+  'soc-004': { lecturaAnterior: 180, lecturaActual: 222, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' }
+};
+
 function initIndexedDB() {
   return new Promise((resolve) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -62,8 +70,9 @@ function initIndexedDB() {
       }
     };
 
-    request.onsuccess = (event) => {
+    request.onsuccess = async (event) => {
       db = event.target.result;
+      await seedLecturasIfEmpty();
       resolve(db);
     };
 
@@ -71,6 +80,44 @@ function initIndexedDB() {
       console.warn('IndexedDB no disponible para lecturas, usando API REST');
       resolve(null);
     };
+  });
+}
+
+async function seedLecturasIfEmpty() {
+  if (!db) return;
+  return new Promise((resolve) => {
+    const tx = db.transaction(['lecturas'], 'readonly');
+    const store = tx.objectStore('lecturas');
+    const req = store.count();
+    req.onsuccess = () => {
+      if (req.result === 0) {
+        const writeTx = db.transaction(['lecturas'], 'readwrite');
+        const writeStore = writeTx.objectStore('lecturas');
+        const periodo = '2026-08';
+        Object.entries(LECTURAS_INICIALES_LECTOR).forEach(([socId, data]) => {
+          const cons = Math.max(0, data.lecturaActual - data.lecturaAnterior);
+          const exc = Math.max(0, cons - 30);
+          writeStore.add({
+            id: `lec-${socId}-${periodo}`,
+            clienteId: socId,
+            periodo,
+            lecturaAnterior: data.lecturaAnterior,
+            lecturaActual: data.lecturaActual,
+            consumoM3: cons,
+            excedenteM3: exc,
+            observaciones: data.observaciones,
+            origen: data.origen,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        });
+        writeTx.oncomplete = () => resolve();
+        writeTx.onerror = () => resolve();
+      } else {
+        resolve();
+      }
+    };
+    req.onerror = () => resolve();
   });
 }
 
@@ -87,6 +134,7 @@ async function getAllSocios() {
       sectorId: s.idSector || s.sectorId,
       nombreSector: s.nombreSector || 'Sector Centro',
       medidorNumero: s.medidorNumero,
+      medidores: s.medidores || [],
       tieneAlcantarillado: s.tieneAlcantarillado,
       estadoServicio: s.estado
     }));
@@ -119,20 +167,30 @@ async function getAllSectores() {
 async function getLecturasPeriodo(periodo) {
   try {
     const res = await apiFetch(`/api/v1/lecturas?periodoId=${encodeURIComponent(periodo)}`);
-    return (res.data || []).map((l) => ({
-      id: l.id,
-      clienteId: l.idSocio,
-      periodo: l.periodoCodigo || periodo,
-      lecturaAnterior: l.lecturaAnterior,
-      lecturaActual: l.lecturaActual,
-      consumoM3: l.consumoM3,
-      excedenteM3: l.excedenteM3,
-      observaciones: l.observaciones,
-      updatedAt: l.updatedAt
-    }));
+    const apiData = res.data || [];
+    if (apiData.length > 0) {
+      return apiData.map((l) => ({
+        id: l.id,
+        idMedidor: l.idMedidor,
+        numeroMedidor: l.numeroMedidor,
+        aliasMedidor: l.aliasMedidor,
+        clienteId: l.idSocio,
+        periodo: l.periodoCodigo || periodo,
+        lecturaAnterior: l.lecturaAnterior,
+        lecturaActual: l.lecturaActual,
+        consumoM3: l.consumoM3 !== undefined ? l.consumoM3 : l.consumoTotal,
+        excedenteM3: l.excedenteM3,
+        observaciones: l.observaciones,
+        origen: l.origen || 'LECTOR',
+        updatedAt: l.updatedAt
+      }));
+    }
   } catch (err) {
-    if (!db) return [];
-    return new Promise((resolve) => {
+    // Modo offline
+  }
+
+  if (db) {
+    const localLecturas = await new Promise((resolve) => {
       const tx = db.transaction(['lecturas'], 'readonly');
       const store = tx.objectStore('lecturas');
       const req = store.getAll();
@@ -142,7 +200,33 @@ async function getLecturasPeriodo(periodo) {
       };
       req.onerror = () => resolve([]);
     });
+
+    if (localLecturas.length > 0) {
+      return localLecturas;
+    }
   }
+
+  // Respaldo de lecturas digitadas por el Lector para período actual demo
+  if (periodo === '2026-08') {
+    return Object.entries(LECTURAS_INICIALES_LECTOR).map(([socId, data]) => {
+      const cons = Math.max(0, data.lecturaActual - data.lecturaAnterior);
+      const exc = Math.max(0, cons - 30);
+      return {
+        id: `lec-${socId}-${periodo}`,
+        clienteId: socId,
+        periodo,
+        lecturaAnterior: data.lecturaAnterior,
+        lecturaActual: data.lecturaActual,
+        consumoM3: cons,
+        excedenteM3: exc,
+        observaciones: data.observaciones,
+        origen: data.origen,
+        updatedAt: new Date().toISOString()
+      };
+    });
+  }
+
+  return [];
 }
 
 async function saveLecturaLocal(lecturaData) {
@@ -154,6 +238,8 @@ async function saveLecturaLocal(lecturaData) {
       method: 'POST',
       body: JSON.stringify({
         idSocio: lecturaData.clienteId,
+        idMedidor: lecturaData.medidorId,
+        numeroMedidor: lecturaData.medidorNumero,
         idPeriodo: lecturaData.periodo,
         lecturaActual: lecturaData.lecturaActual,
         lecturaAnterior: lecturaData.lecturaAnterior,
@@ -291,169 +377,269 @@ function renderTableAndMetrics() {
       <tr>
         <td colspan="7" style="text-align: center; padding: 2.5rem; color: #64748b;">
           No se encontraron abonados en la ruta o sector seleccionado.
-        </td>
-      </tr>
-    `;
     updateMetrics(0, 0, 0, 0);
     return;
   }
 
+  // Desglosar socios en acometidas / medidores individuales (Multi-Medidor)
+  const listaAcometidas = [];
   filtrados.forEach((socio) => {
-    const lecturaExistente = cachedLecturas.find((l) => l.clienteId === socio.id);
-    const lant = lecturaExistente?.lecturaAnterior ?? BASELINE_LECTURAS[socio.id] ?? 120;
-    const lact = lecturaExistente?.lecturaActual;
+    if (socio.medidores && socio.medidores.length > 0) {
+      socio.medidores.forEach((m) => {
+        listaAcometidas.push({
+          rowKey: `${socio.id}_${m.id || m.numeroMedidor}`,
+          socioId: socio.id,
+          medidorId: m.id,
+          medidorNumero: m.numeroMedidor,
+          aliasMedidor: m.alias || 'Casa principal',
+          nombreCompleto: socio.nombreCompleto,
+          codigoSocio: socio.codigoSocio,
+          cedulaRuc: socio.cedulaRuc,
+          nombreSector: m.nombreSector || socio.nombreSector,
+          sectorId: m.idSector || socio.sectorId
+        });
+      });
+    } else {
+      listaAcometidas.push({
+        rowKey: `${socio.id}_principal`,
+        socioId: socio.id,
+        medidorId: socio.medidorNumero || 'MED-00000',
+        medidorNumero: socio.medidorNumero || 'MED-00000',
+        aliasMedidor: 'Casa principal',
+        nombreCompleto: socio.nombreCompleto,
+        codigoSocio: socio.codigoSocio,
+        cedulaRuc: socio.cedulaRuc,
+        nombreSector: socio.nombreSector,
+        sectorId: socio.sectorId
+      });
+    }
+  });
+
+  listaAcometidas.forEach((item) => {
+    const lecturaExistente = cachedLecturas.find((l) =>
+      (l.idMedidor && (l.idMedidor === item.medidorId || l.numeroMedidor === item.medidorNumero)) ||
+      (l.numeroMedidor && l.numeroMedidor === item.medidorNumero) ||
+      (!l.idMedidor && l.clienteId === item.socioId)
+    );
+    const fallbackLector = periodo === '2026-08' ? LECTURAS_INICIALES_LECTOR[item.socioId] : null;
+
+    const lant = lecturaExistente?.lecturaAnterior ?? fallbackLector?.lecturaAnterior ?? BASELINE_LECTURAS[item.socioId] ?? 120;
+    const lact = lecturaExistente?.lecturaActual ?? fallbackLector?.lecturaActual;
+    const hasLectorReading = lact !== undefined && lact !== null;
+    const esModificadoPorCajero = lecturaExistente?.observaciones?.includes('Cajero');
 
     let consumo = 0;
     let excedente = 0;
-    let isSaved = false;
 
-    if (lact !== undefined && lact !== null) {
+    if (hasLectorReading) {
       consumo = Math.max(0, lact - lant);
       excedente = Math.max(0, consumo - 30);
-      isSaved = true;
       totalTomadas++;
       totalConsumoM3 += consumo;
       totalExcedenteM3 += excedente;
     }
 
     const tr = document.createElement('tr');
-    tr.id = `row-${socio.id}`;
+    tr.id = `row-${item.rowKey}`;
 
     tr.innerHTML = `
       <td>
-        <div class="socio-cell-name">${socio.nombreCompleto}</div>
-        <div class="socio-cell-sub">${socio.codigoSocio || '-'} &bull; ${socio.cedulaRuc || '-'}</div>
+        <div class="socio-cell-name">${item.nombreCompleto}</div>
+        <div class="socio-cell-sub">${item.codigoSocio || '-'} &bull; ${item.cedulaRuc || '-'}</div>
       </td>
       <td>
-        <span class="badge-tag">${socio.nombreSector || socio.sectorId}</span>
+        <span class="badge-tag">${item.nombreSector || item.sectorId}</span>
       </td>
       <td>
-        <code class="medidor-code">${socio.medidorNumero || 'MED-00000'}</code>
+        <code class="medidor-code">${item.medidorNumero}</code>
+        <span style="font-size:0.72rem; color:#0284c7; background:#e0f2fe; padding:2px 6px; border-radius:4px; margin-left:4px; font-weight:600;">${item.aliasMedidor}</span>
       </td>
       <td style="text-align: right;">
         <span class="lectura-ant-badge">${lant} m³</span>
       </td>
       <td style="text-align: right;">
-        <input 
-          type="number" 
-          inputmode="numeric"
-          pattern="[0-9]*"
-          class="input-lectura-actual ${lact !== undefined ? 'input-saved' : ''}" 
-          id="input-lact-${socio.id}"
-          value="${lact !== undefined ? lact : ''}"
-          min="${lant}"
-          placeholder="${lant}"
-          title="${isCajeroOAdmin ? 'Revisar / Modificar Lectura' : 'Ingresar Lectura en Campo'}"
-        />
+        <div style="display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px;">
+          <input 
+            type="number" 
+            inputmode="numeric"
+            pattern="[0-9]*"
+            class="input-lectura-actual ${hasLectorReading ? 'input-saved input-locked' : ''}" 
+            id="input-lact-${item.rowKey}"
+            value="${hasLectorReading ? lact : ''}"
+            min="${lant}"
+            placeholder="${lant}"
+            ${hasLectorReading ? 'readonly' : ''}
+            title="${hasLectorReading ? 'Valor digitado por el lector' : 'Ingrese lectura actual'}"
+          />
+          <span id="hint-lact-${item.rowKey}" style="font-size: 0.72rem; color: ${esModificadoPorCajero ? '#059669' : '#0284c7'}; font-weight: 600;">
+            ${
+              hasLectorReading 
+                ? (esModificadoPorCajero ? '✓ Modificado por Cajero' : '👤 Digitado por Lector') 
+                : '⏳ Pendiente'
+            }
+          </span>
+        </div>
       </td>
-      <td style="text-align: right;" id="consumo-cell-${socio.id}">
+      <td style="text-align: right;" id="consumo-cell-${item.rowKey}">
         ${
-          lact !== undefined
+          hasLectorReading
             ? `<span class="consumption-pill">${consumo} m³</span> ${
                 excedente > 0 ? `<span class="excess-pill">+${excedente} exc</span>` : ''
               }`
             : '<span class="text-subtle">-</span>'
         }
       </td>
-      <td style="text-align: center;" id="action-cell-${socio.id}">
-        ${
-          isSaved
-            ? `<span class="badge-status badge-al-dia" title="Guardada y sincronizada">✅ Revisada</span>`
-            : `<button class="btn btn-sm btn-outline btn-save-row" id="btn-save-${socio.id}" disabled>💾 Guardar</button>`
-        }
+      <td style="text-align: center;" id="action-cell-${item.rowKey}">
+        <button 
+          class="btn btn-sm ${hasLectorReading ? 'btn-outline' : 'btn-success'} btn-toggle-edit" 
+          id="btn-action-${item.rowKey}" 
+          style="font-weight: 700; padding: 0.35rem 0.8rem; display: inline-flex; align-items: center; gap: 4px;"
+          ${!hasLectorReading ? 'disabled' : ''}
+        >
+          ${hasLectorReading ? '✏️ Editar' : '💾 Guardar'}
+        </button>
       </td>
     `;
 
     tbody.appendChild(tr);
 
-    const inputLact = tr.querySelector(`#input-lact-${socio.id}`);
-    const btnSave = tr.querySelector(`#btn-save-${socio.id}`);
-    const consumoCell = tr.querySelector(`#consumo-cell-${socio.id}`);
-    const actionCell = tr.querySelector(`#action-cell-${socio.id}`);
+    const inputLact = tr.querySelector(`#input-lact-${item.rowKey}`);
+    const btnAction = tr.querySelector(`#btn-action-${item.rowKey}`);
+    const consumoCell = tr.querySelector(`#consumo-cell-${item.rowKey}`);
+    const hintLact = tr.querySelector(`#hint-lact-${item.rowKey}`);
 
-    const handleInputReading = async (autoSave = false) => {
+    let isEditing = !hasLectorReading;
+    let valorOriginal = hasLectorReading ? lact : '';
+
+    const enterEditMode = () => {
+      isEditing = true;
+      inputLact.readOnly = false;
+      inputLact.classList.remove('input-locked', 'input-saved');
+      inputLact.classList.add('input-editing');
+      btnAction.innerHTML = '💾 Guardar';
+      btnAction.className = 'btn btn-sm btn-success btn-toggle-edit';
+      btnAction.disabled = false;
+      hintLact.textContent = '✏️ Editando lectura...';
+      hintLact.style.color = '#b45309';
+      inputLact.focus();
+      inputLact.select();
+    };
+
+    const exitEditMode = (isSavedSuccess = false, updatedVal = null) => {
+      isEditing = false;
+      inputLact.readOnly = true;
+      inputLact.classList.remove('input-editing', 'input-invalid', 'input-valid');
+      inputLact.classList.add('input-saved', 'input-locked');
+      btnAction.innerHTML = '✏️ Editar';
+      btnAction.className = 'btn btn-sm btn-outline btn-toggle-edit';
+      btnAction.disabled = false;
+      if (isSavedSuccess) {
+        valorOriginal = updatedVal;
+        hintLact.textContent = '✓ Modificado por Cajero';
+        hintLact.style.color = '#059669';
+      } else {
+        inputLact.value = valorOriginal;
+        hintLact.textContent = esModificadoPorCajero ? '✓ Modificado por Cajero' : '👤 Digitado por Lector';
+        hintLact.style.color = esModificadoPorCajero ? '#059669' : '#0284c7';
+      }
+    };
+
+    const validateInput = () => {
       const valStr = inputLact.value.trim();
       if (valStr === '') {
-        inputLact.classList.remove('input-invalid', 'input-valid');
-        if (btnSave) btnSave.disabled = true;
+        inputLact.classList.remove('input-valid');
+        inputLact.classList.add('input-invalid');
+        btnAction.disabled = true;
         consumoCell.innerHTML = '<span class="text-subtle">-</span>';
-        rowStateMap.delete(socio.id);
-        return;
+        rowStateMap.delete(item.rowKey);
+        return null;
       }
 
       const valNum = parseFloat(valStr);
       if (isNaN(valNum) || valNum < lant) {
-        inputLact.classList.add('input-invalid');
         inputLact.classList.remove('input-valid');
-        if (btnSave) btnSave.disabled = true;
-        consumoCell.innerHTML = `<span class="error-msg-mini" style="color:#dc2626; font-size:0.75rem;">⚠️ $L_{act} < L_{ant}$</span>`;
-        rowStateMap.delete(socio.id);
-      } else {
-        inputLact.classList.remove('input-invalid');
-        inputLact.classList.add('input-valid');
-        if (btnSave) btnSave.disabled = false;
-
-        const cons = valNum - lant;
-        const exc = Math.max(0, cons - 30);
-        consumoCell.innerHTML = `
-          <span class="consumption-pill" style="color:#0284c7; font-weight:700;">${cons} m³</span>
-          ${exc > 0 ? `<span class="excess-pill">+${exc} exc</span>` : ''}
-        `;
-
-        const lecturaRecord = {
-          clienteId: socio.id,
-          nombreSocio: socio.nombreCompleto,
-          sectorId: socio.sectorId,
-          periodo,
-          lecturaAnterior: lant,
-          lecturaActual: valNum,
-          consumoM3: cons,
-          excedenteM3: exc,
-          valid: true
-        };
-
-        rowStateMap.set(socio.id, lecturaRecord);
-
-        // Auto-guardado al presionar Enter o perder foco
-        if (autoSave) {
-          await saveLecturaLocal(lecturaRecord);
-          cachedLecturas = await getLecturasPeriodo(periodo);
-          actionCell.innerHTML = `<span class="badge-status badge-al-dia">✅ Revisada</span>`;
-          inputLact.classList.remove('input-valid');
-          inputLact.classList.add('input-saved');
-          recalcOverallMetrics(filtrados);
-        }
+        inputLact.classList.add('input-invalid');
+        btnAction.disabled = true;
+        consumoCell.innerHTML = `<span style="color:#dc2626; font-size:0.75rem; font-weight:700;">⚠️ Lact < Lant</span>`;
+        rowStateMap.delete(item.rowKey);
+        return null;
       }
+
+      inputLact.classList.remove('input-invalid');
+      inputLact.classList.add('input-valid');
+      btnAction.disabled = false;
+
+      const cons = valNum - lant;
+      const exc = Math.max(0, cons - 30);
+      consumoCell.innerHTML = `
+        <span class="consumption-pill" style="color:#0284c7; font-weight:700;">${cons} m³</span>
+        ${exc > 0 ? `<span class="excess-pill">+${exc} exc</span>` : ''}
+      `;
+
+      const lecturaRecord = {
+        clienteId: item.socioId,
+        medidorId: item.medidorId,
+        medidorNumero: item.medidorNumero,
+        nombreSocio: item.nombreCompleto,
+        sectorId: item.sectorId,
+        periodo,
+        lecturaAnterior: lant,
+        lecturaActual: valNum,
+        consumoM3: cons,
+        excedenteM3: exc,
+        observaciones: 'Modificado por Cajero',
+        origen: 'CAJERO',
+        valid: true
+      };
+      rowStateMap.set(item.rowKey, lecturaRecord);
+
+      return { valNum, cons, exc, lecturaRecord };
     };
 
-    inputLact.addEventListener('input', () => handleInputReading(false));
-    inputLact.addEventListener('change', () => handleInputReading(true));
-    inputLact.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        handleInputReading(true);
+    const saveCurrentRow = async () => {
+      const valid = validateInput();
+      if (!valid) return;
+
+      btnAction.disabled = true;
+      btnAction.textContent = '⏳ ...';
+
+      await saveLecturaLocal(valid.lecturaRecord);
+      cachedLecturas = await getLecturasPeriodo(periodo);
+
+      exitEditMode(true, valid.valNum);
+      recalcOverallMetrics(filtrados);
+
+      // Toast feedback
+      const toast = document.createElement('div');
+      toast.className = 'save-toast-mini';
+      toast.textContent = `✓ Lectura de ${item.nombreCompleto.split(' ')[0]} [${item.aliasMedidor}] guardada (${valid.valNum} m³) por Cajero`;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2200);
+    };
+
+    btnAction.addEventListener('click', async () => {
+      if (!isEditing) {
+        enterEditMode();
+      } else {
+        await saveCurrentRow();
       }
     });
 
-    // Guardar fila individual
-    btnSave?.addEventListener('click', async () => {
-      const state = rowStateMap.get(socio.id);
-      if (state && state.valid) {
-        btnSave.disabled = true;
-        btnSave.textContent = '...';
-        await saveLecturaLocal(state);
+    inputLact.addEventListener('input', () => {
+      validateInput();
+    });
 
-        cachedLecturas = await getLecturasPeriodo(periodo);
-        actionCell.innerHTML = `<span class="badge-status badge-al-dia">✅ Revisada</span>`;
-        inputLact.classList.remove('input-valid');
-        inputLact.classList.add('input-saved');
-
-        recalcOverallMetrics(filtrados);
+    inputLact.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (isEditing) await saveCurrentRow();
+      } else if (e.key === 'Escape') {
+        if (hasLectorReading) exitEditMode(false);
       }
     });
   });
 
-  updateMetrics(filtrados.length, totalTomadas, totalConsumoM3, totalExcedenteM3);
+  updateMetrics(listaAcometidas.length, totalTomadas, totalConsumoM3, totalExcedenteM3);
 }
 
 function updateMetrics(totalSocios, tomadas, consumo, excedente) {

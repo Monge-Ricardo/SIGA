@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Padrón de Socios • SIGA-Comunitario</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0284c7" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -38,7 +41,7 @@
         <div class="metric-sub">Subsidio comunitario</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Con Alcantarillado (+1$)</div>
+        <div class="metric-label">Con Alcantarillado</div>
         <div class="metric-value text-cyan" id="metricAlcantarillado">0</div>
         <div class="metric-sub">Red de saneamiento</div>
       </div>
@@ -117,7 +120,7 @@
               <th>Edad / Categoría</th>
               <th>Sector</th>
               <th>Alcantarillado</th>
-              <th>Tarifa Base</th>
+              <th>Valores a Cobrar</th>
               <th>Cuenta Corriente</th>
               <th>Estado</th>
               <th style="text-align: right;">Acciones</th>
@@ -216,8 +219,9 @@
         <div class="form-group">
           <label class="checkbox-label" style="margin-top: 1.75rem;">
             <input type="checkbox" id="checkAlcantarillado" checked />
-            <span><strong>Posee Servicio de Alcantarillado</strong> (+1.00$/mes)</span>
+            <span><strong>Posee Servicio de Alcantarillado</strong></span>
           </label>
+          <span class="field-help" style="display:block; margin-top: 4px;">Si tiene alcantarillado, se suma $1.00 a los valores a cobrar mensualmente</span>
         </div>
 
         <div class="modal-actions full-width">
@@ -290,6 +294,18 @@
             <span class="detail-label">Dirección:</span>
             <span class="detail-value" id="detailDireccion"></span>
           </div>
+
+          <div class="detail-item full-span" style="margin-top: 0.5rem; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 0.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <span style="font-weight: 700; color: #0369a1; font-size: 0.85rem;">💧 Medidores / Acometidas Asignadas</span>
+              <button type="button" class="btn btn-sm btn-primary" id="btnOpenAddMedidor" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">
+                ➕ Agregar Medidor
+              </button>
+            </div>
+            <div id="detailMedidoresList" style="display: flex; flex-direction: column; gap: 0.4rem;">
+              <!-- Medidores se listan aquí -->
+            </div>
+          </div>
         </div>
 
         <div class="detail-column">
@@ -316,7 +332,7 @@
             </div>
           </div>
 
-          <h3 class="detail-section-heading" style="margin-top: 1.25rem;">💧 Desglose de Tarifa Base Mensual</h3>
+          <h3 class="detail-section-heading" style="margin-top: 1.25rem;">💧 Desglose de Valores a Cobrar (Cuota Fija Mensual)</h3>
           <div class="tariff-breakdown-box">
             <div class="breakdown-row">
               <span>Cuota Fija Base (30 m³):</span>
@@ -324,7 +340,7 @@
             </div>
             <div class="breakdown-row">
               <span>Servicio de Alcantarillado:</span>
-              <span id="detailTarifaAlcantMonto">+$1.00</span>
+              <span id="detailTarifaAlcantMonto">$1.00</span>
             </div>
             <div class="breakdown-divider"></div>
             <div class="breakdown-row total">
@@ -352,6 +368,44 @@
         <button type="button" class="btn btn-secondary" id="btnDetailEdit">✏️ Editar Información</button>
         <button type="button" class="btn btn-primary" id="btnDetailClose">Cerrar Ficha</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal para Asignar Medidor Adicional -->
+  <div class="modal-backdrop" id="modalAddMedidor" style="display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="modal-card" style="max-width: 480px; width: 95%; padding: 0;">
+      <div class="modal-header" style="padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 0;">💧 Asignar Nueva Acometida / Medidor</h2>
+        <button class="btn-close" id="btnCloseAddMedidorModal" type="button" style="background:none; border:none; font-size:1.5rem; cursor:pointer;">&times;</button>
+      </div>
+      <form id="formAddMedidor" style="padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+        <div class="form-group">
+          <label for="inputAddMedidorNumero">Número de Medidor *</label>
+          <input type="text" id="inputAddMedidorNumero" placeholder="Ej. MED-10550" required style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px;" />
+        </div>
+        <div class="form-group">
+          <label for="inputAddMedidorAlias">Alias o Ubicación *</label>
+          <input type="text" id="inputAddMedidorAlias" placeholder="Ej. Terreno, Casa 2, Local comercial" value="Acometida adicional" required style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px;" />
+        </div>
+        <div class="form-group">
+          <label for="selectAddMedidorSector">Sector Comunitario *</label>
+          <select id="selectAddMedidorSector" required style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px;"></select>
+        </div>
+        <div class="form-group">
+          <label for="inputAddMedidorDireccion">Dirección Específica de esta acometida</label>
+          <input type="text" id="inputAddMedidorDireccion" placeholder="Ej. Lote 4 junto a la escuela comunal" style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 6px;" />
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="checkAddMedidorAlcantarillado" checked />
+            <span><strong>Posee Servicio de Alcantarillado</strong> (+$1.00 en valores a cobrar)</span>
+          </label>
+        </div>
+        <div class="modal-actions" style="margin-top: 0.5rem; display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn btn-secondary" id="btnCancelAddMedidor">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitAddMedidor">💾 Guardar Medidor</button>
+        </div>
+      </form>
     </div>
   </div>
 

@@ -114,6 +114,7 @@ async function renderCajaUI() {
       sectorId: s.idSector || s.sectorId,
       nombreSector: s.nombreSector || 'Sector General',
       medidorNumero: s.medidorNumero,
+      medidores: s.medidores || [],
       tieneAlcantarillado: s.tieneAlcantarillado,
       estadoServicio: s.estado,
       estadoCuenta: s.estadoCuenta || (s.montoTotalAdeudado > 0 ? 'EN_MORA' : 'AL_DIA'),
@@ -313,7 +314,15 @@ async function displaySocioPlanilla(socio) {
   // Mini Card
   document.getElementById('posSocioNombre').textContent = currentCalculation.socioNombre;
   document.getElementById('posSocioCedula').textContent = currentCalculation.socioCedula;
-  document.getElementById('posSocioSector').textContent = currentCalculation.socioSector;
+
+  const numMedidores = (socio.medidores && socio.medidores.length > 0) ? socio.medidores.length : 1;
+  const medidoresStr = (socio.medidores && socio.medidores.length > 1)
+    ? `💧 ${numMedidores} medidores (${socio.medidores.map(m => m.alias || m.numeroMedidor).join(', ')})`
+    : `Medidor: ${currentCalculation.medidorNumero}`;
+
+  document.getElementById('posSocioSector').innerHTML = `
+    ${currentCalculation.socioSector} &bull; <strong style="color: #0284c7;">${medidoresStr}</strong>
+  `;
 
   document.getElementById('posCategoriaBadge').innerHTML = `
     <span class="age-badge ${currentCalculation.esTerceraEdad ? 'badge-senior' : 'badge-normal'}">

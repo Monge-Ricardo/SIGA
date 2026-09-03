@@ -140,9 +140,10 @@ export function requireAuth(allowedRoles = []) {
   }
 
   if (allowedRoles.length > 0 && !allowedRoles.includes(user.rol)) {
-    alert(`Acceso Restringido: Tu rol (${user.rol}) no tiene permisos para este módulo.`);
     if (user.rol === 'LECTOR') {
       window.location.replace('lecturas.html');
+    } else if (user.rol === 'CAJERO') {
+      window.location.replace('caja.html');
     } else {
       window.location.replace('socios.html');
     }

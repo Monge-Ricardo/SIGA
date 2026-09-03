@@ -2,11 +2,15 @@ import { requireAuth, getAuthToken } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 
-// Guard de autenticación
-const currentUser = requireAuth(['ADMIN', 'CAJERO']);
+// Guard de autenticación (ADMIN, CAJERO y LECTOR para consulta de rutas)
+const currentUser = requireAuth(['ADMIN', 'CAJERO', 'LECTOR']);
 
 if (currentUser) {
   injectAppLayout('socios');
+  if (currentUser.rol === 'LECTOR') {
+    const btnNew = document.getElementById('btnOpenCreateSocio');
+    if (btnNew) btnNew.style.display = 'none';
+  }
 }
 
 async function apiFetch(url, options = {}) {
@@ -233,6 +237,42 @@ function calcularTarifaBaseEstimada(es3raEdadFlag, tieneAlcantFlag) {
 
 async function getAllSocios() {
   const start = performance.now();
+  // Sincronizar desde Backend REST API
+  try {
+    const res = await apiFetch('/api/v1/socios');
+    if (res.data && res.data.length > 0) {
+      const tx = db.transaction(['socios'], 'readwrite');
+      const store = tx.objectStore('socios');
+      res.data.forEach((s) => {
+        const item = {
+          id: s.id,
+          codigoSocio: s.codigoSocio,
+          nombres: s.nombres,
+          apellidos: s.apellidos,
+          nombreCompleto: `${s.nombres} ${s.apellidos}`,
+          cedulaRuc: s.cedulaRuc,
+          fechaNacimiento: s.fechaNacimiento,
+          fechaAfiliacion: s.fechaUnion || s.fechaAfiliacion || '2024-01-01',
+          sectorId: s.idSector || s.sectorId,
+          nombreSector: s.nombreSector || 'Sector Centro',
+          direccion: s.direccion,
+          telefono: s.telefono,
+          medidorNumero: s.medidorNumero,
+          medidores: s.medidores || [],
+          tieneAlcantarillado: s.tieneAlcantarillado,
+          estadoServicio: s.estado || 'ACTIVO',
+          estadoCuenta: s.estadoCuenta || (s.montoTotalAdeudado > 0 ? 'EN_MORA' : 'AL_DIA'),
+          mesesAdeudados: s.mesesAdeudados || 0,
+          montoTotalAdeudado: s.montoTotalAdeudado || 0,
+          updatedAt: s.updatedAt || new Date().toISOString()
+        };
+        store.put(item);
+      });
+    }
+  } catch (apiErr) {
+    // Si offline, usamos IndexedDB local
+  }
+
   return new Promise((resolve) => {
     const tx = db.transaction(['socios'], 'readonly');
     const req = tx.objectStore('socios').getAll();
@@ -478,6 +518,11 @@ function renderSociosTable(allSocios) {
         ? 'status-badge-suspended'
         : 'status-badge-cut';
 
+    const medidoresCount = (socio.medidores && socio.medidores.length > 0) ? socio.medidores.length : (socio.medidorNumero ? 1 : 0);
+    const medidorBadge = medidoresCount > 1
+      ? `<span class="badge-tag" style="background:#e0f2fe; color:#0369a1; font-weight:700;">💧 ${medidoresCount} medidores</span>`
+      : `<code style="font-size:0.75rem; background:#f1f5f9; padding:2px 4px; border-radius:4px;">${socio.medidorNumero || '-'}</code>`;
+
     // Se mantiene ÚNICAMENTE el botón de Ver Ficha (eliminando redundancia de editar)
     tr.innerHTML = `
       <td>
@@ -485,7 +530,7 @@ function renderSociosTable(allSocios) {
           <div class="user-avatar-mini">${socio.esTerceraEdad ? '👴' : '👤'}</div>
           <div>
             <div class="user-name">${socio.nombreCompleto}</div>
-            <div class="user-code">${socio.codigoSocio} ${socio.medidorNumero ? `• ${socio.medidorNumero}` : ''}</div>
+            <div class="user-code">${socio.codigoSocio} &bull; ${medidorBadge}</div>
           </div>
         </div>
       </td>
@@ -499,8 +544,15 @@ function renderSociosTable(allSocios) {
         </div>
       </td>
       <td><span class="sector-tag">${socio.nombreSector || socio.sectorId}</span></td>
-      <td>${socio.tieneAlcantarillado ? '<span class="tag-yes">+$1.00 SÍ</span>' : '<span class="tag-no">NO</span>'}</td>
-      <td><strong class="text-accent">$${socio.tarifaBaseMensual.toFixed(2)}</strong><span style="font-size:0.75rem;color:#64748b;">/mes</span></td>
+      <td>${socio.tieneAlcantarillado ? '<span class="tag-yes">SÍ</span>' : '<span class="tag-no">NO</span>'}</td>
+      <td>
+        <strong class="text-accent">$${socio.tarifaBaseMensual.toFixed(2)}</strong><span style="font-size:0.75rem;color:#64748b;">/mes</span>
+        ${
+          socio.tieneAlcantarillado
+            ? '<div style="font-size: 0.7rem; color: #0284c7; margin-top: 1px;">(Incluye $1.00 alcantarillado)</div>'
+            : '<div style="font-size: 0.7rem; color: #64748b; margin-top: 1px;">(Solo tarifa de agua)</div>'
+        }
+      </td>
       <td>
         ${
           isMora
@@ -555,7 +607,7 @@ function updateTariffPreview() {
     </div>
     <div class="tariff-preview-details">
       <span>🔹 Cuota Base ($30 m³): <strong>$${tarifaBase.toFixed(2)}</strong></span>
-      <span>🔹 Alcantarillado: <strong>${tieneAlcant ? '+$' + TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2) : 'No aplica ($0.00)'}</strong></span>
+      <span>🔹 Alcantarillado: <strong>${tieneAlcant ? '$' + TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2) + ' (en valores a cobrar)' : 'No aplica ($0.00)'}</strong></span>
       <span style="color: #64748b; font-size: 0.8rem;">* Excedente >30 m³ se factura a $0.10/m³ adicional.</span>
     </div>
   `;
@@ -624,7 +676,7 @@ function openDetailModal(socio) {
   document.getElementById('detailEdad').innerHTML = `<strong>${socio.edadCalculada} años</strong> (${socio.fechaNacimiento})`;
   document.getElementById('detailSector').innerHTML = `<strong>${socio.nombreSector || socio.sectorId}</strong>`;
   document.getElementById('detailMedidor').innerHTML = `<span class="badge-code">${socio.medidorNumero || 'Sin medidor'}</span>`;
-  document.getElementById('detailAlcantarillado').innerHTML = socio.tieneAlcantarillado ? '✅ SÍ (+$1.00/mes)' : '❌ NO ($0.00)';
+  document.getElementById('detailAlcantarillado').innerHTML = socio.tieneAlcantarillado ? '<span class="tag-yes">SÍ</span>' : '<span class="tag-no">NO</span>';
   document.getElementById('detailAfiliacion').textContent = socio.fechaAfiliacion || 'No registrada';
   document.getElementById('detailTelefono').textContent = socio.telefono || 'No registrado';
   document.getElementById('detailDireccion').textContent = socio.direccion || 'Sin dirección especificada';
@@ -649,8 +701,52 @@ function openDetailModal(socio) {
   const baseMonto = socio.esTerceraEdad ? TARIFAS_CONFIG.BASE_TERCERA_EDAD : TARIFAS_CONFIG.BASE_NORMAL;
   const alcantMonto = socio.tieneAlcantarillado ? TARIFAS_CONFIG.RECARGO_ALCANTARILLADO : 0;
   document.getElementById('detailTarifaBaseMonto').textContent = `$${baseMonto.toFixed(2)}`;
-  document.getElementById('detailTarifaAlcantMonto').textContent = alcantMonto > 0 ? `+$${alcantMonto.toFixed(2)}` : '$0.00';
+  document.getElementById('detailTarifaAlcantMonto').textContent = alcantMonto > 0 ? `$${alcantMonto.toFixed(2)}` : '$0.00 (No aplica)';
   document.getElementById('detailTarifaTotalMonto').textContent = `$${(baseMonto + alcantMonto).toFixed(2)} USD`;
+
+  // Cargar lista de acometidas / medidores del socio
+  const containerMedidores = document.getElementById('detailMedidoresList');
+  if (containerMedidores) {
+    containerMedidores.innerHTML = '<span style="font-size: 0.8rem; color: #64748b;">Cargando acometidas...</span>';
+    try {
+      const res = await apiFetch(`/api/v1/socios/${socio.id}/medidores`);
+      const meds = res.data || [];
+      if (meds.length === 0) {
+        containerMedidores.innerHTML = `
+          <div style="font-size: 0.8rem; color: #0369a1; background: #fff; padding: 6px 10px; border-radius: 6px; border: 1px solid #bae6fd;">
+            <strong>${socio.medidorNumero || 'MED-00000'}</strong> &bull; Casa principal
+          </div>
+        `;
+      } else {
+        containerMedidores.innerHTML = meds
+          .map(
+            (m) => `
+          <div style="display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 6px 10px; border-radius: 6px; border: 1px solid #bae6fd; font-size: 0.8rem;">
+            <div>
+              <strong style="color: #0369a1;">${m.numeroMedidor}</strong> 
+              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 6px; border-radius: 4px; font-size: 0.72rem; margin-left: 4px; font-weight:600;">${m.alias || 'Casa'}</span>
+              <div style="font-size: 0.72rem; color: #64748b; margin-top: 2px;">
+                📍 ${m.nombreSector || socio.nombreSector || 'Sector'} &bull; ${m.direccion || socio.direccion || 'Predio'}
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <span style="font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; background: ${m.tieneAlcantarillado ? '#dcfce7' : '#f1f5f9'}; color: ${m.tieneAlcantarillado ? '#166534' : '#64748b'}; font-weight: 600;">
+                ${m.tieneAlcantarillado ? 'Alcant. SÍ' : 'Alcant. NO'}
+              </span>
+            </div>
+          </div>
+        `
+          )
+          .join('');
+      }
+    } catch {
+      containerMedidores.innerHTML = `
+        <div style="font-size: 0.8rem; color: #0369a1;">
+          ${socio.medidorNumero || 'MED-00000'} (Casa principal)
+        </div>
+      `;
+    }
+  }
 
   modalDetail.style.display = 'flex';
 }
@@ -658,6 +754,67 @@ function openDetailModal(socio) {
 function closeDetailModal() {
   modalDetail.style.display = 'none';
 }
+
+// Modal Agregar Medidor
+const modalAddMedidor = document.getElementById('modalAddMedidor');
+document.getElementById('btnOpenAddMedidor')?.addEventListener('click', () => {
+  if (!activeSocioDetail) return;
+  const selectSec = document.getElementById('selectAddMedidorSector');
+  if (selectSec) {
+    selectSec.innerHTML = cachedSectores.map((s) => `<option value="${s.id}">${s.codigo} - ${s.nombre}</option>`).join('');
+    selectSec.value = activeSocioDetail.sectorId || cachedSectores[0]?.id || '';
+  }
+  document.getElementById('inputAddMedidorNumero').value = '';
+  document.getElementById('inputAddMedidorAlias').value = 'Acometida adicional';
+  document.getElementById('inputAddMedidorDireccion').value = activeSocioDetail.direccion || '';
+  document.getElementById('checkAddMedidorAlcantarillado').checked = activeSocioDetail.tieneAlcantarillado;
+  modalAddMedidor.style.display = 'flex';
+});
+
+document.getElementById('btnCloseAddMedidorModal')?.addEventListener('click', () => {
+  modalAddMedidor.style.display = 'none';
+});
+document.getElementById('btnCancelAddMedidor')?.addEventListener('click', () => {
+  modalAddMedidor.style.display = 'none';
+});
+
+document.getElementById('formAddMedidor')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!activeSocioDetail) return;
+  const numeroMedidor = document.getElementById('inputAddMedidorNumero').value.trim();
+  const alias = document.getElementById('inputAddMedidorAlias').value.trim();
+  const idSector = document.getElementById('selectAddMedidorSector').value;
+  const direccion = document.getElementById('inputAddMedidorDireccion').value.trim();
+  const tieneAlcantarillado = document.getElementById('checkAddMedidorAlcantarillado').checked;
+
+  try {
+    await apiFetch(`/api/v1/socios/${activeSocioDetail.id}/medidores`, {
+      method: 'POST',
+      body: JSON.stringify({ numeroMedidor, alias, idSector, direccion, tieneAlcantarillado })
+    });
+    modalAddMedidor.style.display = 'none';
+    if (typeof Swal !== 'undefined') {
+      Swal.fire({
+        icon: 'success',
+        title: 'Medidor Asignado',
+        text: `El medidor "${numeroMedidor}" (${alias}) fue asignado exitosamente.`,
+        timer: 2000,
+        showConfirmButton: false
+      });
+    }
+    // Refrescar modal de detalle y tabla general
+    await openDetailModal(activeSocioDetail);
+    const socios = await getAllSocios();
+    renderMetrics(socios);
+    renderSociosTable(socios);
+  } catch (err) {
+    if (typeof Swal !== 'undefined') {
+      Swal.fire('Error al asignar medidor', err.message, 'error');
+    } else {
+      alert(`Error al asignar medidor: ${err.message}`);
+    }
+  }
+});
 
 document.getElementById('btnOpenCreateSocio')?.addEventListener('click', () => openFormModal());
 document.getElementById('btnCloseFormModal')?.addEventListener('click', closeFormModal);

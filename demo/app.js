@@ -459,8 +459,15 @@ function renderSociosTable(allSocios) {
         </div>
       </td>
       <td><span class="sector-tag">${socio.nombreSector || socio.sectorId}</span></td>
-      <td>${socio.tieneAlcantarillado ? '<span class="tag-yes">+$1.00 SÍ</span>' : '<span class="tag-no">NO</span>'}</td>
-      <td><strong class="text-accent">$${socio.tarifaBaseMensual.toFixed(2)}</strong><span style="font-size:0.75rem;color:#94a3b8;">/mes</span></td>
+      <td>${socio.tieneAlcantarillado ? '<span class="tag-yes">SÍ</span>' : '<span class="tag-no">NO</span>'}</td>
+      <td>
+        <strong class="text-accent">$${socio.tarifaBaseMensual.toFixed(2)}</strong><span style="font-size:0.75rem;color:#94a3b8;">/mes</span>
+        ${
+          socio.tieneAlcantarillado
+            ? '<div style="font-size: 0.7rem; color: #0284c7; margin-top: 1px;">(Incluye $1.00 alcantarillado)</div>'
+            : '<div style="font-size: 0.7rem; color: #64748b; margin-top: 1px;">(Solo tarifa de agua)</div>'
+        }
+      </td>
       <td>
         ${
           isMora
@@ -547,7 +554,7 @@ function updateTariffPreview() {
     </div>
     <div class="tariff-preview-details">
       <span>🔹 Cuota Base: <strong>$${tarifaBase.toFixed(2)}</strong></span>
-      <span>🔹 Alcantarillado: <strong>${tieneAlcant ? '+$' + TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2) : 'No aplica ($0.00)'}</strong></span>
+      <span>🔹 Alcantarillado: <strong>${tieneAlcant ? '$' + TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2) + ' (en valores a cobrar)' : 'No aplica ($0.00)'}</strong></span>
       <span style="color: #94a3b8; font-size: 0.8rem;">* Excedente >30 m³ se factura a $0.10/m³ adicional.</span>
     </div>
   `;
@@ -616,7 +623,7 @@ function openDetailModal(socio) {
   document.getElementById('detailEdad').innerHTML = `<strong>${socio.edadCalculada} años</strong> (${socio.fechaNacimiento})`;
   document.getElementById('detailSector').innerHTML = `<strong>${socio.nombreSector || socio.sectorId}</strong>`;
   document.getElementById('detailMedidor').innerHTML = `<span class="badge-code">${socio.medidorNumero || 'Sin medidor'}</span>`;
-  document.getElementById('detailAlcantarillado').innerHTML = socio.tieneAlcantarillado ? '✅ SÍ (+$1.00/mes)' : '❌ NO ($0.00)';
+  document.getElementById('detailAlcantarillado').innerHTML = socio.tieneAlcantarillado ? '<span class="tag-yes">SÍ</span>' : '<span class="tag-no">NO</span>';
   document.getElementById('detailAfiliacion').textContent = socio.fechaAfiliacion || 'No registrada';
   document.getElementById('detailTelefono').textContent = socio.telefono || 'No registrado';
   document.getElementById('detailDireccion').textContent = socio.direccion || 'Sin dirección especificada';
@@ -641,7 +648,7 @@ function openDetailModal(socio) {
   const baseMonto = socio.esTerceraEdad ? TARIFAS_CONFIG.BASE_TERCERA_EDAD : TARIFAS_CONFIG.BASE_NORMAL;
   const alcantMonto = socio.tieneAlcantarillado ? TARIFAS_CONFIG.RECARGO_ALCANTARILLADO : 0;
   document.getElementById('detailTarifaBaseMonto').textContent = `$${baseMonto.toFixed(2)}`;
-  document.getElementById('detailTarifaAlcantMonto').textContent = alcantMonto > 0 ? `+$${alcantMonto.toFixed(2)}` : '$0.00';
+  document.getElementById('detailTarifaAlcantMonto').textContent = alcantMonto > 0 ? `$${alcantMonto.toFixed(2)}` : '$0.00 (No aplica)';
   document.getElementById('detailTarifaTotalMonto').textContent = `$${(baseMonto + alcantMonto).toFixed(2)} USD`;
 
   modalDetail.style.display = 'flex';
