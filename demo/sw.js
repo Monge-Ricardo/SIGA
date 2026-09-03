@@ -2,7 +2,7 @@
  * SIGA-Comunitario • Service Worker PWA (Offline-First Real)
  */
 
-const CACHE_NAME = 'siga-pwa-v2';
+const CACHE_NAME = 'siga-pwa-v3';
 const STATIC_ASSETS = [
   './',
   './index.html',
