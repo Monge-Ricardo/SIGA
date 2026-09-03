@@ -1,0 +1,15 @@
+/* =========================================================
+   MÓDULO 6: GOBERNANZA Y TARIFAS ADMIN (Single Responsibility)
+   ========================================================= */
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
