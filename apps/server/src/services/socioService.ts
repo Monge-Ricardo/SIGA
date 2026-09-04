@@ -52,15 +52,27 @@ export class SocioService {
   }
 
   private mapRowToSocio(row: SocioRow): Socio {
+    const db = sqliteDb.getRawDb();
     const esTerceraEdad = ValidationRules.calcularEsTerceraEdad(row.fecha_nacimiento);
     const medidores = this.getMedidoresBySocioId(row.id);
     const primario = medidores[0];
+
+    // Consultar deudas pendientes del socio
+    const debtRow = db.prepare(`
+      SELECT COALESCE(SUM(total_pagar), 0) as totalDeuda, COUNT(*) as meses, MIN(fecha_vencimiento) as fechaDeuda
+      FROM facturas
+      WHERE id_socio = ? AND estado_pago = 'PENDIENTE'
+    `).get(row.id) as any;
+
+    const montoTotalAdeudado = Number((debtRow?.totalDeuda || 0).toFixed(2));
+    const mesesAdeudados = Number(debtRow?.meses || 0);
 
     return {
       id: row.id,
       codigoSocio: row.codigo_socio,
       nombres: row.nombres,
       apellidos: row.apellidos,
+      nombreCompleto: `${row.nombres} ${row.apellidos}`.trim(),
       cedulaRuc: row.cedula_ruc,
       fechaNacimiento: row.fecha_nacimiento,
       esTerceraEdad,
@@ -72,6 +84,10 @@ export class SocioService {
       telefono: row.telefono || undefined,
       direccion: row.direccion,
       estado: row.estado,
+      montoTotalAdeudado,
+      mesesAdeudados,
+      estadoCuenta: montoTotalAdeudado > 0 ? 'EN_MORA' : 'AL_DIA',
+      fechaDeudaAntigua: debtRow?.fechaDeuda || undefined,
       medidores,
       version: row.version,
       createdAt: row.created_at,

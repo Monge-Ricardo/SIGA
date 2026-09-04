@@ -1,0 +1,6 @@
+codigo_socio,cedula_ruc,nombres,apellidos,fecha_nacimiento,telefono,direccion,sector,numero_medidor,alias_medidor,tiene_alcantarillado,lectura_inicial,deuda_pendiente,estado
+SOC-0001,1710203040,Juan Carlos,Perez Guaman,1954-05-12,0987654321,Calle Sucre y 10 de Agosto,Sector Centro,MED-0101,Casa principal,SI,150,0.00,ACTIVO
+SOC-0001,1710203040,Juan Carlos,Perez Guaman,1954-05-12,0987654321,Barrio El Mirador Lote 4,Sector Norte,MED-0102,Terreno / Riego,NO,45,0.00,ACTIVO
+SOC-0002,1720304050,Maria Elena,Quishpe Moran,1978-11-23,0991122334,Av. Principal s/n,Sector Centro,MED-0201,Casa principal,SI,210,0.00,ACTIVO
+SOC-0003,1730405060,Rosa Elvira,Chavez Loja,1948-03-15,0998877665,Calle Bolivar y Rocafuerte,Sector Sur,MED-0301,Casa principal,NO,95,14.00,ACTIVO
+SOC-0004,1740506070,Segundo Manuel,Tacuri Guamancela,1965-08-30,0984433221,Camino Real Entrada 2,Sector Norte,MED-0401,Taller mecanico,SI,180,0.00,ACTIVO
