@@ -84,7 +84,7 @@ export function createSocioDetailModal(options: SocioDetailModalOptions): HTMLEl
         <div class="detail-item">
           <span class="detail-label">Servicio Alcantarillado:</span>
           <span class="detail-value">
-            ${socio.tieneAlcantarillado ? '✅ SÍ (+$1.00/mes)' : '❌ NO ($0.00)'}
+            ${socio.tieneAlcantarillado ? '<span class="tag-yes">SÍ</span>' : '<span class="tag-no">NO</span>'}
           </span>
         </div>
 
@@ -137,7 +137,7 @@ export function createSocioDetailModal(options: SocioDetailModalOptions): HTMLEl
           }
         </div>
 
-        <h3 class="detail-section-heading" style="margin-top: 1.25rem;">💧 Desglose de Tarifa Base Mensual</h3>
+        <h3 class="detail-section-heading" style="margin-top: 1.25rem;">💧 Desglose de Valores a Cobrar (Cuota Fija Mensual)</h3>
         <div class="tariff-breakdown-box">
           <div class="breakdown-row">
             <span>Cuota Fija Base (30 m³):</span>
@@ -145,7 +145,7 @@ export function createSocioDetailModal(options: SocioDetailModalOptions): HTMLEl
           </div>
           <div class="breakdown-row">
             <span>Servicio de Alcantarillado:</span>
-            <span>${tarifaAlcant > 0 ? '+$' + tarifaAlcant.toFixed(2) : '$0.00'}</span>
+            <span>${tarifaAlcant > 0 ? '$' + tarifaAlcant.toFixed(2) : '$0.00 (No aplica)'}</span>
           </div>
           <div class="breakdown-divider"></div>
           <div class="breakdown-row total">

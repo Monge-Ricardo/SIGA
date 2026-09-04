@@ -8,14 +8,19 @@ Este documento describe la estructura relacional de la base de datos para el **S
 ## 1. Diagrama Entidad-Relación (ERD)
 
 ```
+┌─────────────────┐
+│    SECTORES     │
+└────────┬────────┘
+         │ 1:N
+         ▼
 ┌─────────────────┐       1:N       ┌─────────────────┐       1:N       ┌─────────────────┐
-│    SECTORES     ├────────────────►│     SOCIOS      ├────────────────►│    LECTURAS     │
-└─────────────────┘                 └────────┬────────┘                 └────────┬────────┘
-                                             │ 1:N                               │ 1:1
-                                             ▼                                   ▼
-                                    ┌─────────────────┐                 ┌─────────────────┐
-                                    │  MULTAS_RUBROS  │                 │    FACTURAS     │
-                                    └─────────────────┘                 └────────┬────────┘
+│     SOCIOS      ├────────────────►│    MEDIDORES    ├────────────────►│    LECTURAS     │
+└────────┬────────┘                 └─────────────────┘                 └────────┬────────┘
+         │ 1:N                                                                   │ 1:1
+         ▼                                                                       ▼
+┌─────────────────┐                                                     ┌─────────────────┐
+│  MULTAS_RUBROS  │                                                     │    FACTURAS     │
+└─────────────────┘                                                     └────────┬────────┘
                                                                                  │ 1:1
                                                                                  ▼
 ┌───────────────────────────┐       1:N       ┌───────────────────┐     ┌─────────────────┐
@@ -79,8 +84,8 @@ Parámetros de tarifación y distribución comunitaria (gestionado por Rol `ADMI
 
 ---
 
-### 2.4. `socios` (Abonados / Consumidores)
-Padrón de afiliados con cálculo dinámico mensual de 3ra edad.
+### 2.4. `socios` (Abonados / Titulares)
+Padrón de afiliados con cálculo dinámico mensual de 3ra edad. Un socio puede poseer múltiples medidores (`1:N`).
 
 | Columna | Tipo SQLite | Tipo Supabase (PG) | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -91,11 +96,8 @@ Padrón de afiliados con cálculo dinámico mensual de 3ra edad.
 | `cedula_ruc` | `TEXT` | `VARCHAR(20)` | Cédula o RUC con validación |
 | `fecha_nacimiento`| `TEXT` | `DATE` | Base para cálculo dinámico de 3ra edad |
 | `fecha_union` | `TEXT` | `DATE` | Fecha de afiliación a la junta |
-| `id_sector` | `TEXT` | `UUID` | FK `sectores.id` |
-| `medidor_numero`| `TEXT` | `VARCHAR(50)` | Número físico del medidor |
-| `tiene_alcantarillado`| `INTEGER` | `BOOLEAN` | Aplica recargo de +$1.00 |
-| `telefono` | `TEXT` | `VARCHAR(25)` | Contacto |
-| `direccion` | `TEXT` | `TEXT` | Ubicación del predio |
+| `telefono` | `TEXT` | `VARCHAR(25)` | Contacto telefónico |
+| `direccion` | `TEXT` | `TEXT` | Dirección o domicilio principal del socio |
 | `estado` | `TEXT` | `VARCHAR(20)` | `ACTIVO`, `SUSPENDIDO`, `CORTADO` |
 | `version` | `INTEGER` | `INTEGER` | Control de versión para LWW |
 | `created_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
@@ -103,7 +105,26 @@ Padrón de afiliados con cálculo dinámico mensual de 3ra edad.
 
 ---
 
-### 2.5. `periodos`
+### 2.5. `medidores` (Acometidas / Puntos de Medición - Multi-Medidor)
+Acometidas y conexiones de agua registradas a nombre de un socio. Soporta múltiples medidores por abonado (ej: "Casa principal", "Terreno", "Local").
+
+| Columna | Tipo SQLite | Tipo Supabase (PG) | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `TEXT` | `UUID` | PK (UUIDv4) |
+| `id_socio` | `TEXT` | `UUID` | FK `socios.id` (ON DELETE CASCADE) |
+| `id_sector` | `TEXT` | `UUID` | FK `sectores.id` (Ruta geográfica) |
+| `numero_medidor`| `TEXT` | `VARCHAR(50)` | Número único / serial físico del medidor |
+| `alias` | `TEXT` | `VARCHAR(50)` | Nombre / alias (ej. `Casa principal`, `Terreno`, `Local`, `M1`) |
+| `direccion` | `TEXT` | `TEXT` | Ubicación física exacta de la conexión |
+| `tiene_alcantarillado`| `INTEGER` | `BOOLEAN` | Aplica recargo de +$1.00 a esta acometida |
+| `estado` | `TEXT` | `VARCHAR(20)` | `ACTIVO`, `SUSPENDIDO`, `CORTADO` |
+| `version` | `INTEGER` | `INTEGER` | Control de versión para LWW |
+| `created_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
+| `updated_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
+
+---
+
+### 2.6. `periodos`
 Ciclos mensuales de facturación y lectura (`YYYY-MM`).
 
 | Columna | Tipo SQLite | Tipo Supabase (PG) | Descripción |
@@ -118,21 +139,71 @@ Ciclos mensuales de facturación y lectura (`YYYY-MM`).
 
 ---
 
-### 2.6. `lecturas`
-Toma física de micromedición (Rol Lector / Cobrador).
+### 2.7. `lecturas`
+Toma física de micromedición por **Medidor** (Rol Lector / Cobrador). Restricción de unicidad: un medidor solo puede tener una lectura por período.
+
+| Columna | Tipo SQLite | Tipo Supabase (PG) | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `TEXT` | `UUID` | PK |
+| `id_medidor` | `TEXT` | `UUID` | FK `medidores.id` (Acometida específica) |
+| `id_socio` | `TEXT` | `UUID` | FK `socios.id` (Titular responsable) |
+| `id_periodo` | `TEXT` | `UUID` | FK `periodos.id` |
+| `lectura_anterior`| `REAL` | `NUMERIC(10,2)`| $L_{ant}$ acumulada del medidor |
+| `lectura_actual`| `REAL` | `NUMERIC(10,2)`| $L_{act}$ capturada ($L_{act} \ge L_{ant}$) |
+| `consumo_total` | `REAL` | `NUMERIC(10,2)`| $C_m = L_{act} - L_{ant}$ |
+| `excedente_m3` | `REAL` | `NUMERIC(10,2)`| $E_m = \max(0, C_m - 30)$ |
+| `fecha_lectura` | `TEXT` | `TIMESTAMPTZ` | Fecha de captura |
+| `id_lector` | `TEXT` | `UUID` | FK `usuarios.id` |
+| `observaciones` | `TEXT` | `TEXT` | Novedades en la toma |
+| `version` | `INTEGER` | `INTEGER` | Control LWW |
+| `created_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
+| `updated_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
+
+---
+
+### 2.8. `multas_rubros`
+Multas por mingas, asambleas, conexiones y cuotas extraordinarias.
 
 | Columna | Tipo SQLite | Tipo Supabase (PG) | Descripción |
 | :--- | :--- | :--- | :--- |
 | `id` | `TEXT` | `UUID` | PK |
 | `id_socio` | `TEXT` | `UUID` | FK `socios.id` |
 | `id_periodo` | `TEXT` | `UUID` | FK `periodos.id` |
-| `lectura_anterior`| `REAL` | `NUMERIC(10,2)`| $L_{ant}$ acumulada |
-| `lectura_actual`| `REAL` | `NUMERIC(10,2)`| $L_{act}$ capturada ($L_{act} \ge L_{ant}$) |
-| `consumo_total` | `REAL` | `NUMERIC(10,2)`| $C_m = L_{act} - L_{ant}$ |
-| `excedente_m3` | `REAL` | `NUMERIC(10,2)`| $E_m = \max(0, C_m - 30)$ |
-| `fecha_lectura` | `TEXT` | `TIMESTAMPTZ` | Fecha de captura |
-| `id_lector` | `TEXT` | `UUID` | FK `usuarios.id` |
-| `observaciones` | `TEXT` | `TEXT` | Novedades |
+| `tipo_rubro` | `TEXT` | `VARCHAR(50)` | `MINGA`, `ASAMBLEA`, `RECONEXION`, `CUOTA_EXTRA`, `OTRO` |
+| `monto` | `REAL` | `NUMERIC(10,2)`| Valor monetario |
+| `motivo` | `TEXT` | `TEXT` | Explicación |
+| `pagado` | `INTEGER` | `BOOLEAN` | `1` si fue cancelado |
+| `id_factura` | `TEXT` | `UUID` | FK opcional `facturas.id` |
+| `created_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
+
+---
+
+### 2.9. `facturas`
+Liquidación mensual por medidor y socio. Bloqueada una vez pagada.
+
+| Columna | Tipo SQLite | Tipo Supabase (PG) | Descripción |
+| :--- | :--- | :--- | :--- |
+| `id` | `TEXT` | `UUID` | PK |
+| `numero_factura`| `TEXT` | `VARCHAR(30)` | Folio correlativo (ej. `FAC-2026-0001`) |
+| `id_socio` | `TEXT` | `UUID` | FK `socios.id` |
+| `id_medidor` | `TEXT` | `UUID` | FK `medidores.id` |
+| `id_periodo` | `TEXT` | `UUID` | FK `periodos.id` |
+| `id_lectura` | `TEXT` | `UUID` | FK `lecturas.id` |
+| `es_tercera_edad`| `INTEGER` | `BOOLEAN` | Evaluado al liquidar |
+| `valor_base` | `REAL` | `NUMERIC(10,2)`| $7.00 o $5.00 |
+| `consumo_m3` | `REAL` | `NUMERIC(10,2)`| Metros cúbicos consumidos |
+| `excedente_m3` | `REAL` | `NUMERIC(10,2)`| Metros cúbicos en exceso |
+| `valor_excedente`| `REAL`| `NUMERIC(10,2)`| $E_m \times \$0.10$ |
+| `valor_alcantarillado`| `REAL`| `NUMERIC(10,2)`| $1.00 o $0.00 |
+| `valor_multas` | `REAL` | `NUMERIC(10,2)`| Sumatoria de multas asociadas |
+| `valor_deuda_anterior`| `REAL`| `NUMERIC(10,2)`| Deuda acumulada de meses en mora |
+| `total_mes` | `REAL` | `NUMERIC(10,2)`| Base + Excedente + Alcantarillado |
+| `total_pagar` | `REAL` | `NUMERIC(10,2)`| Total Mes + Multas + Deuda Anterior |
+| `estado_pago` | `TEXT` | `VARCHAR(20)` | `PENDIENTE`, `PAGADO`, `ANULADO` |
+| `fecha_vencimiento`| `TEXT`| `DATE` | Límite oportuno de pago |
+| `fecha_pago` | `TEXT` | `TIMESTAMPTZ` | Momento de cobro efectivo |
+| `metodo_pago` | `TEXT` | `VARCHAR(30)` | `EFECTIVO`, `TRANSFERENCIA`, `MOVIL` |
+| `id_cajero` | `TEXT` | `UUID` | FK `usuarios.id` |
 | `version` | `INTEGER` | `INTEGER` | Control LWW |
 | `created_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
 | `updated_at` | `TEXT` | `TIMESTAMPTZ` | Timestamp |
@@ -265,7 +336,7 @@ CREATE TABLE IF NOT EXISTS tarifas_config (
   created_at TEXT NOT NULL
 );
 
--- 4. Socios
+-- 4. Socios (Titulares / Abonados)
 CREATE TABLE IF NOT EXISTS socios (
   id TEXT PRIMARY KEY,
   codigo_socio TEXT UNIQUE NOT NULL,
@@ -274,22 +345,37 @@ CREATE TABLE IF NOT EXISTS socios (
   cedula_ruc TEXT UNIQUE NOT NULL,
   fecha_nacimiento TEXT NOT NULL,
   fecha_union TEXT NOT NULL,
-  id_sector TEXT NOT NULL,
-  medidor_numero TEXT UNIQUE NOT NULL,
-  tiene_alcantarillado INTEGER NOT NULL DEFAULT 0,
   telefono TEXT,
   direccion TEXT NOT NULL,
   estado TEXT NOT NULL DEFAULT 'ACTIVO' CHECK(estado IN ('ACTIVO', 'SUSPENDIDO', 'CORTADO')),
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_socios_estado ON socios(estado);
+
+-- 5. Medidores (Acometidas de Agua - 1 Socio : N Medidores)
+CREATE TABLE IF NOT EXISTS medidores (
+  id TEXT PRIMARY KEY,
+  id_socio TEXT NOT NULL,
+  id_sector TEXT NOT NULL,
+  numero_medidor TEXT UNIQUE NOT NULL,
+  alias TEXT, -- ej: 'Casa principal', 'Terreno', 'Local comercial', 'M1'
+  direccion TEXT,
+  tiene_alcantarillado INTEGER NOT NULL DEFAULT 0,
+  estado TEXT NOT NULL DEFAULT 'ACTIVO' CHECK(estado IN ('ACTIVO', 'SUSPENDIDO', 'CORTADO')),
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  FOREIGN KEY (id_socio) REFERENCES socios(id) ON DELETE CASCADE,
   FOREIGN KEY (id_sector) REFERENCES sectores(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_socios_sector ON socios(id_sector);
-CREATE INDEX IF NOT EXISTS idx_socios_estado ON socios(estado);
+CREATE INDEX IF NOT EXISTS idx_medidores_socio ON medidores(id_socio);
+CREATE INDEX IF NOT EXISTS idx_medidores_sector ON medidores(id_sector);
 
--- 5. Periodos
+-- 6. Periodos
 CREATE TABLE IF NOT EXISTS periodos (
   id TEXT PRIMARY KEY,
   periodo_codigo TEXT UNIQUE NOT NULL,
@@ -300,9 +386,10 @@ CREATE TABLE IF NOT EXISTS periodos (
   created_at TEXT NOT NULL
 );
 
--- 6. Lecturas
+-- 7. Lecturas (Micromedición por Medidor)
 CREATE TABLE IF NOT EXISTS lecturas (
   id TEXT PRIMARY KEY,
+  id_medidor TEXT NOT NULL,
   id_socio TEXT NOT NULL,
   id_periodo TEXT NOT NULL,
   lectura_anterior REAL NOT NULL,
@@ -315,16 +402,18 @@ CREATE TABLE IF NOT EXISTS lecturas (
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(id_socio, id_periodo),
+  UNIQUE(id_medidor, id_periodo),
+  FOREIGN KEY (id_medidor) REFERENCES medidores(id),
   FOREIGN KEY (id_socio) REFERENCES socios(id),
   FOREIGN KEY (id_periodo) REFERENCES periodos(id),
   FOREIGN KEY (id_lector) REFERENCES usuarios(id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_lecturas_medidor ON lecturas(id_medidor);
 CREATE INDEX IF NOT EXISTS idx_lecturas_periodo ON lecturas(id_periodo);
 CREATE INDEX IF NOT EXISTS idx_lecturas_socio ON lecturas(id_socio);
 
--- 7. Multas y Rubros
+-- 8. Multas y Rubros
 CREATE TABLE IF NOT EXISTS multas_rubros (
   id TEXT PRIMARY KEY,
   id_socio TEXT NOT NULL,
@@ -341,11 +430,12 @@ CREATE TABLE IF NOT EXISTS multas_rubros (
 
 CREATE INDEX IF NOT EXISTS idx_multas_socio_pagado ON multas_rubros(id_socio, pagado);
 
--- 8. Facturas
+-- 9. Facturas (Liquidación mensual por Medidor y Socio)
 CREATE TABLE IF NOT EXISTS facturas (
   id TEXT PRIMARY KEY,
   numero_factura TEXT UNIQUE NOT NULL,
   id_socio TEXT NOT NULL,
+  id_medidor TEXT,
   id_periodo TEXT NOT NULL,
   id_lectura TEXT,
   es_tercera_edad INTEGER NOT NULL DEFAULT 0,
@@ -366,14 +456,15 @@ CREATE TABLE IF NOT EXISTS facturas (
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(id_socio, id_periodo),
   FOREIGN KEY (id_socio) REFERENCES socios(id),
+  FOREIGN KEY (id_medidor) REFERENCES medidores(id),
   FOREIGN KEY (id_periodo) REFERENCES periodos(id),
   FOREIGN KEY (id_lectura) REFERENCES lecturas(id),
   FOREIGN KEY (id_cajero) REFERENCES usuarios(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_facturas_socio_estado ON facturas(id_socio, estado_pago);
+CREATE INDEX IF NOT EXISTS idx_facturas_medidor ON facturas(id_medidor);
 CREATE INDEX IF NOT EXISTS idx_facturas_periodo ON facturas(id_periodo);
 
 -- 9. Catálogo de Fondos
@@ -461,9 +552,6 @@ CREATE TABLE IF NOT EXISTS socios (
   cedula_ruc VARCHAR(20) UNIQUE NOT NULL,
   fecha_nacimiento DATE NOT NULL,
   fecha_union DATE NOT NULL,
-  id_sector UUID NOT NULL REFERENCES sectores(id),
-  medidor_numero VARCHAR(50) UNIQUE NOT NULL,
-  tiene_alcantarillado BOOLEAN NOT NULL DEFAULT false,
   telefono VARCHAR(25),
   direccion TEXT NOT NULL,
   estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVO' CHECK(estado IN ('ACTIVO', 'SUSPENDIDO', 'CORTADO')),
@@ -471,6 +559,24 @@ CREATE TABLE IF NOT EXISTS socios (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Tabla de Medidores (1 Socio : N Medidores)
+CREATE TABLE IF NOT EXISTS medidores (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id_socio UUID NOT NULL REFERENCES socios(id) ON DELETE CASCADE,
+  id_sector UUID NOT NULL REFERENCES sectores(id),
+  numero_medidor VARCHAR(50) UNIQUE NOT NULL,
+  alias VARCHAR(50), -- ej: "Casa principal", "Terreno", "Local comercial", "M1"
+  direccion TEXT,
+  tiene_alcantarillado BOOLEAN NOT NULL DEFAULT false,
+  estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVO' CHECK(estado IN ('ACTIVO', 'SUSPENDIDO', 'CORTADO')),
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_medidores_socio ON medidores(id_socio);
+CREATE INDEX IF NOT EXISTS idx_pg_medidores_sector ON medidores(id_sector);
 
 CREATE TABLE IF NOT EXISTS periodos (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -482,8 +588,10 @@ CREATE TABLE IF NOT EXISTS periodos (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Micromedición por Medidor
 CREATE TABLE IF NOT EXISTS lecturas (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id_medidor UUID NOT NULL REFERENCES medidores(id),
   id_socio UUID NOT NULL REFERENCES socios(id),
   id_periodo UUID NOT NULL REFERENCES periodos(id),
   lectura_anterior NUMERIC(10,2) NOT NULL,
@@ -496,8 +604,12 @@ CREATE TABLE IF NOT EXISTS lecturas (
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_socio_periodo_lectura UNIQUE (id_socio, id_periodo)
+  CONSTRAINT uq_medidor_periodo_lectura UNIQUE (id_medidor, id_periodo)
 );
+
+CREATE INDEX IF NOT EXISTS idx_pg_lecturas_medidor ON lecturas(id_medidor);
+CREATE INDEX IF NOT EXISTS idx_pg_lecturas_socio ON lecturas(id_socio);
+CREATE INDEX IF NOT EXISTS idx_pg_lecturas_periodo ON lecturas(id_periodo);
 
 CREATE TABLE IF NOT EXISTS multas_rubros (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -515,6 +627,7 @@ CREATE TABLE IF NOT EXISTS facturas (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   numero_factura VARCHAR(30) UNIQUE NOT NULL,
   id_socio UUID NOT NULL REFERENCES socios(id),
+  id_medidor UUID REFERENCES medidores(id),
   id_periodo UUID NOT NULL REFERENCES periodos(id),
   id_lectura UUID REFERENCES lecturas(id),
   es_tercera_edad BOOLEAN NOT NULL DEFAULT false,
@@ -534,8 +647,7 @@ CREATE TABLE IF NOT EXISTS facturas (
   id_cajero UUID REFERENCES usuarios(id),
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_socio_periodo_factura UNIQUE (id_socio, id_periodo)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS fondos_catalogo (

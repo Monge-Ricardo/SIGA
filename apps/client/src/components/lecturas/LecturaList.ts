@@ -10,6 +10,13 @@ const BASELINE_LECTURAS: Record<string, number> = {
   'soc-004': 180
 };
 
+const LECTURAS_INICIALES_LECTOR: Record<string, { lecturaAnterior: number; lecturaActual: number; observaciones: string }> = {
+  'soc-001': { lecturaAnterior: 150, lecturaActual: 185, observaciones: 'Digitado por Lector en campo' },
+  'soc-002': { lecturaAnterior: 210, lecturaActual: 238, observaciones: 'Digitado por Lector en campo' },
+  'soc-003': { lecturaAnterior: 95, lecturaActual: 122, observaciones: 'Digitado por Lector en campo' },
+  'soc-004': { lecturaAnterior: 180, lecturaActual: 222, observaciones: 'Digitado por Lector en campo' }
+};
+
 export function createLecturaList(): HTMLElement {
   const container = document.createElement('div');
   container.className = 'lectura-module-container';
@@ -187,15 +194,22 @@ export function createLecturaList(): HTMLElement {
 
     sociosRuta.forEach((socio) => {
       const existingLectura = currentLecturas.find((l) => l.clienteId === socio.id);
-      const lecturaAnterior = existingLectura?.lecturaAnterior ?? (BASELINE_LECTURAS[socio.id] || 100);
-      const lecturaActual = existingLectura?.lecturaActual !== undefined ? existingLectura.lecturaActual : '';
-      const isTomada = existingLectura && existingLectura.lecturaActual !== undefined;
+      const fallbackLector = currentPeriodo === '2026-08' ? LECTURAS_INICIALES_LECTOR[socio.id] : undefined;
+
+      const lecturaAnterior = existingLectura?.lecturaAnterior ?? fallbackLector?.lecturaAnterior ?? (BASELINE_LECTURAS[socio.id] || 100);
+      const lecturaActual = existingLectura?.lecturaActual ?? fallbackLector?.lecturaActual;
+      const isTomada = lecturaActual !== undefined && lecturaActual !== null;
+      const esModificado = existingLectura?.observaciones?.includes('Cajero');
+
+      let consumo = 0;
+      let excedente = 0;
 
       if (isTomada) {
+        consumo = Math.max(0, lecturaActual - lecturaAnterior);
+        excedente = Math.max(0, consumo - 30);
         totalTomadas++;
-        totalConsumoM3 += (existingLectura.consumoM3 || 0);
-        const exc = Math.max(0, (existingLectura.consumoM3 || 0) - 30);
-        totalExcedenteM3 += exc;
+        totalConsumoM3 += consumo;
+        totalExcedenteM3 += excedente;
       }
 
       const tr = document.createElement('tr');
@@ -216,28 +230,35 @@ export function createLecturaList(): HTMLElement {
           <span>${lecturaAnterior}</span> m³
         </td>
         <td style="text-align: right;">
-          <input
-            type="number"
-            class="reading-input"
-            id="app-lact-${socio.id}"
-            value="${lecturaActual}"
-            placeholder="${lecturaAnterior}"
-            min="0"
-          />
+          <div style="display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px;">
+            <input
+              type="number"
+              class="reading-input ${isTomada ? 'input-saved' : ''}"
+              id="app-lact-${socio.id}"
+              value="${isTomada ? lecturaActual : ''}"
+              placeholder="${lecturaAnterior}"
+              min="${lecturaAnterior}"
+              ${isTomada ? 'readonly' : ''}
+              style="width: 105px; text-align: right; font-weight: 800;"
+            />
+            <span id="app-hint-${socio.id}" style="font-size: 0.72rem; color: ${esModificado ? '#059669' : '#0284c7'}; font-weight: 600;">
+              ${isTomada ? (esModificado ? '✓ Modificado por Cajero' : '👤 Digitado por Lector') : '⏳ Pendiente'}
+            </span>
+          </div>
           <div class="reading-alert-msg" id="app-alert-${socio.id}" style="display: none;"></div>
         </td>
         <td style="text-align: right;" id="app-consumo-cell-${socio.id}">
           ${
             isTomada
-              ? `<span class="consumption-pill">${existingLectura.consumoM3} m³</span>`
+              ? `<span class="consumption-pill">${consumo} m³</span>`
               : `<span style="color: #94a3b8;">-</span>`
           }
         </td>
         <td style="text-align: right;" id="app-excedente-cell-${socio.id}">
           ${
             isTomada
-              ? Math.max(0, existingLectura.consumoM3 - 30) > 0
-                ? `<span class="excess-pill">+${Math.max(0, existingLectura.consumoM3 - 30)} m³ (+$${((Math.max(0, existingLectura.consumoM3 - 30)) * 0.10).toFixed(2)})</span>`
+              ? excedente > 0
+                ? `<span class="excess-pill">+${excedente} m³ (+$${(excedente * 0.10).toFixed(2)})</span>`
                 : `<span style="color: #64748b;">0 m³ ($0.00)</span>`
               : `<span style="color: #94a3b8;">-</span>`
           }
@@ -250,8 +271,8 @@ export function createLecturaList(): HTMLElement {
           }
         </td>
         <td style="text-align: right;">
-          <button class="btn btn-sm btn-primary" id="app-btn-save-${socio.id}">
-            💾 Guardar
+          <button class="btn btn-sm ${isTomada ? 'btn-outline' : 'btn-primary'}" id="app-btn-action-${socio.id}" style="min-width: 85px;">
+            ${isTomada ? '✏️ Editar' : '💾 Guardar'}
           </button>
         </td>
       `;
@@ -260,7 +281,38 @@ export function createLecturaList(): HTMLElement {
       const alertBox = tr.querySelector(`#app-alert-${socio.id}`) as HTMLElement;
       const consumoCell = tr.querySelector(`#app-consumo-cell-${socio.id}`) as HTMLElement;
       const excedenteCell = tr.querySelector(`#app-excedente-cell-${socio.id}`) as HTMLElement;
-      const btnSave = tr.querySelector(`#app-btn-save-${socio.id}`) as HTMLButtonElement;
+      const hintEl = tr.querySelector(`#app-hint-${socio.id}`) as HTMLElement;
+      const btnAction = tr.querySelector(`#app-btn-action-${socio.id}`) as HTMLButtonElement;
+
+      let isEditing = !isTomada;
+
+      function enterEdit() {
+        isEditing = true;
+        inputLact.readOnly = false;
+        inputLact.style.borderColor = '#0284c7';
+        inputLact.style.backgroundColor = '#ffffff';
+        btnAction.textContent = '💾 Guardar';
+        btnAction.className = 'btn btn-sm btn-success';
+        btnAction.disabled = false;
+        hintEl.textContent = '✏️ Editando lectura...';
+        hintEl.style.color = '#b45309';
+        inputLact.focus();
+        inputLact.select();
+      }
+
+      function exitEdit(guardado: boolean, valActual: number) {
+        isEditing = false;
+        inputLact.readOnly = true;
+        inputLact.style.borderColor = '#86efac';
+        inputLact.style.backgroundColor = '#f0fdf4';
+        btnAction.textContent = '✏️ Editar';
+        btnAction.className = 'btn btn-sm btn-outline';
+        btnAction.disabled = false;
+        if (guardado) {
+          hintEl.textContent = '✓ Modificado por Cajero';
+          hintEl.style.color = '#059669';
+        }
+      }
 
       function validarCalculo() {
         const valStr = inputLact.value.trim();
@@ -269,7 +321,7 @@ export function createLecturaList(): HTMLElement {
           alertBox.style.display = 'none';
           consumoCell.innerHTML = '<span style="color: #94a3b8;">-</span>';
           excedenteCell.innerHTML = '<span style="color: #94a3b8;">-</span>';
-          btnSave.disabled = false;
+          btnAction.disabled = true;
           rowStateMap.delete(socio.id);
           return;
         }
@@ -284,12 +336,12 @@ export function createLecturaList(): HTMLElement {
           alertBox.style.display = 'block';
           consumoCell.innerHTML = '<span style="color: #dc2626; font-weight: 700;">Inválido</span>';
           excedenteCell.innerHTML = '<span style="color: #dc2626;">-</span>';
-          btnSave.disabled = true;
+          btnAction.disabled = true;
           rowStateMap.set(socio.id, { valid: false });
         } else {
           inputLact.classList.remove('reading-input-invalid');
           alertBox.style.display = 'none';
-          btnSave.disabled = false;
+          btnAction.disabled = false;
 
           consumoCell.innerHTML = `<span class="consumption-pill">${res.consumoM3} m³</span>`;
           if (res.excedenteM3 > 0) {
@@ -310,7 +362,12 @@ export function createLecturaList(): HTMLElement {
 
       inputLact.addEventListener('input', validarCalculo);
 
-      btnSave.addEventListener('click', async () => {
+      btnAction.addEventListener('click', async () => {
+        if (!isEditing) {
+          enterEdit();
+          return;
+        }
+
         validarCalculo();
         const state = rowStateMap.get(socio.id);
         if (!state || !state.valid) {
@@ -318,8 +375,8 @@ export function createLecturaList(): HTMLElement {
           return;
         }
 
-        btnSave.disabled = true;
-        btnSave.textContent = 'Guardando...';
+        btnAction.disabled = true;
+        btnAction.textContent = 'Guardando...';
 
         const currentUser = authService.getCurrentUser();
         await lecturaService.guardarLectura(
@@ -327,13 +384,12 @@ export function createLecturaList(): HTMLElement {
           currentPeriodo,
           lecturaAnterior,
           state.lecturaActual,
-          currentUser?.id || 'usr-lector'
+          currentUser?.id || 'usr-cajero'
         );
 
         const statusCell = tr.querySelector(`#app-status-cell-${socio.id}`) as HTMLElement;
         statusCell.innerHTML = `<span class="status-badge status-badge-active">✅ Tomada</span>`;
-        btnSave.textContent = '✓ Guardado';
-        btnSave.className = 'btn btn-sm btn-success';
+        exitEdit(true, state.lecturaActual);
 
         currentLecturas = await lecturaService.getLecturasPorPeriodo(currentPeriodo);
         cargarDatos();

@@ -130,8 +130,9 @@ export function createSocioFormModal(options: SocioFormModalOptions): HTMLElemen
     <div class="form-group">
       <label class="checkbox-label" style="margin-top: 1.75rem;">
         <input type="checkbox" id="checkAlcantarillado" ${defaultAlcantarillado ? 'checked' : ''} />
-        <span><strong>Posee Servicio de Alcantarillado</strong> (+${TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2)}$/mes)</span>
+        <span><strong>Posee Servicio de Alcantarillado</strong></span>
       </label>
+      <span class="field-help" style="display:block; margin-top: 4px;">Si tiene alcantarillado, se suma $${TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2)} a los valores a cobrar mensualmente</span>
     </div>
 
     <div class="modal-actions full-width">
@@ -175,7 +176,7 @@ export function createSocioFormModal(options: SocioFormModalOptions): HTMLElemen
       </div>
       <div class="tariff-preview-details">
         <span>🔹 Cuota Base ($30 m³ base): <strong>$${tarifaBase.toFixed(2)}</strong></span>
-        <span>🔹 Alcantarillado: <strong>${tieneAlcant ? '+$' + TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2) : 'No aplica ($0.00)'}</strong></span>
+        <span>🔹 Alcantarillado: <strong>${tieneAlcant ? '$' + TARIFAS_CONFIG.RECARGO_ALCANTARILLADO.toFixed(2) + ' (en valores a cobrar)' : 'No aplica ($0.00)'}</strong></span>
         <span style="color: #94a3b8; font-size: 0.8rem;">* Excedente >30 m³ se factura a $0.10/m³ adicional en la toma de lecturas.</span>
       </div>
     `;

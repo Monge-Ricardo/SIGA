@@ -50,7 +50,7 @@ export function createSocioList(): HTMLElement {
         <div class="metric-sub">Subsidio comunitario</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Con Alcantarillado (+1$)</div>
+        <div class="metric-label">Con Alcantarillado</div>
         <div class="metric-value text-cyan" id="metricAlcantarillado">0</div>
         <div class="metric-sub">Red de saneamiento</div>
       </div>
@@ -129,7 +129,7 @@ export function createSocioList(): HTMLElement {
               <th>Edad / Categoría</th>
               <th>Sector</th>
               <th>Alcantarillado</th>
-              <th>Tarifa Base</th>
+              <th>Valores a Cobrar</th>
               <th>Cuenta Corriente</th>
               <th>Estado</th>
               <th style="text-align: right;">Acciones</th>
@@ -248,11 +248,16 @@ export function createSocioList(): HTMLElement {
           <span class="sector-tag">${socio.nombreSector || socio.sectorId}</span>
         </td>
         <td>
-          ${socio.tieneAlcantarillado ? '<span class="tag-yes">+$1.00 SÍ</span>' : '<span class="tag-no">NO</span>'}
+          ${socio.tieneAlcantarillado ? '<span class="tag-yes">SÍ</span>' : '<span class="tag-no">NO</span>'}
         </td>
         <td>
           <strong class="text-accent">$${socio.tarifaBaseMensual.toFixed(2)}</strong>
           <span style="font-size: 0.75rem; color: #94a3b8;">/mes</span>
+          ${
+            socio.tieneAlcantarillado
+              ? '<div style="font-size: 0.7rem; color: #0284c7; margin-top: 1px;">(Incluye $1.00 alcantarillado)</div>'
+              : '<div style="font-size: 0.7rem; color: #94a3b8; margin-top: 1px;">(Solo tarifa de agua)</div>'
+          }
         </td>
         <td>
           ${

@@ -120,6 +120,43 @@ export const updateSocio = async (req: AuthenticatedRequest, res: Response): Pro
   }
 };
 
+export const getMedidores = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { sectorId, socioId, search } = req.query;
+    const medidores = socioService.getMedidores({
+      sectorId: sectorId as string,
+      socioId: socioId as string,
+      search: search as string
+    });
+    res.json({ total: medidores.length, data: medidores });
+  } catch (error) {
+    console.error('[WaterController] Error obteniendo medidores:', error);
+    res.status(500).json({ error: 'Error obteniendo medidores.' });
+  }
+};
+
+export const getMedidoresBySocio = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const medidores = socioService.getMedidoresBySocioId(id);
+    res.json({ total: medidores.length, data: medidores });
+  } catch (error) {
+    console.error('[WaterController] Error obteniendo medidores del socio:', error);
+    res.status(500).json({ error: 'Error obteniendo medidores del socio.' });
+  }
+};
+
+export const addMedidorToSocio = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const nuevo = socioService.addMedidorToSocio(id, req.body);
+    res.status(201).json({ message: 'Medidor asignado correctamente al socio.', data: nuevo });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error agregando medidor.';
+    res.status(400).json({ error: message });
+  }
+};
+
 // ==========================================
 // 3. PERIODOS DE FACTURACIÓN
 // ==========================================
@@ -178,8 +215,13 @@ export const cerrarPeriodo = async (req: AuthenticatedRequest, res: Response): P
 
 export const getLecturas = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { periodoId, sectorId, socioId } = req.query as { periodoId?: string; sectorId?: string; socioId?: string };
-    const lecturas = lecturaService.getLecturas({ periodoId, sectorId, socioId });
+    const { periodoId, sectorId, socioId, medidorId } = req.query as {
+      periodoId?: string;
+      sectorId?: string;
+      socioId?: string;
+      medidorId?: string;
+    };
+    const lecturas = lecturaService.getLecturas({ periodoId, sectorId, socioId, medidorId });
     res.json({ data: lecturas, total: lecturas.length });
   } catch (error) {
     console.error('[WaterController] Error obteniendo lecturas:', error);
@@ -189,7 +231,7 @@ export const getLecturas = async (req: AuthenticatedRequest, res: Response): Pro
 
 export const registrarLectura = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { idSocio, idPeriodo, lecturaActual, lecturaAnterior, observaciones } = req.body || {};
+    const { idSocio, idMedidor, numeroMedidor, idPeriodo, lecturaActual, lecturaAnterior, observaciones } = req.body || {};
     if (!idSocio || !idPeriodo || lecturaActual === undefined) {
       res.status(400).json({ error: 'idSocio, idPeriodo y lecturaActual son requeridos.' });
       return;
@@ -198,6 +240,8 @@ export const registrarLectura = async (req: AuthenticatedRequest, res: Response)
     const idLector = req.user?.id || 'cajero-sistema';
     const lectura = lecturaService.registrarLectura({
       idSocio,
+      idMedidor,
+      numeroMedidor,
       idPeriodo,
       lecturaActual: Number(lecturaActual),
       lecturaAnterior: lecturaAnterior !== undefined ? Number(lecturaAnterior) : undefined,

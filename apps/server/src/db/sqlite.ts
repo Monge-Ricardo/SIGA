@@ -71,7 +71,7 @@ export class SQLiteDatabase {
         created_at TEXT NOT NULL
       );
 
-      -- 4. Socios
+      -- 4. Socios (Titulares / Abonados)
       CREATE TABLE IF NOT EXISTS socios (
         id TEXT PRIMARY KEY,
         codigo_socio TEXT UNIQUE NOT NULL,
@@ -80,8 +80,8 @@ export class SQLiteDatabase {
         cedula_ruc TEXT UNIQUE NOT NULL,
         fecha_nacimiento TEXT NOT NULL,
         fecha_union TEXT NOT NULL,
-        id_sector TEXT NOT NULL,
-        medidor_numero TEXT UNIQUE NOT NULL,
+        id_sector TEXT,
+        medidor_numero TEXT,
         tiene_alcantarillado INTEGER NOT NULL DEFAULT 0,
         telefono TEXT,
         direccion TEXT NOT NULL,
@@ -95,7 +95,27 @@ export class SQLiteDatabase {
       CREATE INDEX IF NOT EXISTS idx_socios_sector ON socios(id_sector);
       CREATE INDEX IF NOT EXISTS idx_socios_estado ON socios(estado);
 
-      -- 5. Periodos
+      -- 5. Medidores (Acometidas de Agua - 1 Socio : N Medidores)
+      CREATE TABLE IF NOT EXISTS medidores (
+        id TEXT PRIMARY KEY,
+        id_socio TEXT NOT NULL,
+        id_sector TEXT NOT NULL,
+        numero_medidor TEXT UNIQUE NOT NULL,
+        alias TEXT,
+        direccion TEXT,
+        tiene_alcantarillado INTEGER NOT NULL DEFAULT 0,
+        estado TEXT NOT NULL DEFAULT 'ACTIVO' CHECK(estado IN ('ACTIVO', 'SUSPENDIDO', 'CORTADO')),
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (id_socio) REFERENCES socios(id) ON DELETE CASCADE,
+        FOREIGN KEY (id_sector) REFERENCES sectores(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_medidores_socio ON medidores(id_socio);
+      CREATE INDEX IF NOT EXISTS idx_medidores_sector ON medidores(id_sector);
+
+      -- 6. Periodos
       CREATE TABLE IF NOT EXISTS periodos (
         id TEXT PRIMARY KEY,
         periodo_codigo TEXT UNIQUE NOT NULL,
@@ -106,9 +126,10 @@ export class SQLiteDatabase {
         created_at TEXT NOT NULL
       );
 
-      -- 6. Lecturas
+      -- 7. Lecturas
       CREATE TABLE IF NOT EXISTS lecturas (
         id TEXT PRIMARY KEY,
+        id_medidor TEXT,
         id_socio TEXT NOT NULL,
         id_periodo TEXT NOT NULL,
         lectura_anterior REAL NOT NULL,
@@ -121,7 +142,7 @@ export class SQLiteDatabase {
         version INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        UNIQUE(id_socio, id_periodo),
+        FOREIGN KEY (id_medidor) REFERENCES medidores(id),
         FOREIGN KEY (id_socio) REFERENCES socios(id),
         FOREIGN KEY (id_periodo) REFERENCES periodos(id),
         FOREIGN KEY (id_lector) REFERENCES usuarios(id)
@@ -152,6 +173,7 @@ export class SQLiteDatabase {
         id TEXT PRIMARY KEY,
         numero_factura TEXT UNIQUE NOT NULL,
         id_socio TEXT NOT NULL,
+        id_medidor TEXT,
         id_periodo TEXT NOT NULL,
         id_lectura TEXT,
         es_tercera_edad INTEGER NOT NULL DEFAULT 0,
@@ -172,8 +194,8 @@ export class SQLiteDatabase {
         version INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        UNIQUE(id_socio, id_periodo),
         FOREIGN KEY (id_socio) REFERENCES socios(id),
+        FOREIGN KEY (id_medidor) REFERENCES medidores(id),
         FOREIGN KEY (id_periodo) REFERENCES periodos(id),
         FOREIGN KEY (id_lectura) REFERENCES lecturas(id),
         FOREIGN KEY (id_cajero) REFERENCES usuarios(id)
@@ -213,6 +235,185 @@ export class SQLiteDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_fondos_mov_fondo_fecha ON fondos_movimientos(id_fondo, fecha);
     `);
+
+    // Migraciones de esquema para bases de datos existentes
+    try {
+      this.db.exec('ALTER TABLE lecturas ADD COLUMN id_medidor TEXT REFERENCES medidores(id);');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE facturas ADD COLUMN id_medidor TEXT REFERENCES medidores(id);');
+    } catch {}
+    try {
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_lecturas_medidor_periodo ON lecturas(id_medidor, id_periodo);');
+    } catch {}
+    try {
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_facturas_medidor ON facturas(id_medidor);');
+    } catch {}
+
+    this.migrateMedidores();
+    try {
+      this.db.exec("UPDATE lecturas SET id_medidor = (SELECT id FROM medidores WHERE medidores.id_socio = lecturas.id_socio LIMIT 1) WHERE id_medidor IS NULL OR id_medidor = '';");
+    } catch {}
+
+    this.migrateLecturasUniqueConstraint();
+    this.migrateFacturasUniqueConstraint();
+  }
+
+  private migrateLecturasUniqueConstraint(): void {
+    const tableSql = (
+      this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='lecturas'").get() as { sql?: string }
+    )?.sql || '';
+
+    if (tableSql.includes('id_socio, id_periodo') || tableSql.includes('id_socio,id_periodo')) {
+      this.db.exec('PRAGMA foreign_keys = OFF;');
+      this.db.exec(`
+        CREATE TABLE lecturas_multimedidor (
+          id TEXT PRIMARY KEY,
+          id_medidor TEXT,
+          id_socio TEXT NOT NULL,
+          id_periodo TEXT NOT NULL,
+          lectura_anterior REAL NOT NULL,
+          lectura_actual REAL NOT NULL,
+          consumo_total REAL NOT NULL,
+          excedente_m3 REAL NOT NULL,
+          fecha_lectura TEXT NOT NULL,
+          id_lector TEXT NOT NULL,
+          observaciones TEXT,
+          version INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(id_medidor, id_periodo),
+          FOREIGN KEY (id_medidor) REFERENCES medidores(id),
+          FOREIGN KEY (id_socio) REFERENCES socios(id),
+          FOREIGN KEY (id_periodo) REFERENCES periodos(id),
+          FOREIGN KEY (id_lector) REFERENCES usuarios(id)
+        );
+
+        INSERT INTO lecturas_multimedidor (
+          id, id_medidor, id_socio, id_periodo, lectura_anterior, lectura_actual,
+          consumo_total, excedente_m3, fecha_lectura, id_lector, observaciones, version, created_at, updated_at
+        )
+        SELECT 
+          l.id, 
+          COALESCE(l.id_medidor, (SELECT m.id FROM medidores m WHERE m.id_socio = l.id_socio LIMIT 1)),
+          l.id_socio, 
+          l.id_periodo, 
+          l.lectura_anterior, 
+          l.lectura_actual, 
+          l.consumo_total, 
+          l.excedente_m3, 
+          l.fecha_lectura, 
+          l.id_lector, 
+          l.observaciones, 
+          l.version, 
+          l.created_at, 
+          l.updated_at
+        FROM lecturas l;
+
+        DROP TABLE lecturas;
+        ALTER TABLE lecturas_multimedidor RENAME TO lecturas;
+
+        CREATE INDEX IF NOT EXISTS idx_lecturas_medidor ON lecturas(id_medidor);
+        CREATE INDEX IF NOT EXISTS idx_lecturas_periodo ON lecturas(id_periodo);
+        CREATE INDEX IF NOT EXISTS idx_lecturas_socio ON lecturas(id_socio);
+      `);
+      this.db.exec('PRAGMA foreign_keys = ON;');
+      console.log('✅ [SQLite] Tabla lecturas migrada a UNIQUE(id_medidor, id_periodo) para multi-medidor.');
+    }
+  }
+
+  private migrateFacturasUniqueConstraint(): void {
+    const tableSql = (
+      this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='facturas'").get() as { sql?: string }
+    )?.sql || '';
+
+    if (tableSql.includes('id_socio, id_periodo') || tableSql.includes('id_socio,id_periodo')) {
+      this.db.exec('PRAGMA foreign_keys = OFF;');
+      this.db.exec(`
+        CREATE TABLE facturas_multimedidor (
+          id TEXT PRIMARY KEY,
+          numero_factura TEXT UNIQUE NOT NULL,
+          id_socio TEXT NOT NULL,
+          id_medidor TEXT,
+          id_periodo TEXT NOT NULL,
+          id_lectura TEXT,
+          es_tercera_edad INTEGER NOT NULL DEFAULT 0,
+          valor_base REAL NOT NULL,
+          consumo_m3 REAL NOT NULL,
+          excedente_m3 REAL NOT NULL,
+          valor_excedente REAL NOT NULL,
+          valor_alcantarillado REAL NOT NULL,
+          valor_multas REAL NOT NULL DEFAULT 0.0,
+          valor_deuda_anterior REAL NOT NULL DEFAULT 0.0,
+          total_mes REAL NOT NULL,
+          total_pagar REAL NOT NULL,
+          estado_pago TEXT NOT NULL DEFAULT 'PENDIENTE' CHECK(estado_pago IN ('PENDIENTE', 'PAGADO', 'ANULADO')),
+          fecha_vencimiento TEXT NOT NULL,
+          fecha_pago TEXT,
+          metodo_pago TEXT CHECK(metodo_pago IN ('EFECTIVO', 'TRANSFERENCIA', 'MOVIL')),
+          id_cajero TEXT,
+          version INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (id_socio) REFERENCES socios(id),
+          FOREIGN KEY (id_medidor) REFERENCES medidores(id),
+          FOREIGN KEY (id_periodo) REFERENCES periodos(id),
+          FOREIGN KEY (id_lectura) REFERENCES lecturas(id),
+          FOREIGN KEY (id_cajero) REFERENCES usuarios(id)
+        );
+
+        INSERT INTO facturas_multimedidor (
+          id, numero_factura, id_socio, id_medidor, id_periodo, id_lectura,
+          es_tercera_edad, valor_base, consumo_m3, excedente_m3, valor_excedente,
+          valor_alcantarillado, valor_multas, valor_deuda_anterior, total_mes,
+          total_pagar, estado_pago, fecha_vencimiento, fecha_pago, metodo_pago,
+          id_cajero, version, created_at, updated_at
+        )
+        SELECT 
+          f.id, f.numero_factura, f.id_socio, f.id_medidor, f.id_periodo, f.id_lectura,
+          f.es_tercera_edad, f.valor_base, f.consumo_m3, f.excedente_m3, f.valor_excedente,
+          f.valor_alcantarillado, f.valor_multas, f.valor_deuda_anterior, f.total_mes,
+          f.total_pagar, f.estado_pago, f.fecha_vencimiento, f.fecha_pago, f.metodo_pago,
+          f.id_cajero, f.version, f.created_at, f.updated_at
+        FROM facturas f;
+
+        DROP TABLE facturas;
+        ALTER TABLE facturas_multimedidor RENAME TO facturas;
+
+        CREATE INDEX IF NOT EXISTS idx_facturas_socio_estado ON facturas(id_socio, estado_pago);
+        CREATE INDEX IF NOT EXISTS idx_facturas_medidor ON facturas(id_medidor);
+        CREATE INDEX IF NOT EXISTS idx_facturas_periodo ON facturas(id_periodo);
+      `);
+      this.db.exec('PRAGMA foreign_keys = ON;');
+      console.log('✅ [SQLite] Tabla facturas migrada para soportar múltiples medidores.');
+    }
+  }
+
+  private migrateMedidores(): void {
+    const medidorCount = (this.db.prepare('SELECT COUNT(*) as count FROM medidores').get() as { count: number }).count;
+    if (medidorCount === 0) {
+      const socios = this.db.prepare('SELECT id, id_sector, medidor_numero, direccion, tiene_alcantarillado FROM socios').all() as any[];
+      if (socios && socios.length > 0) {
+        const now = new Date().toISOString();
+        const insertMed = this.db.prepare(`
+          INSERT INTO medidores (id, id_socio, id_sector, numero_medidor, alias, direccion, tiene_alcantarillado, estado, version, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'Casa principal', ?, ?, 'ACTIVO', 1, ?, ?)
+        `);
+
+        for (const s of socios) {
+          if (s.medidor_numero && s.id_sector) {
+            const medId = crypto.randomUUID();
+            try {
+              insertMed.run(medId, s.id, s.id_sector, s.medidor_numero, s.direccion || '', s.tiene_alcantarillado ? 1 : 0, now, now);
+              this.db.prepare("UPDATE lecturas SET id_medidor = ? WHERE id_socio = ? AND (id_medidor IS NULL OR id_medidor = '')").run(medId, s.id);
+            } catch (err: any) {
+              console.warn('[SQLite] Aviso migrando medidor:', err.message);
+            }
+          }
+        }
+        console.log(`✅ [SQLite] Migrados ${socios.length} medidores existentes a tabla medidores.`);
+      }
+    }
   }
 
   private seedDefaultData(): void {

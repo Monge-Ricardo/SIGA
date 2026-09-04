@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { sqliteDb } from '../db/sqlite.ts';
 import { ValidationRules } from '../shared.ts';
-import type { Socio, EstadoCuentaSocio, Factura, MultaRubro } from '../shared.ts';
+import type { Socio, EstadoCuentaSocio, Factura, MultaRubro, Medidor } from '../shared.ts';
 
 interface SocioRow {
   id: string;
@@ -11,10 +11,10 @@ interface SocioRow {
   cedula_ruc: string;
   fecha_nacimiento: string;
   fecha_union: string;
-  id_sector: string;
+  id_sector?: string;
   nombre_sector?: string;
-  medidor_numero: string;
-  tiene_alcantarillado: number;
+  medidor_numero?: string;
+  tiene_alcantarillado?: number;
   telefono?: string;
   direccion: string;
   estado: 'ACTIVO' | 'SUSPENDIDO' | 'CORTADO';
@@ -24,8 +24,38 @@ interface SocioRow {
 }
 
 export class SocioService {
+  public getMedidoresBySocioId(socioId: string): Medidor[] {
+    const db = sqliteDb.getRawDb();
+    const rows = db.prepare(`
+      SELECT m.*, sec.nombre_sector, sec.codigo_sector
+      FROM medidores m
+      LEFT JOIN sectores sec ON m.id_sector = sec.id
+      WHERE m.id_socio = ?
+      ORDER BY m.created_at ASC
+    `).all(socioId) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      idSocio: r.id_socio,
+      idSector: r.id_sector,
+      numeroMedidor: r.numero_medidor,
+      alias: r.alias || 'Casa principal',
+      direccion: r.direccion || undefined,
+      tieneAlcantarillado: Boolean(r.tiene_alcantarillado),
+      estado: r.estado,
+      nombreSector: r.nombre_sector || undefined,
+      codigoSector: r.codigo_sector || undefined,
+      version: r.version,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    }));
+  }
+
   private mapRowToSocio(row: SocioRow): Socio {
     const esTerceraEdad = ValidationRules.calcularEsTerceraEdad(row.fecha_nacimiento);
+    const medidores = this.getMedidoresBySocioId(row.id);
+    const primario = medidores[0];
+
     return {
       id: row.id,
       codigoSocio: row.codigo_socio,
@@ -35,13 +65,14 @@ export class SocioService {
       fechaNacimiento: row.fecha_nacimiento,
       esTerceraEdad,
       fechaUnion: row.fecha_union,
-      idSector: row.id_sector,
-      nombreSector: row.nombre_sector,
-      medidorNumero: row.medidor_numero,
-      tieneAlcantarillado: Boolean(row.tiene_alcantarillado),
+      idSector: primario ? primario.idSector : (row.id_sector || ''),
+      nombreSector: primario ? primario.nombreSector : row.nombre_sector,
+      medidorNumero: primario ? primario.numeroMedidor : (row.medidor_numero || 'S/N'),
+      tieneAlcantarillado: primario ? primario.tieneAlcantarillado : Boolean(row.tiene_alcantarillado),
       telefono: row.telefono || undefined,
       direccion: row.direccion,
       estado: row.estado,
+      medidores,
       version: row.version,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -169,8 +200,8 @@ export class SocioService {
 
     const medidorNumero = data.medidorNumero.trim();
 
-    // Comprobar duplicado de medidor
-    const existeMedidor = db.prepare('SELECT id FROM socios WHERE medidor_numero = ?').get(medidorNumero);
+    // Comprobar duplicado de medidor en tabla medidores y socios
+    const existeMedidor = db.prepare('SELECT id FROM medidores WHERE numero_medidor = ?').get(medidorNumero);
     if (existeMedidor) {
       throw new Error(`El número de medidor ${medidorNumero} ya está asignado a otro socio.`);
     }
@@ -204,7 +235,118 @@ export class SocioService {
       now
     );
 
+    // Insertar acometida inicial en medidores
+    const medidorId = crypto.randomUUID();
+    db.prepare(`
+      INSERT INTO medidores (
+        id, id_socio, id_sector, numero_medidor, alias,
+        direccion, tiene_alcantarillado, estado, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'Casa principal', ?, ?, 'ACTIVO', 1, ?, ?)
+    `).run(
+      medidorId,
+      id,
+      resolvedSectorId,
+      medidorNumero,
+      direccion,
+      data.tieneAlcantarillado ? 1 : 0,
+      now,
+      now
+    );
+
     return this.getSocioById(id)!;
+  }
+
+  public addMedidorToSocio(
+    socioId: string,
+    data: {
+      numeroMedidor: string;
+      idSector: string;
+      alias?: string;
+      direccion?: string;
+      tieneAlcantarillado?: boolean;
+    }
+  ): Medidor {
+    const db = sqliteDb.getRawDb();
+    const socio = this.getSocioById(socioId);
+    if (!socio) throw new Error('El socio especificado no existe.');
+
+    const numero = data.numeroMedidor ? data.numeroMedidor.trim() : '';
+    if (!numero) throw new Error('El número de medidor es obligatorio.');
+
+    const existe = db.prepare('SELECT id FROM medidores WHERE numero_medidor = ?').get(numero);
+    if (existe) throw new Error(`El número de medidor '${numero}' ya se encuentra registrado.`);
+
+    const resolvedSectorId = this.resolveSectorId(data.idSector);
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO medidores (
+        id, id_socio, id_sector, numero_medidor, alias,
+        direccion, tiene_alcantarillado, estado, version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVO', 1, ?, ?)
+    `).run(
+      id,
+      socioId,
+      resolvedSectorId,
+      numero,
+      data.alias?.trim() || 'Acometida adicional',
+      data.direccion?.trim() || socio.direccion,
+      data.tieneAlcantarillado ? 1 : 0,
+      now,
+      now
+    );
+
+    const medidores = this.getMedidoresBySocioId(socioId);
+    return medidores.find((m) => m.id === id)!;
+  }
+
+  public getMedidores(filters?: { sectorId?: string; socioId?: string; search?: string }): Medidor[] {
+    const db = sqliteDb.getRawDb();
+    let query = `
+      SELECT m.*, sec.nombre_sector, sec.codigo_sector, s.nombres, s.apellidos, s.codigo_socio, s.cedula_ruc
+      FROM medidores m
+      JOIN socios s ON m.id_socio = s.id
+      LEFT JOIN sectores sec ON m.id_sector = sec.id
+      WHERE 1=1
+    `;
+    const params: unknown[] = [];
+
+    if (filters?.sectorId) {
+      query += ' AND m.id_sector = ?';
+      params.push(filters.sectorId);
+    }
+    if (filters?.socioId) {
+      query += ' AND m.id_socio = ?';
+      params.push(filters.socioId);
+    }
+    if (filters?.search) {
+      query += ' AND (m.numero_medidor LIKE ? OR m.alias LIKE ? OR s.nombres LIKE ? OR s.apellidos LIKE ? OR s.cedula_ruc LIKE ?)';
+      const term = `%${filters.search}%`;
+      params.push(term, term, term, term, term);
+    }
+
+    query += ' ORDER BY sec.nombre_sector ASC, m.numero_medidor ASC';
+    const rows = db.prepare(query).all(...params) as any[];
+
+    return rows.map((r) => ({
+      id: r.id,
+      idSocio: r.id_socio,
+      idSector: r.id_sector,
+      numeroMedidor: r.numero_medidor,
+      alias: r.alias || 'Casa principal',
+      direccion: r.direccion || undefined,
+      tieneAlcantarillado: Boolean(r.tiene_alcantarillado),
+      estado: r.estado,
+      nombreSector: r.nombre_sector || undefined,
+      codigoSector: r.codigo_sector || undefined,
+      socioNombre: `${r.nombres} ${r.apellidos}`,
+      socioCedula: r.cedula_ruc,
+      socioCodigo: r.codigo_socio,
+      version: r.version,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    }));
   }
 
   public updateSocio(

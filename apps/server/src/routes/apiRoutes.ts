@@ -16,6 +16,9 @@ import {
   getSocioEstadoCuenta,
   createSocio,
   updateSocio,
+  getMedidores,
+  getMedidoresBySocio,
+  addMedidorToSocio,
   getPeriodos,
   createPeriodo,
   cerrarPeriodo,
@@ -85,6 +88,13 @@ apiRouter.get('/socios/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'L
 apiRouter.get('/socios/:id/estado-cuenta', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), getSocioEstadoCuenta);
 apiRouter.post('/socios', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), createSocio);
 apiRouter.put('/socios/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), updateSocio);
+apiRouter.get('/socios/:id/medidores', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'LECTOR'), getMedidoresBySocio);
+apiRouter.post('/socios/:id/medidores', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), addMedidorToSocio);
+
+// ==========================================
+// 5.1. MEDIDORES (ACOMETIDAS / MULTI-MEDIDOR)
+// ==========================================
+apiRouter.get('/medidores', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'LECTOR'), getMedidores);
 
 // ==========================================
 // 6. PERÍODOS DE FACTURACIÓN

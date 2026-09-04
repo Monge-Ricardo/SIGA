@@ -2,6 +2,24 @@ export type EstadoSocio = 'ACTIVO' | 'SUSPENDIDO' | 'CORTADO';
 export type EstadoServicio = EstadoSocio;
 export type EstadoCuenta = 'AL_DIA' | 'EN_MORA';
 
+export interface Medidor {
+  id: string; // UUIDv4
+  idSocio: string;
+  idSector: string;
+  numeroMedidor: string;
+  alias?: string; // Ej: "Casa principal", "Terreno", "Local comercial", "M1"
+  direccion?: string;
+  tieneAlcantarillado: boolean;
+  estado: EstadoSocio;
+  nombreSector?: string;
+  codigoSector?: string;
+  version?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type MedidorAgua = Medidor;
+
 export interface Socio {
   id: string; // UUIDv4
   codigoSocio: string; // Ej: "SOC-0012"
@@ -14,11 +32,6 @@ export interface Socio {
   esTerceraEdad?: boolean; // Calculado dinámicamente: edad >= 65
   fechaUnion: string; // "YYYY-MM-DD"
   fechaAfiliacion?: string;
-  idSector: string;
-  sectorId?: string;
-  nombreSector?: string;
-  medidorNumero: string;
-  tieneAlcantarillado: boolean; // Recargo +$1.00/mes
   telefono?: string;
   direccion: string;
   estado: EstadoSocio;
@@ -28,6 +41,13 @@ export interface Socio {
   montoTotalAdeudado?: number;
   fechaDeudaAntigua?: string;
   tarifaBaseMensual?: number;
+  medidores?: Medidor[]; // Lista de medidores asociados (1:N)
+  // Campos de compatibilidad hacia atrás
+  idSector?: string;
+  sectorId?: string;
+  nombreSector?: string;
+  medidorNumero?: string;
+  tieneAlcantarillado?: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -63,8 +83,11 @@ export interface Periodo {
 
 export interface Lectura {
   id: string;
+  idMedidor: string; // Acometida física
   idSocio: string;
   idPeriodo: string;
+  numeroMedidor?: string;
+  aliasMedidor?: string;
   lecturaAnterior: number;
   lecturaActual: number;
   consumoTotal: number; // lecturaActual - lecturaAnterior
@@ -102,6 +125,9 @@ export interface Factura {
   id: string;
   numeroFactura: string; // Ej: "FAC-2026-0001"
   idSocio: string;
+  idMedidor?: string;
+  numeroMedidor?: string;
+  aliasMedidor?: string;
   socioNombre?: string;
   socioCedula?: string;
   idPeriodo: string;
