@@ -1,4 +1,4 @@
-import { requireAuth, getAuthToken } from './auth.js';
+import { requireAuth, apiFetch } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 
@@ -9,43 +9,8 @@ if (currentUser) {
 }
 
 const DB_NAME = 'SIGAComunitarioDemoDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 let db = null;
-
-async function apiFetch(url, options = {}) {
-  const token = getAuthToken();
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers || {})
-  };
-  try {
-    const res = await fetch(url, { ...options, headers });
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || `Error ${res.status}`);
-    }
-    return res.json();
-  } catch (err) {
-    console.warn(`[API Lecturas] Error ${url}:`, err.message);
-    throw err;
-  }
-}
-
-const BASELINE_LECTURAS = {
-  'soc-001': 150,
-  'soc-002': 210,
-  'soc-003': 95,
-  'soc-004': 180
-};
-
-// Lecturas digitadas por el Lector en ruta (para revisión del Cajero)
-const LECTURAS_INICIALES_LECTOR = {
-  'soc-001': { lecturaAnterior: 150, lecturaActual: 185, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' },
-  'soc-002': { lecturaAnterior: 210, lecturaActual: 238, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' },
-  'soc-003': { lecturaAnterior: 95, lecturaActual: 122, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' },
-  'soc-004': { lecturaAnterior: 180, lecturaActual: 222, observaciones: 'Digitado por Lector en campo', origen: 'LECTOR' }
-};
 
 function initIndexedDB() {
   return new Promise((resolve) => {
@@ -77,7 +42,7 @@ function initIndexedDB() {
     };
 
     request.onerror = () => {
-      console.warn('IndexedDB no disponible para lecturas, usando API REST');
+      console.warn('IndexedDB no disponible para lecturas, usando API REST directa');
       resolve(null);
     };
   });
@@ -85,110 +50,228 @@ function initIndexedDB() {
 
 async function seedLecturasIfEmpty() {
   if (!db) return;
-  return new Promise((resolve) => {
-    const tx = db.transaction(['lecturas'], 'readonly');
-    const store = tx.objectStore('lecturas');
-    const req = store.count();
-    req.onsuccess = () => {
-      if (req.result === 0) {
-        const writeTx = db.transaction(['lecturas'], 'readwrite');
-        const writeStore = writeTx.objectStore('lecturas');
-        const periodo = '2026-08';
-        Object.entries(LECTURAS_INICIALES_LECTOR).forEach(([socId, data]) => {
-          const cons = Math.max(0, data.lecturaActual - data.lecturaAnterior);
-          const exc = Math.max(0, cons - 30);
-          writeStore.add({
-            id: `lec-${socId}-${periodo}`,
-            clienteId: socId,
-            periodo,
-            lecturaAnterior: data.lecturaAnterior,
-            lecturaActual: data.lecturaActual,
-            consumoM3: cons,
-            excedenteM3: exc,
-            observaciones: data.observaciones,
-            origen: data.origen,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-        });
-        writeTx.oncomplete = () => resolve();
-        writeTx.onerror = () => resolve();
-      } else {
-        resolve();
-      }
-    };
-    req.onerror = () => resolve();
-  });
-}
 
-async function getAllSocios() {
-  try {
-    const res = await apiFetch('/api/v1/socios');
-    return (res.data || []).map((s) => ({
-      id: s.id,
-      codigoSocio: s.codigoSocio,
-      nombres: s.nombres,
-      apellidos: s.apellidos,
-      nombreCompleto: `${s.nombres} ${s.apellidos}`,
-      cedulaRuc: s.cedulaRuc,
-      sectorId: s.idSector || s.sectorId,
-      nombreSector: s.nombreSector || 'Sector Centro',
-      medidorNumero: s.medidorNumero,
-      medidores: s.medidores || [],
-      tieneAlcantarillado: s.tieneAlcantarillado,
-      estadoServicio: s.estado
-    }));
-  } catch (err) {
-    if (!db) return [];
-    return new Promise((resolve) => {
+  const existingSocios = await new Promise((resolve) => {
+    try {
       const tx = db.transaction(['socios'], 'readonly');
       const req = tx.objectStore('socios').getAll();
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => resolve([]);
+    } catch (e) {
+      resolve([]);
+    }
+  });
+
+  const hasDirtyData = existingSocios.some((s) => (s.codigoSocio || '').includes('SOC-TEST') || (s.id || '').includes('SOC-TEST'));
+  const needsSeed = existingSocios.length === 0 || hasDirtyData;
+
+  if (!needsSeed) return;
+
+  console.log('[Lecturas] Inicializando padrón oficial...');
+  let seedData = null;
+  try {
+    const resSoc = await apiFetch('/api/v1/socios');
+    const resSec = await apiFetch('/api/v1/sectores');
+    const resLec = await apiFetch('/api/v1/lecturas?periodoId=2026-08');
+    if (resSoc && resSoc.data && resSoc.data.length > 0) {
+      seedData = {
+        socios: resSoc.data,
+        sectores: resSec.data || [],
+        lecturas: resLec.data || []
+      };
+    }
+  } catch (e) {
+    console.warn('[Lecturas] API no disponible para seed, intentando offline_seed.json');
+  }
+
+  if (!seedData) {
+    try {
+      const res = await fetch('./offline_seed.json');
+      if (res.ok) seedData = await res.json();
+    } catch (e) {}
+  }
+
+  if (seedData) {
+    await new Promise((resolve) => {
+      const tx = db.transaction(['sectores', 'socios', 'lecturas'], 'readwrite');
+      const storeSec = tx.objectStore('sectores');
+      const storeSoc = tx.objectStore('socios');
+      const storeLec = tx.objectStore('lecturas');
+
+      storeSec.clear();
+      storeSoc.clear();
+      storeLec.clear();
+
+      if (seedData.sectores) {
+        seedData.sectores.forEach((s) => storeSec.put(s));
+      }
+      if (seedData.socios) {
+        seedData.socios.forEach((s) => storeSoc.put(s));
+      }
+      if (seedData.lecturas) {
+        seedData.lecturas.forEach((l) => storeLec.put(l));
+      }
+
+      tx.oncomplete = () => {
+        console.log(`[Lecturas] Padrón inicializado: ${seedData.socios?.length || 0} socios.`);
+        resolve();
+      };
+      tx.onerror = () => resolve();
     });
   }
+}
+
+async function getAllSocios() {
+  // 1. Intentar siempre obtener los datos frescos de la API
+  try {
+    const res = await apiFetch('/api/v1/socios');
+    const apiSocios = res.data || [];
+    if (apiSocios.length > 0) {
+      if (db) {
+        const txWrite = db.transaction(['socios'], 'readwrite');
+        const store = txWrite.objectStore('socios');
+        apiSocios.forEach((s) => store.put(s));
+      }
+      return normalizeSociosList(apiSocios);
+    }
+  } catch (err) {
+    console.log('[Lecturas] Modo offline activo para socios, consultando IndexedDB local');
+  }
+
+  // 2. Fallback a IndexedDB local
+  if (db) {
+    const localSocios = await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(['socios'], 'readonly');
+        const req = tx.objectStore('socios').getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch (e) {
+        resolve([]);
+      }
+    });
+
+    if (localSocios && localSocios.length > 0) {
+      return normalizeSociosList(localSocios);
+    }
+  }
+
+  return [];
+}
+
+function normalizeSociosList(rawList) {
+  return rawList.map((s) => ({
+    id: s.id,
+    codigoSocio: s.codigoSocio || s.codigo_socio,
+    nombres: s.nombres,
+    apellidos: s.apellidos,
+    nombreCompleto: s.nombreCompleto || `${s.nombres || ''} ${s.apellidos || ''}`.trim() || s.codigoSocio,
+    cedulaRuc: s.cedulaRuc || s.cedula_ruc,
+    sectorId: s.idSector || s.sectorId || s.id_sector,
+    nombreSector: s.nombreSector || s.nombre_sector || 'Sector General',
+    medidorNumero: s.medidorNumero || s.medidor_numero || 'MED-0000',
+    medidores: (s.medidores || []).map((m) => ({
+      id: m.id || m.idMedidor,
+      idMedidor: m.id || m.idMedidor,
+      idSocio: m.idSocio || m.id_socio || s.id,
+      idSector: m.idSector || m.id_sector,
+      numeroMedidor: m.numeroMedidor || m.numero_medidor || m.medidorNumero,
+      medidorNumero: m.numeroMedidor || m.numero_medidor || m.medidorNumero,
+      alias: m.alias || 'Casa principal',
+      aliasMedidor: m.alias || 'Casa principal',
+      lecturaInicial: Number(m.lecturaInicial ?? m.lectura_inicial ?? m.lecturaAnterior ?? m.lectura_anterior ?? 0),
+      lecturaAnterior: Number(m.lecturaAnterior ?? m.lectura_anterior ?? m.lecturaInicial ?? m.lectura_inicial ?? 0),
+      deudaPendiente: Number(m.deudaPendiente ?? m.deuda_pendiente ?? 0),
+      mesesAdeudados: Number(m.mesesAdeudados ?? m.meses_adeudados ?? 0),
+      tieneAlcantarillado: Boolean(m.tieneAlcantarillado ?? m.tiene_alcantarillado),
+      estado: m.estado || 'ACTIVO'
+    })),
+    tieneAlcantarillado: Boolean(s.tieneAlcantarillado ?? s.tiene_alcantarillado),
+    estadoServicio: s.estadoServicio || s.estado || 'ACTIVO'
+  }));
 }
 
 async function getAllSectores() {
   try {
     const res = await apiFetch('/api/v1/sectores');
-    return res.data || [];
-  } catch (err) {
-    if (!db) return [];
-    return new Promise((resolve) => {
-      const tx = db.transaction(['sectores'], 'readonly');
-      const req = tx.objectStore('sectores').getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => resolve([]);
+    const sectores = res.data || [];
+    if (sectores.length > 0 && db) {
+      const txWrite = db.transaction(['sectores'], 'readwrite');
+      const store = txWrite.objectStore('sectores');
+      sectores.forEach((sec) => store.put(sec));
+    }
+    return sectores.map((s) => ({
+      id: s.id,
+      codigo: s.codigoSector || s.codigo || s.codigo_sector,
+      nombre: s.nombreSector || s.nombre || s.nombre_sector,
+      descripcion: s.descripcion || ''
+    }));
+  } catch (err) {}
+
+  if (db) {
+    const localSectores = await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(['sectores'], 'readonly');
+        const req = tx.objectStore('sectores').getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch (e) {
+        resolve([]);
+      }
     });
+
+    if (localSectores.length > 0) {
+      return localSectores.map((s) => ({
+        id: s.id,
+        codigo: s.codigoSector || s.codigo || s.codigo_sector,
+        nombre: s.nombreSector || s.nombre || s.nombre_sector,
+        descripcion: s.descripcion || ''
+      }));
+    }
   }
+
+  return [];
 }
 
 async function getLecturasPeriodo(periodo) {
+  // 1. Priorizar consulta en vivo a la API REST (SQLite / Supabase)
   try {
     const res = await apiFetch(`/api/v1/lecturas?periodoId=${encodeURIComponent(periodo)}`);
     const apiData = res.data || [];
     if (apiData.length > 0) {
-      return apiData.map((l) => ({
+      const normalized = apiData.map((l) => ({
         id: l.id,
-        idMedidor: l.idMedidor,
-        numeroMedidor: l.numeroMedidor,
-        aliasMedidor: l.aliasMedidor,
-        clienteId: l.idSocio,
-        periodo: l.periodoCodigo || periodo,
-        lecturaAnterior: l.lecturaAnterior,
-        lecturaActual: l.lecturaActual,
-        consumoM3: l.consumoM3 !== undefined ? l.consumoM3 : l.consumoTotal,
-        excedenteM3: l.excedenteM3,
-        observaciones: l.observaciones,
+        idMedidor: l.idMedidor || l.id_medidor,
+        numeroMedidor: l.numeroMedidor || l.numero_medidor || l.medidorNumero,
+        aliasMedidor: l.aliasMedidor || l.alias_medidor || l.alias || 'Casa principal',
+        clienteId: l.idSocio || l.id_socio || l.clienteId,
+        idSocio: l.idSocio || l.id_socio || l.clienteId,
+        periodo: l.periodoCodigo || l.periodo_codigo || l.periodo || l.idPeriodo || l.id_periodo || periodo,
+        lecturaAnterior: Number(l.lecturaAnterior ?? l.lectura_anterior ?? 0),
+        lecturaActual: (l.lecturaActual !== undefined && l.lecturaActual !== null)
+          ? Number(l.lecturaActual)
+          : ((l.lectura_actual !== undefined && l.lectura_actual !== null) ? Number(l.lectura_actual) : undefined),
+        consumoM3: Number(l.consumoM3 ?? l.consumoTotal ?? l.consumo_total ?? 0),
+        excedenteM3: Number(l.excedenteM3 ?? l.excedente_m3 ?? 0),
+        observaciones: l.observaciones || '',
         origen: l.origen || 'LECTOR',
-        updatedAt: l.updatedAt
+        updatedAt: l.updatedAt || l.updated_at || new Date().toISOString()
       }));
+
+      // Cachear en IndexedDB
+      if (db) {
+        const tx = db.transaction(['lecturas'], 'readwrite');
+        const store = tx.objectStore('lecturas');
+        normalized.forEach((lec) => store.put(lec));
+      }
+
+      return normalized;
     }
   } catch (err) {
-    // Modo offline
+    console.log('[Lecturas] Modo offline activo para lecturas, consultando IndexedDB');
   }
 
+  // 2. Fallback a IndexedDB local
   if (db) {
     const localLecturas = await new Promise((resolve) => {
       const tx = db.transaction(['lecturas'], 'readonly');
@@ -196,34 +279,37 @@ async function getLecturasPeriodo(periodo) {
       const req = store.getAll();
       req.onsuccess = () => {
         const all = req.result || [];
-        resolve(all.filter((l) => l.periodo === periodo));
+        resolve(all.filter((l) =>
+          l.periodo === periodo ||
+          l.periodo_codigo === periodo ||
+          l.id_periodo === periodo ||
+          l.idPeriodo === periodo ||
+          (periodo === '2026-08' && (!l.periodo || l.periodo === '2026-08'))
+        ));
       };
       req.onerror = () => resolve([]);
     });
 
     if (localLecturas.length > 0) {
-      return localLecturas;
+      return localLecturas.map((l) => ({
+        id: l.id,
+        idMedidor: l.idMedidor || l.id_medidor,
+        numeroMedidor: l.numeroMedidor || l.numero_medidor || l.medidorNumero,
+        aliasMedidor: l.aliasMedidor || l.alias_medidor || l.alias || 'Casa principal',
+        clienteId: l.idSocio || l.id_socio || l.clienteId,
+        idSocio: l.idSocio || l.id_socio || l.clienteId,
+        periodo: l.periodo || l.periodo_codigo || periodo,
+        lecturaAnterior: Number(l.lecturaAnterior ?? l.lectura_anterior ?? 0),
+        lecturaActual: (l.lecturaActual !== undefined && l.lecturaActual !== null)
+          ? Number(l.lecturaActual)
+          : ((l.lectura_actual !== undefined && l.lectura_actual !== null) ? Number(l.lectura_actual) : undefined),
+        consumoM3: Number(l.consumoM3 ?? l.consumoTotal ?? l.consumo_total ?? 0),
+        excedenteM3: Number(l.excedenteM3 ?? l.excedente_m3 ?? 0),
+        observaciones: l.observaciones || '',
+        origen: l.origen || 'LECTOR',
+        updatedAt: l.updatedAt || l.updated_at
+      }));
     }
-  }
-
-  // Respaldo de lecturas digitadas por el Lector para período actual demo
-  if (periodo === '2026-08') {
-    return Object.entries(LECTURAS_INICIALES_LECTOR).map(([socId, data]) => {
-      const cons = Math.max(0, data.lecturaActual - data.lecturaAnterior);
-      const exc = Math.max(0, cons - 30);
-      return {
-        id: `lec-${socId}-${periodo}`,
-        clienteId: socId,
-        periodo,
-        lecturaAnterior: data.lecturaAnterior,
-        lecturaActual: data.lecturaActual,
-        consumoM3: cons,
-        excedenteM3: exc,
-        observaciones: data.observaciones,
-        origen: data.origen,
-        updatedAt: new Date().toISOString()
-      };
-    });
   }
 
   return [];
@@ -232,60 +318,69 @@ async function getLecturasPeriodo(periodo) {
 async function saveLecturaLocal(lecturaData) {
   const start = performance.now();
 
-  // 1. Enviar al Backend API (SQLite + Sincronización)
-  try {
-    await apiFetch('/api/v1/lecturas', {
-      method: 'POST',
-      body: JSON.stringify({
-        idSocio: lecturaData.clienteId,
-        idMedidor: lecturaData.medidorId,
-        numeroMedidor: lecturaData.medidorNumero,
-        idPeriodo: lecturaData.periodo,
-        lecturaActual: lecturaData.lecturaActual,
-        lecturaAnterior: lecturaData.lecturaAnterior,
-        observaciones: lecturaData.observaciones || ''
-      })
-    });
-  } catch (apiErr) {
-    console.warn('[Lecturas] Guardado local offline:', apiErr.message);
-  }
+  const id = lecturaData.id || `lec-${lecturaData.idMedidor || lecturaData.clienteId}-${lecturaData.periodo}`;
+  const rec = {
+    id,
+    idMedidor: lecturaData.idMedidor,
+    numeroMedidor: lecturaData.medidorNumero,
+    clienteId: lecturaData.clienteId,
+    idSocio: lecturaData.clienteId,
+    periodo: lecturaData.periodo,
+    lecturaAnterior: Number(lecturaData.lecturaAnterior),
+    lecturaActual: Number(lecturaData.lecturaActual),
+    consumoM3: Number(lecturaData.consumoM3),
+    excedenteM3: Number(lecturaData.excedenteM3),
+    observaciones: lecturaData.observaciones || 'Toma de lectura en campo',
+    origen: lecturaData.origen || 'LECTOR',
+    updatedAt: new Date().toISOString()
+  };
 
-  // 2. Guardar en IndexedDB local
+  // 1. Guardar en IndexedDB local (Garantía offline)
   if (db) {
-    return new Promise((resolve, reject) => {
+    try {
       const tx = db.transaction(['lecturas', 'sync_queue'], 'readwrite');
       const lecturasStore = tx.objectStore('lecturas');
       const queueStore = tx.objectStore('sync_queue');
 
-      const id = `lec-${lecturaData.clienteId}-${lecturaData.periodo}`;
-      const record = {
-        id,
-        ...lecturaData,
-        updatedAt: new Date().toISOString()
-      };
-
-      lecturasStore.put(record);
+      lecturasStore.put(rec);
 
       queueStore.add({
         id: 'mut-' + crypto.randomUUID().slice(0, 8),
         entity: 'lecturas',
         entityId: id,
         action: 'UPSERT',
-        payload: record,
-        localTimestamp: new Date().toLocaleTimeString(),
-        status: 'SYNCED'
+        payload: rec,
+        localTimestamp: new Date().toISOString(),
+        status: 'PENDING'
       });
-
-      tx.oncomplete = () => {
-        const latency = (performance.now() - start).toFixed(1);
-        const el = document.querySelector('#perfMeter span');
-        if (el) el.textContent = `${latency} ms`;
-        resolve(record);
-      };
-
-      tx.onerror = (e) => reject(e.target.error);
-    });
+    } catch (e) {
+      console.warn('[Lecturas] Error guardando en IndexedDB:', e);
+    }
   }
+
+  // 2. Sincronizar de inmediato con el Backend REST API (SQLite & Supabase)
+  try {
+    const res = await apiFetch('/api/v1/lecturas', {
+      method: 'POST',
+      body: JSON.stringify({
+        idSocio: lecturaData.clienteId,
+        idMedidor: lecturaData.idMedidor,
+        numeroMedidor: lecturaData.medidorNumero,
+        idPeriodo: lecturaData.periodo,
+        lecturaActual: Number(lecturaData.lecturaActual),
+        lecturaAnterior: Number(lecturaData.lecturaAnterior),
+        observaciones: lecturaData.observaciones || 'Toma de lectura en campo'
+      })
+    });
+    console.log(`[Lecturas Sync] Lectura guardada y sincronizada: ${lecturaData.medidorNumero} = ${lecturaData.lecturaActual} m³`);
+    if (res.data) {
+      rec.id = res.data.id;
+    }
+  } catch (apiErr) {
+    console.log('[Lecturas] Guardado localmente en offline. Se sincronizará automáticamente al reconectar.');
+  }
+
+  return rec;
 }
 
 // Variables del Módulo
@@ -293,11 +388,11 @@ let cachedSocios = [];
 let cachedSectores = [];
 let cachedLecturas = [];
 const rowStateMap = new Map();
+let liveSyncIntervalId = null;
 
 async function renderLecturasUI() {
   const isCajeroOAdmin = currentUser?.rol === 'CAJERO' || currentUser?.rol === 'ADMIN';
 
-  // Adaptar encabezado dinámico
   const titleEl = document.getElementById('moduleTitleLecturas');
   const subEl = document.getElementById('moduleSubtitleLecturas');
   const btnCierre = document.getElementById('btnCierreCiclo');
@@ -305,7 +400,7 @@ async function renderLecturasUI() {
   if (isCajeroOAdmin) {
     if (titleEl) titleEl.innerHTML = '📋 Módulo 2: Revisión de Lecturas y Cierre de Ciclo';
     if (subEl) {
-      subEl.textContent = 'Auditoría de micromedición en campo, edición de lecturas, detección de consumos atípicos y cierre oficial del ciclo para emisión de planillas a Caja.';
+      subEl.textContent = 'Auditoría de micromedición en campo, edición de lecturas, detección de consumos y cierre oficial del ciclo para emisión de planillas a Caja.';
     }
     if (btnCierre) btnCierre.style.display = 'inline-flex';
   } else {
@@ -313,28 +408,88 @@ async function renderLecturasUI() {
     if (subEl) {
       subEl.textContent = 'Captura rápida de lecturas en ruta por sector. Al ingresar la lectura se guarda y sincroniza automáticamente con el servidor central.';
     }
-    if (btnCierre) btnCierre.style.display = 'none';
   }
 
-  const periodo = document.getElementById('selectPeriodo').value;
+  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
 
-  cachedSocios = await getAllSocios();
-  cachedSectores = await getAllSectores();
-  cachedLecturas = await getLecturasPeriodo(periodo);
+  // Cargar datos en paralelo
+  const [socios, sectores, lecturas] = await Promise.all([
+    getAllSocios(),
+    getAllSectores(),
+    getLecturasPeriodo(periodo)
+  ]);
+
+  cachedSocios = socios;
+  cachedSectores = sectores;
+  cachedLecturas = lecturas;
 
   populateSectorSelect(cachedSectores);
-  renderTableAndMetrics();
+  await renderTableAndMetrics();
+
+  // Iniciar sondeo reactivo en vivo en segundo plano (cada 8 segundos)
+  if (!liveSyncIntervalId) {
+    liveSyncIntervalId = setInterval(checkLiveReactivityUpdates, 8000);
+  }
+}
+
+async function checkLiveReactivityUpdates() {
+  try {
+    const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+    const [resSoc, resLec] = await Promise.all([
+      apiFetch('/api/v1/socios'),
+      apiFetch(`/api/v1/lecturas?periodoId=${encodeURIComponent(periodo)}`)
+    ]);
+
+    const apiSocios = resSoc.data || [];
+    const apiLecturas = resLec.data || [];
+
+    let needsRerender = false;
+
+    if (apiSocios.length > 0 && apiSocios.length !== cachedSocios.length) {
+      console.log(`[Reactivity] Cambio en padrón detectado: ${apiSocios.length} socios.`);
+      cachedSocios = normalizeSociosList(apiSocios);
+      needsRerender = true;
+    }
+
+    if (apiLecturas.length > 0) {
+      cachedLecturas = apiLecturas.map((l) => ({
+        id: l.id,
+        idMedidor: l.idMedidor || l.id_medidor,
+        numeroMedidor: l.numeroMedidor || l.numero_medidor || l.medidorNumero,
+        aliasMedidor: l.aliasMedidor || l.alias_medidor || l.alias || 'Casa principal',
+        clienteId: l.idSocio || l.id_socio || l.clienteId,
+        idSocio: l.idSocio || l.id_socio || l.clienteId,
+        periodo: l.periodoCodigo || l.periodo_codigo || periodo,
+        lecturaAnterior: Number(l.lecturaAnterior ?? l.lectura_anterior ?? 0),
+        lecturaActual: (l.lecturaActual !== undefined && l.lecturaActual !== null)
+          ? Number(l.lecturaActual)
+          : ((l.lectura_actual !== undefined && l.lectura_actual !== null) ? Number(l.lectura_actual) : undefined),
+        consumoM3: Number(l.consumoM3 ?? l.consumoTotal ?? l.consumo_total ?? 0),
+        excedenteM3: Number(l.excedenteM3 ?? l.excedente_m3 ?? 0),
+        observaciones: l.observaciones || '',
+        origen: l.origen || 'LECTOR',
+        updatedAt: l.updatedAt || l.updated_at
+      }));
+    }
+
+    if (needsRerender) {
+      renderTableAndMetrics();
+    }
+  } catch (e) {}
 }
 
 function populateSectorSelect(sectores) {
   const select = document.getElementById('selectSectorRuta');
+  if (!select) return;
   const currentVal = select.value;
   select.innerHTML = '<option value="TODOS">Todos los sectores comunitarios</option>';
 
   sectores.forEach((sec) => {
     const opt = document.createElement('option');
     opt.value = sec.id;
-    opt.textContent = `${sec.codigo ? sec.codigo + ' - ' : ''}${sec.nombre}`;
+    const cod = sec.codigo || sec.codigoSector;
+    const nom = sec.nombre || sec.nombreSector;
+    opt.textContent = `${cod ? cod + ' - ' : ''}${nom}`;
     select.appendChild(opt);
   });
 
@@ -345,9 +500,9 @@ function populateSectorSelect(sectores) {
 
 function renderTableAndMetrics() {
   const isCajeroOAdmin = currentUser?.rol === 'CAJERO' || currentUser?.rol === 'ADMIN';
-  const sectorFilter = document.getElementById('selectSectorRuta').value;
-  const searchFilter = document.getElementById('searchSocioLectura').value.toLowerCase().trim();
-  const periodo = document.getElementById('selectPeriodo').value;
+  const sectorFilter = document.getElementById('selectSectorRuta')?.value || 'TODOS';
+  const searchFilter = (document.getElementById('searchSocioLectura')?.value || '').toLowerCase().trim();
+  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
 
   let filtrados = cachedSocios.filter((s) => s.estadoServicio !== 'CORTADO');
 
@@ -357,14 +512,15 @@ function renderTableAndMetrics() {
 
   if (searchFilter) {
     filtrados = filtrados.filter((s) => {
-      const matchNom = s.nombreCompleto?.toLowerCase().includes(searchFilter);
-      const matchCed = s.cedulaRuc?.includes(searchFilter);
-      const matchMed = s.medidorNumero?.toLowerCase().includes(searchFilter);
+      const matchNom = (s.nombreCompleto || '').toLowerCase().includes(searchFilter);
+      const matchCed = (s.cedulaRuc || '').includes(searchFilter);
+      const matchMed = (s.medidorNumero || '').toLowerCase().includes(searchFilter);
       return matchNom || matchCed || matchMed;
     });
   }
 
   const tbody = document.getElementById('lecturasTableBody');
+  if (!tbody) return;
   tbody.innerHTML = '';
   rowStateMap.clear();
 
@@ -392,14 +548,16 @@ function renderTableAndMetrics() {
         listaAcometidas.push({
           rowKey: `${socio.id}_${m.id || m.numeroMedidor}`,
           socioId: socio.id,
-          medidorId: m.id,
-          medidorNumero: m.numeroMedidor,
-          aliasMedidor: m.alias || 'Casa principal',
+          medidorId: m.id || m.idMedidor,
+          medidorNumero: m.numeroMedidor || m.medidorNumero,
+          aliasMedidor: m.alias || m.aliasMedidor || 'Casa principal',
           nombreCompleto: socio.nombreCompleto,
           codigoSocio: socio.codigoSocio,
           cedulaRuc: socio.cedulaRuc,
           nombreSector: m.nombreSector || socio.nombreSector,
-          sectorId: m.idSector || socio.sectorId
+          sectorId: m.idSector || socio.sectorId,
+          lecturaAnterior: Number(m.lecturaAnterior ?? m.lecturaInicial ?? 0),
+          lecturaInicial: Number(m.lecturaInicial ?? m.lecturaAnterior ?? 0)
         });
       });
     } else {
@@ -413,28 +571,31 @@ function renderTableAndMetrics() {
         codigoSocio: socio.codigoSocio,
         cedulaRuc: socio.cedulaRuc,
         nombreSector: socio.nombreSector,
-        sectorId: socio.sectorId
+        sectorId: socio.sectorId,
+        lecturaAnterior: 0,
+        lecturaInicial: 0
       });
     }
   });
 
   listaAcometidas.forEach((item) => {
     const lecturaExistente = cachedLecturas.find((l) =>
-      (l.idMedidor && (l.idMedidor === item.medidorId || l.numeroMedidor === item.medidorNumero)) ||
+      (l.idMedidor && l.idMedidor === item.medidorId) ||
       (l.numeroMedidor && l.numeroMedidor === item.medidorNumero) ||
-      (!l.idMedidor && l.clienteId === item.socioId)
+      (l.clienteId && l.clienteId === item.socioId && !l.idMedidor)
     );
-    const fallbackLector = periodo === '2026-08' ? LECTURAS_INICIALES_LECTOR[item.socioId] : null;
 
-    const lant = lecturaExistente?.lecturaAnterior ?? fallbackLector?.lecturaAnterior ?? BASELINE_LECTURAS[item.socioId] ?? 120;
-    const lact = lecturaExistente?.lecturaActual ?? fallbackLector?.lecturaActual;
-    const hasLectorReading = lact !== undefined && lact !== null;
+    // Lectura anterior real: se toma de la base del medidor o de la lectura registrada
+    const lant = Number(lecturaExistente?.lecturaAnterior ?? item.lecturaAnterior ?? item.lecturaInicial ?? 0);
+    const lactRaw = lecturaExistente?.lecturaActual;
+    const hasLectorReading = lactRaw !== undefined && lactRaw !== null && (lecturaExistente?.observaciones !== 'Alta inicial de socio' || lactRaw > 0);
+    const lact = hasLectorReading ? Number(lactRaw) : undefined;
     const esModificadoPorCajero = lecturaExistente?.observaciones?.includes('Cajero');
 
     let consumo = 0;
     let excedente = 0;
 
-    if (hasLectorReading) {
+    if (hasLectorReading && lact !== undefined) {
       consumo = Math.max(0, lact - lant);
       excedente = Math.max(0, consumo - 30);
       totalTomadas++;
@@ -472,12 +633,12 @@ function renderTableAndMetrics() {
             min="${lant}"
             placeholder="${lant}"
             ${hasLectorReading ? 'readonly' : ''}
-            title="${hasLectorReading ? 'Valor digitado por el lector' : 'Ingrese lectura actual'}"
+            title="${hasLectorReading ? 'Lectura guardada' : 'Ingrese lectura actual del medidor'}"
           />
-          <span id="hint-lact-${item.rowKey}" style="font-size: 0.72rem; color: ${esModificadoPorCajero ? '#059669' : '#0284c7'}; font-weight: 600;">
+          <span id="hint-lact-${item.rowKey}" style="font-size: 0.72rem; color: ${esModificadoPorCajero ? '#059669' : hasLectorReading ? '#0284c7' : '#94a3b8'}; font-weight: 600;">
             ${
               hasLectorReading 
-                ? (esModificadoPorCajero ? '✓ Modificado por Cajero' : '👤 Digitado por Lector') 
+                ? (esModificadoPorCajero ? '✓ Modificado por Cajero' : '✓ Digitado en Campo') 
                 : '⏳ Pendiente'
             }
           </span>
@@ -538,12 +699,12 @@ function renderTableAndMetrics() {
       btnAction.disabled = false;
       if (isSavedSuccess) {
         valorOriginal = updatedVal;
-        hintLact.textContent = '✓ Modificado por Cajero';
+        hintLact.textContent = isCajeroOAdmin ? '✓ Modificado por Cajero' : '✓ Digitado en Campo';
         hintLact.style.color = '#059669';
       } else {
-        inputLact.value = valorOriginal;
-        hintLact.textContent = esModificadoPorCajero ? '✓ Modificado por Cajero' : '👤 Digitado por Lector';
-        hintLact.style.color = esModificadoPorCajero ? '#059669' : '#0284c7';
+        inputLact.value = valorOriginal !== '' && valorOriginal !== undefined ? valorOriginal : '';
+        hintLact.textContent = hasLectorReading ? (esModificadoPorCajero ? '✓ Modificado por Cajero' : '✓ Digitado en Campo') : '⏳ Pendiente';
+        hintLact.style.color = hasLectorReading ? '#0284c7' : '#94a3b8';
       }
     };
 
@@ -572,8 +733,8 @@ function renderTableAndMetrics() {
       inputLact.classList.add('input-valid');
       btnAction.disabled = false;
 
-      const cons = valNum - lant;
-      const exc = Math.max(0, cons - 30);
+      const cons = Number((valNum - lant).toFixed(2));
+      const exc = Number(Math.max(0, cons - 30).toFixed(2));
       consumoCell.innerHTML = `
         <span class="consumption-pill" style="color:#0284c7; font-weight:700;">${cons} m³</span>
         ${exc > 0 ? `<span class="excess-pill">+${exc} exc</span>` : ''}
@@ -590,8 +751,8 @@ function renderTableAndMetrics() {
         lecturaActual: valNum,
         consumoM3: cons,
         excedenteM3: exc,
-        observaciones: 'Modificado por Cajero',
-        origen: 'CAJERO',
+        observaciones: isCajeroOAdmin ? 'Modificado por Cajero' : 'Toma de lectura en campo',
+        origen: isCajeroOAdmin ? 'CAJERO' : 'LECTOR',
         valid: true
       };
       rowStateMap.set(item.rowKey, lecturaRecord);
@@ -615,9 +776,9 @@ function renderTableAndMetrics() {
       // Toast feedback
       const toast = document.createElement('div');
       toast.className = 'save-toast-mini';
-      toast.textContent = `✓ Lectura de ${item.nombreCompleto.split(' ')[0]} [${item.aliasMedidor}] guardada (${valid.valNum} m³) por Cajero`;
+      toast.textContent = `✓ Lectura de ${item.nombreCompleto.split(' ')[0]} guardada (${valid.valNum} m³) y sincronizada`;
       document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 2200);
+      setTimeout(() => toast.remove(), 2500);
     };
 
     btnAction.addEventListener('click', async () => {
@@ -660,70 +821,34 @@ function updateMetrics(totalSocios, tomadas, consumo, excedente) {
   const elProgresoLabel = document.getElementById('metricProgresoLabel');
   if (elProgresoLabel) elProgresoLabel.textContent = `${pct}% revisado / tomado`;
   const elConsumo = document.getElementById('metricConsumoTotal');
-  if (elConsumo) elConsumo.textContent = `${consumo} m³`;
+  if (elConsumo) elConsumo.textContent = `${consumo.toFixed(1)} m³`;
   const elExcedente = document.getElementById('metricExcedenteTotal');
-  if (elExcedente) elExcedente.textContent = `${excedente} m³ de excedente ($${(excedente * 0.10).toFixed(2)})`;
+  if (elExcedente) elExcedente.textContent = `${excedente.toFixed(1)} m³ de excedente ($${(excedente * 0.10).toFixed(2)})`;
 }
 
 async function recalcOverallMetrics(sociosRuta) {
-  const periodo = document.getElementById('selectPeriodo').value;
+  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
   const lecturas = await getLecturasPeriodo(periodo);
 
   let tomadas = 0, consumo = 0, excedente = 0;
   sociosRuta.forEach((s) => {
-    const l = lecturas.find((item) => item.clienteId === s.id);
-    if (l && l.lecturaActual !== undefined) {
+    const l = lecturas.find((item) => item.clienteId === s.id || item.idSocio === s.id);
+    if (l && l.lecturaActual !== undefined && l.lecturaActual > 0) {
       tomadas++;
       consumo += (l.consumoM3 || 0);
       excedente += (l.excedenteM3 || 0);
     }
   });
 
-  updateMetrics(sociosRuta.length, tomadas, consumo, excedente);
+  const totalAcometidas = sociosRuta.reduce((acc, s) => acc + (s.medidores?.length || 1), 0);
+  updateMetrics(totalAcometidas, tomadas, consumo, excedente);
 }
 
-// Guardar Todo el Lote
-document.getElementById('btnGuardarLote')?.addEventListener('click', async () => {
-  const periodo = document.getElementById('selectPeriodo').value;
-  let savedCount = 0;
-
-  const btnLote = document.getElementById('btnGuardarLote');
-  btnLote.disabled = true;
-  btnLote.textContent = '⏳ Guardando lote...';
-
-  for (const [socioId, state] of rowStateMap.entries()) {
-    if (state && state.valid) {
-      await saveLecturaLocal(state);
-      savedCount++;
-    }
-  }
-
-  btnLote.disabled = false;
-  btnLote.textContent = '💾 Guardar Todo el Lote';
-
-  if (savedCount === 0) {
-    Swal.fire({
-      icon: 'info',
-      title: 'Sin Cambios Nuevos',
-      text: 'No hay lecturas pendientes o modificadas por guardar.'
-    });
-    return;
-  }
-
-  cachedLecturas = await getLecturasPeriodo(periodo);
-  renderTableAndMetrics();
-  Swal.fire({
-    icon: 'success',
-    title: 'Lote Sincronizado',
-    text: `Se sincronizaron exitosamente ${savedCount} lecturas en el servidor central.`
-  });
-});
-
-// Cierre de Ciclo Mensual (Acción Oficial del Cajero / Tesorero)
+// Cierre de Ciclo
 document.getElementById('btnCierreCiclo')?.addEventListener('click', async () => {
-  const periodo = document.getElementById('selectPeriodo').value;
-
+  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
   const lecturas = await getLecturasPeriodo(periodo);
+
   if (lecturas.length === 0) {
     Swal.fire({
       icon: 'warning',
@@ -749,13 +874,11 @@ document.getElementById('btnCierreCiclo')?.addEventListener('click', async () =>
   btnCierre.textContent = '⏳ Liquidando planillas...';
 
   try {
-    // 1. Liquidación masiva del período en el Backend API
     const resLiquidacion = await apiFetch('/api/v1/facturas/liquidar-periodo', {
       method: 'POST',
       body: JSON.stringify({ idPeriodo: periodo })
     });
 
-    // 2. Cerrar período formalmente
     await apiFetch(`/api/v1/periodos/${periodo}/cerrar`, {
       method: 'POST'
     }).catch(() => {});
@@ -786,10 +909,126 @@ document.getElementById('btnCierreCiclo')?.addEventListener('click', async () =>
   }
 });
 
-// Listeners de filtros
-document.getElementById('selectPeriodo')?.addEventListener('change', renderLecturasUI);
+// Sincronización Manual
+async function openSyncManagerModal() {
+  const currentServerUrl = localStorage.getItem('SIGA_SERVER_URL') || '';
+  const countSocios = cachedSocios.length;
+  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+  const lecturas = await getLecturasPeriodo(periodo);
+  const tomadasCount = lecturas.filter((l) => l.lecturaActual !== undefined && l.lecturaActual > 0).length;
+
+  Swal.fire({
+    title: '🔄 Sincronización SIGA',
+    html: `
+      <div style="text-align: left; font-size: 0.88rem; color: #334155; line-height: 1.4;">
+        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
+          <div style="font-weight: 700; color: #166534; margin-bottom: 4px;">📱 Estado del Padrón y Micromedición:</div>
+          <div>• <strong>${countSocios}</strong> socios registrados en padrón</div>
+          <div>• <strong>${tomadasCount}</strong> lecturas registradas en período <strong>${periodo}</strong></div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 14px;">
+          <button type="button" id="btnSyncCloudSupabase" class="btn btn-primary" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.88rem; background: #0284c7; border: none; border-radius: 6px; color: white; cursor: pointer;">
+            ☁️ Sincronizar Base de Datos (SQLite & Supabase)
+          </button>
+          <button type="button" id="btnExportLecturasCSV" class="btn btn-outline" style="width: 100%; padding: 9px; font-weight: 700; font-size: 0.85rem; border: 1px solid #64748b; color: #334155; border-radius: 6px; background: white; cursor: pointer;">
+            📤 Exportar Reporte de Lecturas (CSV)
+          </button>
+        </div>
+      </div>
+    `,
+    showConfirmButton: false,
+    showCloseButton: true,
+    didOpen: () => {
+      document.getElementById('btnSyncCloudSupabase')?.addEventListener('click', async () => {
+        await performFullSync();
+      });
+
+      document.getElementById('btnExportLecturasCSV')?.addEventListener('click', async () => {
+        exportLecturasCSV(periodo);
+      });
+    }
+  });
+}
+
+async function performFullSync() {
+  Swal.fire({
+    title: 'Sincronizando Base de Datos...',
+    text: 'Actualizando padrón y lecturas con SQLite local y Supabase...',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  try {
+    const res = await apiFetch('/api/v1/sync/supabase', { method: 'POST' });
+    await renderLecturasUI();
+
+    Swal.fire({
+      icon: 'success',
+      title: '¡Sincronización Completada!',
+      html: `
+        <div style="text-align: left; font-size: 0.9rem;">
+          <p>✅ <strong>${cachedSocios.length}</strong> Socios al día.</p>
+          <p>✅ <strong>${cachedLecturas.length}</strong> Lecturas sincronizadas en tiempo real.</p>
+        </div>
+      `
+    });
+  } catch (err) {
+    // Si offline, recargar UI local
+    await renderLecturasUI();
+    Swal.fire({
+      icon: 'info',
+      title: 'Modo Offline',
+      text: 'Datos sincronizados en el almacenamiento local del dispositivo.'
+    });
+  }
+}
+
+async function exportLecturasCSV(periodo) {
+  const lecturas = await getLecturasPeriodo(periodo);
+  if (lecturas.length === 0) {
+    Swal.fire({ icon: 'info', title: 'Sin Lecturas', text: 'No hay lecturas registradas para exportar.' });
+    return;
+  }
+
+  let csvContent = 'CodigoSocio,Nombre,Cedula,Sector,Medidor,LecturaAnterior,LecturaActual,ConsumoM3,ExcedenteM3,Observaciones,Fecha\n';
+
+  cachedSocios.forEach((s) => {
+    const l = lecturas.find((item) => item.clienteId === s.id || item.idSocio === s.id);
+    const lant = l ? l.lecturaAnterior : 0;
+    const lact = l && l.lecturaActual !== undefined ? l.lecturaActual : '';
+    const cons = l && l.consumoM3 !== undefined ? l.consumoM3 : '';
+    const exc = l && l.excedenteM3 !== undefined ? l.excedenteM3 : '';
+    const obs = (l?.observaciones || '').replace(/,/g, ';');
+    const fecha = l?.updatedAt || '';
+
+    csvContent += `"${s.codigoSocio}","${s.nombreCompleto}","${s.cedulaRuc}","${s.nombreSector}","${s.medidorNumero}",${lant},${lact},${cons},${exc},"${obs}","${fecha}"\n`;
+  });
+
+  const filename = `SIGA_Lecturas_${periodo}.csv`;
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+
+  Swal.fire({
+    icon: 'success',
+    title: 'Archivo Generado',
+    text: `Se descargó el archivo ${filename} correctamente.`
+  });
+}
+
+// Listeners de filtros y acciones
+document.getElementById('selectPeriodo')?.addEventListener('change', async () => {
+  const periodo = document.getElementById('selectPeriodo').value;
+  cachedLecturas = await getLecturasPeriodo(periodo);
+  renderTableAndMetrics();
+});
+
 document.getElementById('selectSectorRuta')?.addEventListener('change', renderTableAndMetrics);
 document.getElementById('searchSocioLectura')?.addEventListener('input', renderTableAndMetrics);
+document.getElementById('btnSyncModal')?.addEventListener('click', openSyncManagerModal);
 
-// Inicializar
+// Inicializar PWA
 initIndexedDB().then(renderLecturasUI);

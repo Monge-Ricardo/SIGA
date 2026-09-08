@@ -143,6 +143,8 @@ export interface Factura {
   valorDeudaAnterior: number;
   totalMes: number; // valorBase + valorExcedente + valorAlcantarillado
   totalPagar: number; // totalMes + valorMultas + valorDeudaAnterior
+  montoPagado?: number; // Monto acumulado pagado / abonado
+  saldoPendiente?: number; // Saldo que resta por pagar
   estadoPago: EstadoPagoFactura;
   fechaVencimiento: string;
   fechaPago?: string;

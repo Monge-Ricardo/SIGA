@@ -120,6 +120,17 @@ export const updateSocio = async (req: AuthenticatedRequest, res: Response): Pro
   }
 };
 
+export const deleteSocio = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const result = socioService.deleteSocio(id);
+    res.json(result);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error eliminando socio.';
+    res.status(400).json({ error: message });
+  }
+};
+
 export const getMedidores = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { sectorId, socioId, search } = req.query;
@@ -291,13 +302,16 @@ export const getFacturaById = async (req: AuthenticatedRequest, res: Response): 
 
 export const liquidarFactura = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { idSocio, idPeriodo } = req.body || {};
+    const { idSocio, idPeriodo, multasIds, deudasAnterioresIds } = req.body || {};
     if (!idSocio || !idPeriodo) {
       res.status(400).json({ error: 'idSocio y idPeriodo son requeridos para liquidar.' });
       return;
     }
 
-    const factura = facturacionService.liquidarFacturaMes(idSocio, idPeriodo);
+    const factura = facturacionService.liquidarFacturaMes(idSocio, idPeriodo, {
+      multasIds,
+      deudasAnterioresIds
+    });
     res.status(201).json({ message: 'Planilla liquidada exitosamente.', data: factura });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error liquidando factura.';
@@ -331,21 +345,46 @@ export const liquidarPeriodo = async (req: AuthenticatedRequest, res: Response):
 export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { metodoPago, fechaPago } = (req.body || {}) as { metodoPago?: MetodoPago; fechaPago?: string };
+    const { metodoPago, fechaPago, multasIds, deudasAnterioresIds, montoCobrado } = (req.body || {}) as {
+      metodoPago?: MetodoPago;
+      fechaPago?: string;
+      multasIds?: string[];
+      deudasAnterioresIds?: string[];
+      montoCobrado?: number;
+    };
 
     const idCajero = req.user?.id || 'cajero-general';
     const facturaPagada = facturacionService.cobrarFactura(id, {
       metodoPago: metodoPago || 'EFECTIVO',
       idCajero,
-      fechaPago
+      fechaPago,
+      multasIds,
+      deudasAnterioresIds,
+      montoCobrado: montoCobrado !== undefined ? Number(montoCobrado) : undefined
     });
 
+    const esParcial = facturaPagada.saldoPendiente !== undefined && facturaPagada.saldoPendiente > 0;
+    const msg = esParcial
+      ? `Abono de $${(montoCobrado || facturaPagada.montoPagado || 0).toFixed(2)} registrado para la factura #${facturaPagada.numeroFactura}. Saldo pendiente: $${facturaPagada.saldoPendiente!.toFixed(2)} USD.`
+      : `Factura #${facturaPagada.numeroFactura} cobrada exitosamente por $${facturaPagada.totalPagar.toFixed(2)}. Fondos distribuidos al Libro Mayor.`;
+
     res.json({
-      message: `Factura #${facturaPagada.numeroFactura} cobrada exitosamente por $${facturaPagada.totalPagar.toFixed(2)}. Fondos distribuidos al Libro Mayor.`,
+      message: msg,
       data: facturaPagada
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error cobrando factura.';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const deleteFactura = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const result = facturacionService.deleteFactura(id);
+    res.json(result);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error eliminando factura.';
     res.status(400).json({ error: message });
   }
 };
@@ -385,6 +424,33 @@ export const crearMulta = async (req: AuthenticatedRequest, res: Response): Prom
     res.status(201).json({ message: 'Multa / Cuota extraordinaria registrada.', data: multa });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error registrando multa.';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const updateMulta = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { tipoRubro, monto, motivo } = req.body || {};
+    const updated = facturacionService.updateMulta(id, {
+      tipoRubro,
+      monto: monto !== undefined ? Number(monto) : undefined,
+      motivo
+    });
+    res.json({ message: 'Multa actualizada exitosamente.', data: updated });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error actualizando multa.';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const deleteMulta = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const result = facturacionService.deleteMulta(id);
+    res.json(result);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error eliminando multa.';
     res.status(400).json({ error: message });
   }
 };

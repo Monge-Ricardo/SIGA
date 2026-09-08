@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Gota de Agua Blanca -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,22 C54,22 32,48 32,68 C32,80.15 41.85,90 54,90 C66.15,90 76,80.15 76,68 C76,48 54,22 54,22 Z" />
+    <!-- Brillo / Reflejo Azul Claro -->
+    <path
+        android:fillColor="#BAE6FD"
+        android:pathData="M45,56 C42,61 42,71 45,75 C46.5,77 48.5,75.5 47.5,71 C46,66 46.5,59 48.5,55 C47.5,54 46,54 45,56 Z" />
+</vector>

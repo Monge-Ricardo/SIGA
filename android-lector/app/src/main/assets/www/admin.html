@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gobernanza y Tarifas (Admin) • SIGA-Comunitario</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0284c7" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- Header de Módulo -->
+    <div class="module-header" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.4rem; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 0.5rem;">
+          <span>👑</span> Módulo 6: Gobernanza, Tarifas y Parámetros
+        </h2>
+        <p style="font-size: 0.85rem; color: #64748b; margin-top: 0.25rem;">
+          Configuración global de la Junta: Tarifas comunitarias, distribución de fondos, sectores y usuarios
+        </p>
+      </div>
+
+      <span class="badge-role-tag" style="background: #e0e7ff; color: #4338ca; font-size: 0.85rem; padding: 0.35rem 0.75rem; border-radius: 999px;">
+        Exclusivo Administrador (Directiva)
+      </span>
+    </div>
+
+    <div class="admin-grid">
+      <!-- 1. Configuración de Tarifas -->
+      <div class="card" style="padding: 1.5rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0 0 1rem 0; display: flex; align-items: center; gap: 0.4rem;">
+          <span>💧</span> Matriz de Tarifas y Canon Base
+        </h3>
+
+        <form id="formTarifas" style="display: flex; flex-direction: column; gap: 0.85rem;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+            <div class="form-group">
+              <label for="cfgCargoNormal" style="font-size: 0.8rem; font-weight: 700;">Cargo Fijo Normal ($) *</label>
+              <input type="number" id="cfgCargoNormal" step="0.01" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; font-weight: 700;" />
+            </div>
+
+            <div class="form-group">
+              <label for="cfgCargoTerceraEdad" style="font-size: 0.8rem; font-weight: 700;">Cargo Fijo 3ra Edad ($) *</label>
+              <input type="number" id="cfgCargoTerceraEdad" step="0.01" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; font-weight: 700;" />
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+            <div class="form-group">
+              <label for="cfgLimiteBase" style="font-size: 0.8rem; font-weight: 700;">Límite Base (m³) *</label>
+              <input type="number" id="cfgLimiteBase" step="1" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
+            </div>
+
+            <div class="form-group">
+              <label for="cfgCostoExcedente" style="font-size: 0.8rem; font-weight: 700;">Costo Excedente ($/m³) *</label>
+              <input type="number" id="cfgCostoExcedente" step="0.01" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="cfgRecargoAlcantarillado" style="font-size: 0.8rem; font-weight: 700;">Recargo Alcantarillado ($/mes) *</label>
+            <input type="number" id="cfgRecargoAlcantarillado" step="0.01" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
+          </div>
+
+          <div style="background: #f8fafc; padding: 0.75rem; border-radius: 6px; border: 1px dashed #cbd5e1;">
+            <div style="font-size: 0.78rem; font-weight: 700; color: #475569; margin-bottom: 0.5rem;">
+              Reparto Contable de la Cuota Normal ($7.00):
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.8rem;">
+              <div>Padre / Parroquia: <strong>$2.00</strong></div>
+              <div>Operación / Mantenimiento: <strong>$4.00</strong></div>
+              <div>Honorarios Lector: <strong>$0.50</strong></div>
+              <div>Fondo Mortuorio: <strong>$0.50</strong></div>
+            </div>
+          </div>
+
+          <button type="submit" id="btnGuardarTarifas" class="btn btn-primary" style="margin-top: 0.5rem;">
+            💾 Guardar Configuración de Tarifas
+          </button>
+        </form>
+      </div>
+
+      <!-- 2. Gestión de Sectores Geográficos -->
+      <div class="card" style="padding: 1.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 0.4rem;">
+            <span>📍</span> Sectores Geográficos
+          </h3>
+          <button class="btn btn-sm btn-secondary" id="btnMostrarCrearSector">
+            + Nuevo Sector
+          </button>
+        </div>
+
+        <!-- Form Crear Sector (Colapsable) -->
+        <form id="formCrearSector" style="display: none; background: #f0f9ff; padding: 1rem; border-radius: 6px; border: 1px solid #bae6fd; margin-bottom: 1rem; flex-direction: column; gap: 0.5rem;">
+          <div style="display: grid; grid-template-columns: 100px 1fr; gap: 0.5rem;">
+            <input type="text" id="secCodigo" placeholder="SEC-04" required style="padding: 0.4rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+            <input type="text" id="secNombre" placeholder="Nombre del Sector (ej: Bellavista)" required style="padding: 0.4rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          </div>
+          <input type="text" id="secDesc" placeholder="Descripción de la zona (opcional)" style="padding: 0.4rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+            <button type="button" class="btn btn-sm btn-secondary" id="btnCancelarSector">Cancelar</button>
+            <button type="submit" class="btn btn-sm btn-primary">Registrar Sector</button>
+          </div>
+        </form>
+
+        <div class="table-responsive">
+          <table class="table" style="font-size: 0.85rem;">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Nombre del Sector</th>
+                <th>Descripción</th>
+              </tr>
+            </thead>
+            <tbody id="tbodySectores">
+              <tr><td colspan="3" style="text-align: center; color: #64748b;">Cargando sectores...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Gestión de Usuarios y Roles del Sistema -->
+    <div class="card" style="padding: 1.5rem; margin-top: 1.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 0.4rem;">
+          <span>👥</span> Usuarios del Sistema y Roles de Acceso
+        </h3>
+        <button class="btn btn-sm btn-primary" id="btnMostrarCrearUsuario">
+          + Registrar Nuevo Usuario
+        </button>
+      </div>
+
+      <!-- Form Crear Usuario -->
+      <form id="formCrearUsuario" style="display: none; background: #f8fafc; padding: 1.25rem; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 1rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-bottom: 0.75rem;">
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700;">Nombre Completo *</label>
+            <input type="text" id="usrNombre" placeholder="ej: Luis Andrade" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          </div>
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700;">Nombre de Usuario *</label>
+            <input type="text" id="usrUsername" placeholder="ej: landrade" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          </div>
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700;">Contraseña *</label>
+            <input type="password" id="usrPassword" placeholder="••••••••" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          </div>
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700;">Rol del Sistema *</label>
+            <select id="usrRol" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;">
+              <option value="CAJERO">CAJERO (Tesorero / Operador Integral)</option>
+              <option value="LECTOR">LECTOR (Toma de Micromedición)</option>
+              <option value="ADMIN">ADMIN (Gobernanza y Directiva)</option>
+            </select>
+          </div>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+          <button type="button" class="btn btn-sm btn-secondary" id="btnCancelarUsuario">Cancelar</button>
+          <button type="submit" class="btn btn-sm btn-primary">Crear Usuario</button>
+        </div>
+      </form>
+
+      <div class="table-responsive">
+        <table class="table" style="font-size: 0.85rem;">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Nombre Completo</th>
+              <th>Rol Asignado</th>
+              <th>Estado</th>
+              <th>Fecha de Creación</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyUsuarios">
+            <tr><td colspan="5" style="text-align: center; color: #64748b;">Cargando usuarios...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="admin.js"></script>
+</body>
+</html>

@@ -2,7 +2,7 @@
  * SIGA-Comunitario • Service Worker PWA (Offline-First Real)
  */
 
-const CACHE_NAME = 'siga-pwa-v6';
+const CACHE_NAME = 'siga-pwa-v19';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -27,8 +27,10 @@ const STATIC_ASSETS = [
   './fondos.js',
   './reportes.js',
   './admin.js',
+  './offline_seed.json',
   './manifest.json'
 ];
+
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

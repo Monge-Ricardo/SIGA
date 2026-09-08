@@ -186,6 +186,8 @@ export class SQLiteDatabase {
         valor_deuda_anterior REAL NOT NULL DEFAULT 0.0,
         total_mes REAL NOT NULL,
         total_pagar REAL NOT NULL,
+        monto_pagado REAL NOT NULL DEFAULT 0.0,
+        saldo_pendiente REAL NOT NULL DEFAULT 0.0,
         estado_pago TEXT NOT NULL DEFAULT 'PENDIENTE' CHECK(estado_pago IN ('PENDIENTE', 'PAGADO', 'ANULADO')),
         fecha_vencimiento TEXT NOT NULL,
         fecha_pago TEXT,
@@ -242,6 +244,12 @@ export class SQLiteDatabase {
     } catch {}
     try {
       this.db.exec('ALTER TABLE facturas ADD COLUMN id_medidor TEXT REFERENCES medidores(id);');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE facturas ADD COLUMN monto_pagado REAL DEFAULT 0.0;');
+    } catch {}
+    try {
+      this.db.exec('ALTER TABLE facturas ADD COLUMN saldo_pendiente REAL DEFAULT 0.0;');
     } catch {}
     try {
       this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_lecturas_medidor_periodo ON lecturas(id_medidor, id_periodo);');

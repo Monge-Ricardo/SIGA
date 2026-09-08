@@ -11,6 +11,9 @@ export interface ReporteSector {
   sociosAlDia: number;
   sociosEnMora: number;
   consumoTotalM3: number;
+  totalFacturado: number;
+  totalCobrado: number;
+  totalEnMora: number;
   totalRecaudado: number;
   totalPendienteMora: number;
 }
@@ -18,12 +21,17 @@ export interface ReporteSector {
 export interface ReporteMoroso {
   idSocio: string;
   codigoSocio: string;
+  apellidos: string;
+  nombres: string;
   nombresCompletos: string;
   cedulaRuc: string;
   medidorNumero: string;
   nombreSector: string;
+  mesesAdeudados: number;
   mesesAtrasados: number;
+  fechaDeudaMasAntigua?: string;
   fechaCorteInicial?: string;
+  deudaTotalPendiente: number;
   totalAdeudado: number;
 }
 
@@ -38,7 +46,22 @@ export interface ReporteConsolidadoGeneral {
   totalCobradoTransferencia: number;
   totalCobradoMovil: number;
   totalCobradoGlobal: number;
+  totalIngresos: number;
+  totalEgresos: number;
+  saldoNeto: number;
   totalCarteraPendiente: number;
+  desgloseIngresos: {
+    baseAgua: number;
+    excedentes: number;
+    alcantarillado: number;
+    multas: number;
+  };
+  fondos: Array<{
+    nombre: string;
+    saldo: number;
+    ingresos: number;
+    egresos: number;
+  }>;
   fondosComunitarios: BalanceGeneralFondos;
 }
 
@@ -54,12 +77,17 @@ export class ReportesService {
         morosos.push({
           idSocio: s.id,
           codigoSocio: s.codigoSocio,
+          apellidos: s.apellidos,
+          nombres: s.nombres,
           nombresCompletos: `${s.apellidos} ${s.nombres}`,
           cedulaRuc: s.cedulaRuc,
           medidorNumero: s.medidorNumero,
           nombreSector: s.nombreSector || 'Sin Sector',
+          mesesAdeudados: estadoCuenta.mesesAdeudados,
           mesesAtrasados: estadoCuenta.mesesAdeudados,
+          fechaDeudaMasAntigua: estadoCuenta.fechaDeudaMasAntigua,
           fechaCorteInicial: estadoCuenta.fechaDeudaMasAntigua,
+          deudaTotalPendiente: Number(estadoCuenta.deudaTotalPendiente.toFixed(2)),
           totalAdeudado: Number(estadoCuenta.deudaTotalPendiente.toFixed(2))
         });
         deudaTotalAcumulada += estadoCuenta.deudaTotalPendiente;
@@ -108,7 +136,7 @@ export class ReportesService {
       consumoTotalM3 = lecturasRes.consumo;
 
       let queryFacturas = `
-        SELECT f.estado_pago, f.total_mes, f.total_pagar
+        SELECT f.estado_pago, f.total_mes, f.total_pagar, f.monto_pagado, f.saldo_pendiente
         FROM facturas f
         JOIN socios s ON f.id_socio = s.id
         WHERE s.id_sector = ?
@@ -123,14 +151,16 @@ export class ReportesService {
         estado_pago: string;
         total_mes: number;
         total_pagar: number;
+        monto_pagado?: number;
+        saldo_pendiente?: number;
       }[];
 
       for (const f of facturas) {
-        if (f.estado_pago === 'PAGADO') {
-          totalRecaudado += f.total_pagar;
-        } else if (f.estado_pago === 'PENDIENTE') {
-          totalPendienteMora += f.total_pagar;
-        }
+        const pagado = f.monto_pagado !== undefined && f.monto_pagado !== null ? f.monto_pagado : (f.estado_pago === 'PAGADO' ? f.total_pagar : 0);
+        const pendiente = f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (f.estado_pago === 'PENDIENTE' ? f.total_pagar : 0);
+
+        totalRecaudado += pagado;
+        totalPendienteMora += pendiente;
       }
 
       for (const s of sociosSector) {
@@ -150,6 +180,9 @@ export class ReportesService {
         sociosAlDia,
         sociosEnMora,
         consumoTotalM3: Number(consumoTotalM3.toFixed(2)),
+        totalFacturado: Number((totalRecaudado + totalPendienteMora).toFixed(2)),
+        totalCobrado: Number(totalRecaudado.toFixed(2)),
+        totalEnMora: Number(totalPendienteMora.toFixed(2)),
         totalRecaudado: Number(totalRecaudado.toFixed(2)),
         totalPendienteMora: Number(totalPendienteMora.toFixed(2))
       });
@@ -182,23 +215,48 @@ export class ReportesService {
     let totalCobradoMovil = 0;
     let totalCarteraPendiente = 0;
 
+    let baseAgua = 0;
+    let excedentes = 0;
+    let alcantarillado = 0;
+    let multas = 0;
+
     for (const f of facturas) {
-      const totalPagar = f.total_pagar as number;
+      const totalPagar = (f.total_pagar as number) || 0;
+      const montoPagado = (f.monto_pagado as number) !== undefined && f.monto_pagado !== null ? (f.monto_pagado as number) : (f.estado_pago === 'PAGADO' ? totalPagar : 0);
+      const saldoPendiente = (f.saldo_pendiente as number) !== undefined && f.saldo_pendiente !== null ? (f.saldo_pendiente as number) : (f.estado_pago === 'PENDIENTE' ? totalPagar : 0);
+
       totalFacturado += totalPagar;
 
-      if (f.estado_pago === 'PAGADO') {
+      if (montoPagado > 0) {
         const metodo = f.metodo_pago as string;
-        if (metodo === 'EFECTIVO') totalCobradoEfectivo += totalPagar;
-        else if (metodo === 'TRANSFERENCIA') totalCobradoTransferencia += totalPagar;
-        else if (metodo === 'MOVIL') totalCobradoMovil += totalPagar;
-        else totalCobradoEfectivo += totalPagar;
-      } else if (f.estado_pago === 'PENDIENTE') {
-        totalCarteraPendiente += totalPagar;
+        if (metodo === 'EFECTIVO') totalCobradoEfectivo += montoPagado;
+        else if (metodo === 'TRANSFERENCIA') totalCobradoTransferencia += montoPagado;
+        else if (metodo === 'MOVIL') totalCobradoMovil += montoPagado;
+        else totalCobradoEfectivo += montoPagado;
+
+        const ratio = totalPagar > 0 ? (montoPagado / totalPagar) : 1;
+        baseAgua += ((f.valor_base as number) || 0) * ratio;
+        excedentes += ((f.valor_excedente as number) || 0) * ratio;
+        alcantarillado += ((f.valor_alcantarillado as number) || 0) * ratio;
+        multas += ((f.valor_multas as number) || 0) * ratio;
+      }
+
+      if (saldoPendiente > 0) {
+        totalCarteraPendiente += saldoPendiente;
       }
     }
 
     const totalCobradoGlobal = totalCobradoEfectivo + totalCobradoTransferencia + totalCobradoMovil;
     const fondosComunitarios = fondosService.getBalanceGeneralFondos();
+    const totalEgresos = fondosComunitarios.granTotalEgresos || 0;
+    const saldoNeto = Number((totalCobradoGlobal - totalEgresos).toFixed(2));
+
+    const fondosLista = fondosComunitarios.fondos.map((f) => ({
+      nombre: f.nombreFondo,
+      saldo: f.saldoActual,
+      ingresos: f.totalIngresos,
+      egresos: f.totalEgresos
+    }));
 
     return {
       periodoFiltro: periodoId || 'HISTORICO_CONSOLIDADO',
@@ -211,7 +269,17 @@ export class ReportesService {
       totalCobradoTransferencia: Number(totalCobradoTransferencia.toFixed(2)),
       totalCobradoMovil: Number(totalCobradoMovil.toFixed(2)),
       totalCobradoGlobal: Number(totalCobradoGlobal.toFixed(2)),
+      totalIngresos: Number(totalCobradoGlobal.toFixed(2)),
+      totalEgresos: Number(totalEgresos.toFixed(2)),
+      saldoNeto,
       totalCarteraPendiente: Number(totalCarteraPendiente.toFixed(2)),
+      desgloseIngresos: {
+        baseAgua: Number(baseAgua.toFixed(2)),
+        excedentes: Number(excedentes.toFixed(2)),
+        alcantarillado: Number(alcantarillado.toFixed(2)),
+        multas: Number(multas.toFixed(2))
+      },
+      fondos: fondosLista,
       fondosComunitarios
     };
   }

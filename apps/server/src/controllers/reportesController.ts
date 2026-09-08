@@ -7,7 +7,16 @@ export const getReporteMorosidad = async (_req: AuthenticatedRequest, res: Respo
     const reporte = reportesService.getReporteMorosidad();
     res.json({
       titulo: 'Informe de Morosidad y Cartera Vencida',
-      ...reporte
+      data: {
+        totalMorosos: reporte.totalMorosos,
+        deudaTotalAcumulada: reporte.deudaTotalAcumulada,
+        sociosMorosos: reporte.morosos,
+        morosos: reporte.morosos
+      },
+      totalMorosos: reporte.totalMorosos,
+      deudaTotalAcumulada: reporte.deudaTotalAcumulada,
+      sociosMorosos: reporte.morosos,
+      morosos: reporte.morosos
     });
   } catch (error) {
     console.error('[ReportesController] Error generando reporte de morosidad:', error);
@@ -22,7 +31,8 @@ export const getReportePorSector = async (req: AuthenticatedRequest, res: Respon
     res.json({
       titulo: 'Informe Consolidado de Consumo y Cobros por Sector',
       periodoId: periodoId || 'HISTORICO_GLOBAL',
-      data: reporte
+      data: reporte,
+      sectores: reporte
     });
   } catch (error) {
     console.error('[ReportesController] Error generando reporte por sector:', error);
@@ -36,7 +46,8 @@ export const getReporteConsolidado = async (req: AuthenticatedRequest, res: Resp
     const reporte = reportesService.getReporteConsolidado(periodoId);
     res.json({
       titulo: 'Informe General de Gestión Comunitaria (Auditoría y Contraloría)',
-      data: reporte
+      data: reporte,
+      ...reporte
     });
   } catch (error) {
     console.error('[ReportesController] Error generando informe general:', error);

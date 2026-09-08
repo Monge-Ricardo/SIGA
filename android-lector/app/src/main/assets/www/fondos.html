@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contraloría y Destino de Fondos (3 Columnas) • SIGA-Comunitario</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0284c7" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="fondos.css" />
+</head>
+<body>
+  <div class="container">
+    <!-- Header de Módulo -->
+    <div class="module-header" style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+      <div>
+        <h2 style="font-size: 1.4rem; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 0.5rem;">
+          <span>🏛️</span> Módulo 4: Contraloría y Libro Mayor (3 Columnas)
+        </h2>
+        <p style="font-size: 0.85rem; color: #64748b; margin-top: 0.25rem;">
+          Control estricto de los 7 Fondos Comunitarios: <strong>Ingresos (+)</strong>, <strong>Egresos (-)</strong> y <strong>Saldo Acumulado (=)</strong>
+        </p>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem;">
+        <button class="btn btn-primary" id="btnNuevoEgreso">
+          💸 Registrar Egreso con Comprobante
+        </button>
+        <button class="btn btn-secondary" id="btnRefrescarFondos">
+          🔄 Actualizar
+        </button>
+      </div>
+    </div>
+
+    <!-- Liquidación Especial de Entrega al Padre -->
+    <div class="padre-special-card" id="padreSpecialBox">
+      <div>
+        <h3 style="font-size: 1.05rem; font-weight: 700; color: #4c1d95; margin: 0 0 0.25rem 0; display: flex; align-items: center; gap: 0.4rem;">
+          <span>⛪</span> Fondo Parroquial ($2.00 por cuota base normal)
+        </h3>
+        <p style="font-size: 0.82rem; color: #5b21b6; margin: 0;" id="padreSpecialText">
+          Cargando informe de recaudación y entregas para la parroquia...
+        </p>
+      </div>
+      <div style="display: flex; align-items: center; gap: 1rem;">
+        <div style="text-align: right;">
+          <div style="font-size: 0.72rem; color: #6d28d9; font-weight: 700; text-transform: uppercase;">Saldo Pendiente por Entregar</div>
+          <div style="font-size: 1.4rem; font-weight: 900; color: #4c1d95;" id="padreSaldoPorEntregar">$0.00</div>
+        </div>
+        <button class="btn btn-primary" id="btnLiquidacionPadre" style="background: #6d28d9; border-color: #5b21b6;">
+          📜 Registrar Entrega al Padre
+        </button>
+      </div>
+    </div>
+
+    <!-- Grid de Resumen de los 7 Fondos -->
+    <div class="fondos-grid-summary" id="fondosSummaryGrid">
+      <div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: #64748b;">
+        Cargando balance de los 7 fondos...
+      </div>
+    </div>
+
+    <!-- Tabla del Libro Mayor de 3 Columnas -->
+    <div class="card" style="padding: 1.25rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0;">
+          📖 Libro Mayor General de Movimientos
+        </h3>
+        
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <select id="filtroFondoSelect" class="form-control" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1;">
+            <option value="">Todos los Fondos</option>
+            <option value="PADRE">Aporte Parroquial (Padre)</option>
+            <option value="OPERACION_MANT">Operación y Mantenimiento</option>
+            <option value="HONORARIOS_LECTOR">Honorarios Lector</option>
+            <option value="FONDO_MORTUORIO">Fondo Mortuorio</option>
+            <option value="PRO_MEJORAS">Fondo Pro-mejoras</option>
+            <option value="MULTAS_EXTRAS">Multas y Cuotas Extras</option>
+            <option value="ALCANTARILLADO">Fondo de Alcantarillado</option>
+          </select>
+
+          <input type="text" id="buscarConceptoInput" placeholder="Buscar por concepto o comprobante..." style="padding: 0.4rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1; min-width: 240px;" />
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table" id="tablaLibroMayor">
+          <thead>
+            <tr>
+              <th style="width: 130px;">Fecha / Hora</th>
+              <th>Fondo Comunitario</th>
+              <th>Concepto / Detalle</th>
+              <th style="width: 140px;">Comprobante</th>
+              <th style="text-align: right; width: 110px; color: #16a34a;">Ingreso (+)</th>
+              <th style="text-align: right; width: 110px; color: #dc2626;">Egreso (-)</th>
+              <th style="text-align: right; width: 120px; font-weight: 800;">Saldo (=)</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyLibroMayor">
+            <tr>
+              <td colspan="7" style="text-align: center; padding: 2rem; color: #64748b;">
+                Cargando movimientos del libro mayor...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Registrar Egreso con Comprobante -->
+  <div class="modal-overlay" id="modalEgreso" style="display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 999; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="modal-content" style="background: white; border-radius: 10px; max-width: 500px; width: 100%; padding: 1.75rem; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+        <h3 style="margin: 0; font-size: 1.2rem; font-weight: 800; color: #0f172a;" id="modalEgresoTitle">
+          💸 Registrar Egreso de Fondo
+        </h3>
+        <button id="btnCerrarModalEgreso" style="background: none; border: none; font-size: 1.25rem; cursor: pointer; color: #64748b;">✕</button>
+      </div>
+
+      <form id="formEgreso" style="display: flex; flex-direction: column; gap: 1rem;">
+        <div class="form-group">
+          <label for="egresoIdFondo" style="font-weight: 600; font-size: 0.85rem;">Fondo a Debitar *</label>
+          <select id="egresoIdFondo" required style="width: 100%; padding: 0.55rem; border-radius: 6px; border: 1px solid #cbd5e1;">
+            <option value="OPERACION_MANT">Operación y Mantenimiento</option>
+            <option value="PADRE">Aporte Parroquial (Padre)</option>
+            <option value="HONORARIOS_LECTOR">Honorarios Lector</option>
+            <option value="FONDO_MORTUORIO">Fondo Mortuorio</option>
+            <option value="PRO_MEJORAS">Fondo Pro-mejoras</option>
+            <option value="MULTAS_EXTRAS">Multas y Cuotas Extras</option>
+            <option value="ALCANTARILLADO">Fondo de Alcantarillado</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="egresoMonto" style="font-weight: 600; font-size: 0.85rem;">Monto a Retirar ($ USD) *</label>
+          <input type="number" id="egresoMonto" step="0.01" min="0.01" placeholder="ej: 35.50" required style="width: 100%; padding: 0.55rem; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 1.1rem; font-weight: 700;" />
+        </div>
+
+        <div class="form-group">
+          <label for="egresoConcepto" style="font-weight: 600; font-size: 0.85rem;">Concepto / Justificación *</label>
+          <textarea id="egresoConcepto" rows="2" placeholder="ej: Compra de cloro y sulfato de aluminio para tratamiento" required style="width: 100%; padding: 0.55rem; border-radius: 6px; border: 1px solid #cbd5e1; font-family: inherit;"></textarea>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+          <div class="form-group">
+            <label for="egresoComprobante" style="font-weight: 600; font-size: 0.85rem;">N° Comprobante *</label>
+            <input type="text" id="egresoComprobante" placeholder="ej: FAC-00123" required style="width: 100%; padding: 0.55rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
+          </div>
+
+          <div class="form-group">
+            <label for="egresoBeneficiario" style="font-weight: 600; font-size: 0.85rem;">Beneficiario / Proveedor</label>
+            <input type="text" id="egresoBeneficiario" placeholder="ej: Ferretería Central" style="width: 100%; padding: 0.55rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
+          <button type="button" id="btnCancelarEgreso" class="btn btn-secondary">Cancelar</button>
+          <button type="submit" id="btnGuardarEgreso" class="btn btn-primary" style="background: #dc2626; border-color: #b91c1c;">
+            💸 Registrar Egreso
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="fondos.js"></script>
+</body>
+</html>

@@ -16,6 +16,7 @@ import {
   getSocioEstadoCuenta,
   createSocio,
   updateSocio,
+  deleteSocio,
   getMedidores,
   getMedidoresBySocio,
   addMedidorToSocio,
@@ -29,8 +30,11 @@ import {
   liquidarFactura,
   liquidarPeriodo,
   cobrarFactura,
+  deleteFactura,
   getMultas,
-  crearMulta
+  crearMulta,
+  updateMulta,
+  deleteMulta
 } from '../controllers/waterController.ts';
 import {
   getFondosCatalogo,
@@ -88,6 +92,7 @@ apiRouter.get('/socios/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'L
 apiRouter.get('/socios/:id/estado-cuenta', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), getSocioEstadoCuenta);
 apiRouter.post('/socios', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), createSocio);
 apiRouter.put('/socios/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), updateSocio);
+apiRouter.delete('/socios/:id', authenticateJWT, requireRoles('ADMIN'), deleteSocio);
 apiRouter.get('/socios/:id/medidores', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'LECTOR'), getMedidoresBySocio);
 apiRouter.post('/socios/:id/medidores', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), addMedidorToSocio);
 
@@ -117,12 +122,15 @@ apiRouter.get('/facturas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'),
 apiRouter.post('/facturas/liquidar', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), liquidarFactura);
 apiRouter.post('/facturas/liquidar-periodo', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), liquidarPeriodo);
 apiRouter.post('/facturas/:id/cobrar', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), cobrarFactura);
+apiRouter.delete('/facturas/:id', authenticateJWT, requireRoles('ADMIN'), deleteFactura);
 
 // ==========================================
 // 9. MULTAS Y CUOTAS EXTRAORDINARIAS
 // ==========================================
 apiRouter.get('/multas', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), getMultas);
 apiRouter.post('/multas', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), crearMulta);
+apiRouter.put('/multas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), updateMulta);
+apiRouter.delete('/multas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), deleteMulta);
 
 // ==========================================
 // 10. CONTRALORÍA Y LIBRO MAYOR (3 COLUMNAS)

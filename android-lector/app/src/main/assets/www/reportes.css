@@ -1,0 +1,86 @@
+/* =========================================================
+   MÓDULO 5: REPORTES Y AUDITORÍA (Single Responsibility)
+   ========================================================= */
+
+.reports-tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.25rem;
+}
+
+.report-tab-btn {
+  padding: 0.65rem 1.25rem;
+  border-radius: 6px 6px 0 0;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-bottom: none;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #64748b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: all 0.15s;
+}
+
+.report-tab-btn.active {
+  background: #ffffff;
+  color: #0284c7;
+  border-color: #0284c7;
+  border-bottom: 2px solid #ffffff;
+  margin-bottom: -2px;
+}
+
+.kpi-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.kpi-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 1.25rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.kpi-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.kpi-value {
+  font-size: 1.6rem;
+  font-weight: 900;
+  color: #0f172a;
+  margin-top: 0.35rem;
+}
+
+@media print {
+  .app-header, 
+  .app-nav, 
+  .app-sidebar-left, 
+  .app-top-header, 
+  .status-banner, 
+  .reports-tabs, 
+  .btn, 
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 12pt;
+  }
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #000 !important;
+  }
+}

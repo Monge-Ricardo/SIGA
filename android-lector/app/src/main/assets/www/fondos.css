@@ -1,0 +1,96 @@
+/* =========================================================
+   MÓDULO 4: FONDOS Y CONTRALORÍA (Single Responsibility)
+   ========================================================= */
+
+.fondos-grid-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.fondo-card {
+  background: #ffffff;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.05));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  overflow: hidden;
+}
+
+.fondo-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--primary, #0284c7);
+}
+
+.fondo-card.padre::before { background: #6366f1; }
+.fondo-card.operacion::before { background: #0284c7; }
+.fondo-card.lector::before { background: #f59e0b; }
+.fondo-card.mortuorio::before { background: #64748b; }
+.fondo-card.promejoras::before { background: #10b981; }
+.fondo-card.multas::before { background: #ec4899; }
+.fondo-card.alcantarillado::before { background: #8b5cf6; }
+
+.fondo-card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fondo-card-desc {
+  font-size: 0.78rem;
+  color: #64748b;
+  margin-bottom: 0.75rem;
+}
+
+.fondo-card-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+  background: #f8fafc;
+  padding: 0.5rem;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.fondo-col-item span {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.fondo-col-item strong {
+  font-size: 0.9rem;
+}
+
+.col-ingreso { color: #16a34a; }
+.col-egreso { color: #dc2626; }
+.col-saldo { color: #0f172a; }
+
+/* Tarjeta especial del Padre */
+.padre-special-card {
+  background: linear-gradient(135deg, #ede9fe 0%, #f5f3ff 100%);
+  border: 1px solid #c4b5fd;
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+}

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SIGA-Comunitario • Redirigiendo...</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0284c7" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+</head>
+<body>
+  <script type="module">
+    import { getCurrentUser } from './auth.js';
+    const user = getCurrentUser();
+    if (!user) {
+      window.location.href = 'login.html';
+    } else if (user.rol === 'LECTOR') {
+      window.location.href = 'lecturas.html';
+    } else if (user.rol === 'CAJERO') {
+      window.location.href = 'caja.html';
+    } else {
+      window.location.href = 'socios.html';
+    }
+  </script>
+</body>
+</html>

@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import { sqliteDb } from '../db/sqlite.ts';
+import { supabaseClient } from '../db/supabase.ts';
 import { ValidationRules } from '../shared.ts';
 import type { Socio, EstadoCuentaSocio, Factura, MultaRubro, Medidor } from '../shared.ts';
+
 
 interface SocioRow {
   id: string;
@@ -59,7 +61,7 @@ export class SocioService {
 
     // Consultar deudas pendientes del socio
     const debtRow = db.prepare(`
-      SELECT COALESCE(SUM(total_pagar), 0) as totalDeuda, COUNT(*) as meses, MIN(fecha_vencimiento) as fechaDeuda
+      SELECT COALESCE(SUM(CASE WHEN saldo_pendiente > 0 THEN saldo_pendiente ELSE total_pagar END), 0) as totalDeuda, COUNT(*) as meses, MIN(fecha_vencimiento) as fechaDeuda
       FROM facturas
       WHERE id_socio = ? AND estado_pago = 'PENDIENTE'
     `).get(row.id) as any;
@@ -103,9 +105,9 @@ export class SocioService {
     const db = sqliteDb.getRawDb();
 
     if (!input || !input.trim() || input.startsWith('{{')) {
-      throw new Error(
-        'El sector (idSector) es obligatorio. Debe seleccionar o ingresar un sector válido (ej: "SEC-01", "SEC-02" o su ID).'
-      );
+      const first = db.prepare('SELECT id FROM sectores WHERE activo = 1 ORDER BY codigo_sector ASC LIMIT 1').get() as { id: string } | undefined;
+      if (first) return first.id;
+      throw new Error('No hay sectores disponibles en el sistema.');
     }
 
     const cleanInput = input.trim();
@@ -114,13 +116,31 @@ export class SocioService {
     const byId = db.prepare('SELECT id FROM sectores WHERE id = ?').get(cleanInput) as { id: string } | undefined;
     if (byId) return byId.id;
 
-    // 2. Por código de sector (ej: SEC-01)
-    const byCode = db.prepare('SELECT id FROM sectores WHERE codigo_sector = ?').get(cleanInput.toUpperCase()) as { id: string } | undefined;
+    // 2. Por código de sector (ej: SEC-PASO, SEC-CENTRO, etc.)
+    const byCode = db.prepare('SELECT id FROM sectores WHERE UPPER(codigo_sector) = ?').get(cleanInput.toUpperCase()) as { id: string } | undefined;
     if (byCode) return byCode.id;
 
-    // 3. Por nombre de sector (ej: Sector Centro)
+    // 3. Mapeo de códigos legacy/demo (SEC-01 -> SEC-PASO, etc.)
+    const legacyMap: Record<string, string> = {
+      'SEC-01': 'SEC-PASO',
+      'SEC-02': 'SEC-SANJOSE',
+      'SEC-03': 'SEC-CENTRO',
+      'SEC-04': 'SEC-SANANTONIO',
+      'SEC-05': 'SEC-SANJOSE'
+    };
+    const mappedCode = legacyMap[cleanInput.toUpperCase()];
+    if (mappedCode) {
+      const byMapped = db.prepare('SELECT id FROM sectores WHERE UPPER(codigo_sector) = ?').get(mappedCode) as { id: string } | undefined;
+      if (byMapped) return byMapped.id;
+    }
+
+    // 4. Por nombre de sector (ej: Paso Lateral, Centro, etc.)
     const byName = db.prepare('SELECT id FROM sectores WHERE nombre_sector LIKE ?').get(`%${cleanInput}%`) as { id: string } | undefined;
     if (byName) return byName.id;
+
+    // 5. Fallback al primer sector activo disponible
+    const fallback = db.prepare('SELECT id FROM sectores WHERE activo = 1 ORDER BY codigo_sector ASC LIMIT 1').get() as { id: string } | undefined;
+    if (fallback) return fallback.id;
 
     throw new Error(
       `El sector '${input}' no existe en el sistema. Debe registrar el sector previamente o seleccionar uno existente.`
@@ -269,6 +289,78 @@ export class SocioService {
       now
     );
 
+    // Auto-registrar en lecturas para el período abierto actual (si existe)
+    const openPeriod = db.prepare("SELECT id FROM periodos WHERE estado = 'ABIERTO' ORDER BY fecha_inicio DESC LIMIT 1").get() as { id: string } | undefined;
+    if (openPeriod) {
+      const lecturaId = crypto.randomUUID();
+      const adminUser = (db.prepare("SELECT id FROM usuarios WHERE rol IN ('ADMIN', 'CAJERO', 'LECTOR') LIMIT 1").get() as { id: string } | undefined)?.id || '00000000-0000-0000-0000-000000000001';
+      db.prepare(`
+        INSERT INTO lecturas (
+          id, id_medidor, id_socio, id_periodo, lectura_anterior, lectura_actual,
+          consumo_total, excedente_m3, fecha_lectura, id_lector, observaciones, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 'Alta inicial de socio', 1, ?, ?)
+      `).run(
+        lecturaId,
+        medidorId,
+        id,
+        openPeriod.id,
+        now,
+        adminUser,
+        now,
+        now
+      );
+
+      // Sync lectura inicial
+      supabaseClient.syncRecord('lecturas', {
+        id: lecturaId,
+        id_medidor: medidorId,
+        id_socio: id,
+        id_periodo: openPeriod.id,
+        lectura_anterior: 0,
+        lectura_actual: 0,
+        consumo_total: 0,
+        excedente_m3: 0,
+        fecha_lectura: now,
+        id_lector: adminUser,
+        observaciones: 'Alta inicial de socio',
+        version: 1,
+        created_at: now,
+        updated_at: now
+      }).catch((err) => console.warn('[Supabase Sync Lectura]', err));
+    }
+
+    // Sincronizar inmediatamente con Supabase Cloud
+    supabaseClient.syncRecord('socios', {
+      id,
+      codigo_socio: codigo,
+      nombres: data.nombres.trim(),
+      apellidos: data.apellidos.trim(),
+      cedula_ruc: cedulaLimpia,
+      fecha_nacimiento: data.fechaNacimiento,
+      fecha_union: fechaUnion,
+      telefono: data.telefono ? data.telefono.trim() : null,
+      direccion,
+      estado: 'ACTIVO',
+      version: 1,
+      created_at: now,
+      updated_at: now
+    }).catch((err) => console.warn('[Supabase Sync Socio]', err));
+
+    supabaseClient.syncRecord('medidores', {
+      id: medidorId,
+      id_socio: id,
+      id_sector: resolvedSectorId,
+      numero_medidor: medidorNumero,
+      alias: 'Casa principal',
+      direccion,
+      tiene_alcantarillado: data.tieneAlcantarillado ? 1 : 0,
+      estado: 'ACTIVO',
+      version: 1,
+      created_at: now,
+      updated_at: now
+    }).catch((err) => console.warn('[Supabase Sync Medidor]', err));
+
+
     return this.getSocioById(id)!;
   }
 
@@ -313,9 +405,65 @@ export class SocioService {
       now
     );
 
+    // Auto-registrar lectura para acometida adicional en el período abierto
+    const openPeriod = db.prepare("SELECT id FROM periodos WHERE estado = 'ABIERTO' ORDER BY fecha_inicio DESC LIMIT 1").get() as { id: string } | undefined;
+    if (openPeriod) {
+      const lecturaId = crypto.randomUUID();
+      const adminUser = (db.prepare("SELECT id FROM usuarios WHERE rol IN ('ADMIN', 'CAJERO', 'LECTOR') LIMIT 1").get() as { id: string } | undefined)?.id || '00000000-0000-0000-0000-000000000001';
+      db.prepare(`
+        INSERT INTO lecturas (
+          id, id_medidor, id_socio, id_periodo, lectura_anterior, lectura_actual,
+          consumo_total, excedente_m3, fecha_lectura, id_lector, observaciones, version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?, ?, 'Alta acometida adicional', 1, ?, ?)
+      `).run(
+        lecturaId,
+        id,
+        socioId,
+        openPeriod.id,
+        now,
+        adminUser,
+        now,
+        now
+      );
+
+      // Sync lectura acometida adicional
+      supabaseClient.syncRecord('lecturas', {
+        id: lecturaId,
+        id_medidor: id,
+        id_socio: socioId,
+        id_periodo: openPeriod.id,
+        lectura_anterior: 0,
+        lectura_actual: 0,
+        consumo_total: 0,
+        excedente_m3: 0,
+        fecha_lectura: now,
+        id_lector: adminUser,
+        observaciones: 'Alta acometida adicional',
+        version: 1,
+        created_at: now,
+        updated_at: now
+      }).catch((err) => console.warn('[Supabase Sync Lectura Acometida]', err));
+    }
+
+    // Sync medidor adicional a Supabase
+    supabaseClient.syncRecord('medidores', {
+      id,
+      id_socio: socioId,
+      id_sector: resolvedSectorId,
+      numero_medidor: numero,
+      alias: data.alias?.trim() || 'Acometida adicional',
+      direccion: data.direccion?.trim() || socio.direccion,
+      tiene_alcantarillado: data.tieneAlcantarillado ? 1 : 0,
+      estado: 'ACTIVO',
+      version: 1,
+      created_at: now,
+      updated_at: now
+    }).catch((err) => console.warn('[Supabase Sync Medidor]', err));
+
     const medidores = this.getMedidoresBySocioId(socioId);
     return medidores.find((m) => m.id === id)!;
   }
+
 
   public getMedidores(filters?: { sectorId?: string; socioId?: string; search?: string }): Medidor[] {
     const db = sqliteDb.getRawDb();
@@ -420,8 +568,28 @@ export class SocioService {
       id
     );
 
-    return this.getSocioById(id)!;
+    const updated = this.getSocioById(id)!;
+
+    // Sincronizar actualización con Supabase
+    supabaseClient.syncRecord('socios', {
+      id: updated.id,
+      codigo_socio: updated.codigoSocio,
+      nombres: updated.nombres,
+      apellidos: updated.apellidos,
+      cedula_ruc: updated.cedulaRuc,
+      fecha_nacimiento: updated.fechaNacimiento,
+      fecha_union: updated.fechaUnion,
+      telefono: updated.telefono || null,
+      direccion: updated.direccion,
+      estado: updated.estado,
+      version: updated.version,
+      updated_at: now
+    }).catch((err) => console.warn('[Supabase Sync Update Socio]', err));
+
+
+    return updated;
   }
+
 
   public getEstadoCuenta(idSocio: string): EstadoCuentaSocio {
     const db = sqliteDb.getRawDb();
@@ -441,40 +609,48 @@ export class SocioService {
       `)
       .all(idSocio) as Record<string, unknown>[];
 
-    const historialFacturas: Factura[] = facturasRows.map((r) => ({
-      id: r.id as string,
-      numeroFactura: r.numero_factura as string,
-      idSocio: r.id_socio as string,
-      idPeriodo: r.id_periodo as string,
-      periodoCodigo: (r.periodo_codigo as string) || undefined,
-      idLectura: (r.id_lectura as string) || undefined,
-      esTerceraEdad: Boolean(r.es_tercera_edad),
-      valorBase: r.valor_base as number,
-      consumoM3: r.consumo_m3 as number,
-      excedenteM3: r.excedente_m3 as number,
-      valorExcedente: r.valor_excedente as number,
-      valorAlcantarillado: r.valor_alcantarillado as number,
-      valorMultas: r.valor_multas as number,
-      valorDeudaAnterior: r.valor_deuda_anterior as number,
-      totalMes: r.total_mes as number,
-      totalPagar: r.total_pagar as number,
-      estadoPago: r.estado_pago as Factura['estadoPago'],
-      fechaVencimiento: r.fecha_vencimiento as string,
-      fechaPago: (r.fecha_pago as string) || undefined,
-      metodoPago: (r.metodo_pago as Factura['metodoPago']) || undefined,
-      idCajero: (r.id_cajero as string) || undefined,
-      version: r.version as number,
-      createdAt: r.created_at as string,
-      updatedAt: r.updated_at as string
-    }));
+    const historialFacturas: Factura[] = facturasRows.map((r) => {
+      const totalPagar = r.total_pagar as number;
+      const montoPagado = r.monto_pagado !== undefined && r.monto_pagado !== null ? Number(r.monto_pagado) : (r.estado_pago === 'PAGADO' ? totalPagar : 0.0);
+      const saldoPendiente = r.saldo_pendiente !== undefined && r.saldo_pendiente !== null ? Number(r.saldo_pendiente) : (r.estado_pago === 'PAGADO' ? 0.0 : totalPagar);
+
+      return {
+        id: r.id as string,
+        numeroFactura: r.numero_factura as string,
+        idSocio: r.id_socio as string,
+        idPeriodo: r.id_periodo as string,
+        periodoCodigo: (r.periodo_codigo as string) || undefined,
+        idLectura: (r.id_lectura as string) || undefined,
+        esTerceraEdad: Boolean(r.es_tercera_edad),
+        valorBase: r.valor_base as number,
+        consumoM3: r.consumo_m3 as number,
+        excedenteM3: r.excedente_m3 as number,
+        valorExcedente: r.valor_excedente as number,
+        valorAlcantarillado: r.valor_alcantarillado as number,
+        valorMultas: r.valor_multas as number,
+        valorDeudaAnterior: r.valor_deuda_anterior as number,
+        totalMes: r.total_mes as number,
+        totalPagar,
+        montoPagado,
+        saldoPendiente,
+        estadoPago: r.estado_pago as Factura['estadoPago'],
+        fechaVencimiento: r.fecha_vencimiento as string,
+        fechaPago: (r.fecha_pago as string) || undefined,
+        metodoPago: (r.metodo_pago as Factura['metodoPago']) || undefined,
+        idCajero: (r.id_cajero as string) || undefined,
+        version: r.version as number,
+        createdAt: r.created_at as string,
+        updatedAt: r.updated_at as string
+      };
+    });
 
     const facturasPendientes = historialFacturas.filter((f) => f.estadoPago === 'PENDIENTE');
 
-    // Multas pendientes
+    // Multas pendientes (no liquidadas en facturas)
     const multasRows = db
       .prepare(`
         SELECT * FROM multas_rubros
-        WHERE id_socio = ? AND pagado = 0
+        WHERE id_socio = ? AND pagado = 0 AND (id_factura IS NULL OR id_factura = '')
         ORDER BY created_at ASC
       `)
       .all(idSocio) as Record<string, unknown>[];
@@ -491,12 +667,15 @@ export class SocioService {
       createdAt: m.created_at as string
     }));
 
-    const totalFacturasPendientes = facturasPendientes.reduce((sum, f) => sum + f.totalMes, 0);
+    const totalFacturasPendientes = facturasPendientes.reduce((sum, f) => {
+      const saldo = f.saldoPendiente !== undefined && f.saldoPendiente > 0 ? f.saldoPendiente : f.totalMes;
+      return sum + saldo;
+    }, 0);
     const totalMultasPendientes = multasPendientes.reduce((sum, m) => sum + m.monto, 0);
-    const deudaTotalPendiente = totalFacturasPendientes + totalMultasPendientes;
+    const deudaTotalPendiente = Number((totalFacturasPendientes + totalMultasPendientes).toFixed(2));
 
     const mesesAdeudados = facturasPendientes.length;
-    const alDia = mesesAdeudados === 0 && multasPendientes.length === 0;
+    const alDia = deudaTotalPendiente <= 0.001 && multasPendientes.length === 0;
 
     let fechaDeudaMasAntigua: string | undefined = undefined;
     if (facturasPendientes.length > 0) {
@@ -516,6 +695,53 @@ export class SocioService {
       multasPendientes,
       historialFacturas
     };
+  }
+
+  public deleteSocio(id: string): { success: boolean; message: string; socioId: string } {
+    const db = sqliteDb.getRawDb();
+    const socio = this.getSocioById(id);
+    if (!socio) {
+      throw new Error(`El socio con ID '${id}' no existe o ya fue eliminado.`);
+    }
+
+    // Borrado en cascada controlado dentro de una transacción
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      // 1. Eliminar asientos de fondos asociados a facturas del socio
+      db.prepare('DELETE FROM fondos_movimientos WHERE id_factura IN (SELECT id FROM facturas WHERE id_socio = ?)').run(id);
+
+      // 2. Eliminar multas del socio
+      db.prepare('DELETE FROM multas_rubros WHERE id_socio = ?').run(id);
+
+      // 3. Eliminar facturas del socio
+      db.prepare('DELETE FROM facturas WHERE id_socio = ?').run(id);
+
+      // 3. Eliminar lecturas del socio o asociadas a sus medidores
+      db.prepare('DELETE FROM lecturas WHERE id_socio = ? OR id_medidor IN (SELECT id FROM medidores WHERE id_socio = ?)').run(id, id);
+
+      // 4. Eliminar medidores asignados al socio
+      db.prepare('DELETE FROM medidores WHERE id_socio = ?').run(id);
+
+      // 5. Eliminar el registro del socio
+      db.prepare('DELETE FROM socios WHERE id = ?').run(id);
+
+      db.exec('COMMIT;');
+
+      // Sincronizar borrado en Supabase
+      supabaseClient.deleteRecord('socios', id).catch((err) => console.warn('[Supabase Sync Delete Socio]', err));
+      supabaseClient.deleteRecord('medidores', id, 'id_socio').catch((err) => console.warn('[Supabase Sync Delete Medidores Socio]', err));
+
+      return {
+        success: true,
+        message: `El socio "${socio.nombreCompleto}" y todos sus registros asociados fueron eliminados correctamente.`,
+        socioId: id
+      };
+
+    } catch (err: unknown) {
+      db.exec('ROLLBACK;');
+      const errorMsg = err instanceof Error ? err.message : 'Error al eliminar socio en base de datos.';
+      throw new Error(`Error en cascada al eliminar socio: ${errorMsg}`);
+    }
   }
 }
 

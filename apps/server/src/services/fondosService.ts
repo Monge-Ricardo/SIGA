@@ -57,10 +57,10 @@ export class FondosService {
   public getUltimoSaldoFondo(idFondo: string): number {
     const db = sqliteDb.getRawDb();
     const row = db
-      .prepare('SELECT saldo FROM fondos_movimientos WHERE id_fondo = ? ORDER BY fecha DESC, created_at DESC LIMIT 1')
+      .prepare('SELECT COALESCE(SUM(ingreso) - SUM(egreso), 0) as saldo FROM fondos_movimientos WHERE id_fondo = ?')
       .get(idFondo) as { saldo: number } | undefined;
 
-    return row ? row.saldo : 0.0;
+    return row ? Number(row.saldo.toFixed(2)) : 0.0;
   }
 
   public registrarMovimiento(data: {
@@ -143,9 +143,17 @@ export class FondosService {
     valorExcedente: number;
     valorAlcantarillado: number;
     valorMultas: number;
+    montoCobrado?: number;
     idCajero: string;
     socioNombre?: string;
   }): void {
+    const totalTeorico = Number((factura.valorBase + factura.valorExcedente + factura.valorAlcantarillado + factura.valorMultas).toFixed(2));
+    const montoReal = factura.montoCobrado !== undefined && factura.montoCobrado > 0
+      ? Number(factura.montoCobrado.toFixed(2))
+      : totalTeorico;
+
+    if (montoReal <= 0) return;
+
     const fondos = this.getFondos();
     const mapaFondos = new Map(fondos.map((f) => [f.codigo, f.id]));
 
@@ -156,109 +164,173 @@ export class FondosService {
     };
 
     const socioRef = factura.socioNombre ? ` (${factura.socioNombre})` : '';
+    const esAbono = montoReal < totalTeorico;
+    const abonoTag = esAbono ? ` (Abono $${montoReal.toFixed(2)}/$${totalTeorico.toFixed(2)})` : '';
+    const ratio = totalTeorico > 0 ? (montoReal / totalTeorico) : 1.0;
+
+    let sumaAsignada = 0.0;
 
     // 1. Distribución del Canon Base
     if (factura.valorBase > 0) {
       if (factura.esTerceraEdad) {
-        this.registrarMovimiento({
-          idFondo: getFondoId('PADRE_PARROQUIA'),
-          concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef} - Porción Padre`,
-          tipo: 'INGRESO',
-          monto: 1.5,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
-        this.registrarMovimiento({
-          idFondo: getFondoId('OPERACION_MANT'),
-          concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef} - Operación`,
-          tipo: 'INGRESO',
-          monto: 2.8,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
-        this.registrarMovimiento({
-          idFondo: getFondoId('PAGO_LECTOR'),
-          concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef} - Lector`,
-          tipo: 'INGRESO',
-          monto: 0.35,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
-        this.registrarMovimiento({
-          idFondo: getFondoId('MORTUORIO'),
-          concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef} - Mortuorio`,
-          tipo: 'INGRESO',
-          monto: 0.35,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
+        const pPadre = Number((1.5 * ratio).toFixed(2));
+        const pOperacion = Number((2.8 * ratio).toFixed(2));
+        const pLector = Number((0.35 * ratio).toFixed(2));
+        const pMortuorio = Number((0.35 * ratio).toFixed(2));
+
+        if (pPadre > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('PADRE_PARROQUIA'),
+            concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef}${abonoTag} - Porción Padre`,
+            tipo: 'INGRESO',
+            monto: pPadre,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pPadre;
+        }
+        if (pOperacion > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('OPERACION_MANT'),
+            concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef}${abonoTag} - Operación`,
+            tipo: 'INGRESO',
+            monto: pOperacion,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pOperacion;
+        }
+        if (pLector > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('PAGO_LECTOR'),
+            concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef}${abonoTag} - Lector`,
+            tipo: 'INGRESO',
+            monto: pLector,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pLector;
+        }
+        if (pMortuorio > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('MORTUORIO'),
+            concepto: `Cobro cuota base 3ra edad #${factura.numeroFactura}${socioRef}${abonoTag} - Mortuorio`,
+            tipo: 'INGRESO',
+            monto: pMortuorio,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pMortuorio;
+        }
       } else {
-        this.registrarMovimiento({
-          idFondo: getFondoId('PADRE_PARROQUIA'),
-          concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef} - Aporte al Padre/Parroquia`,
-          tipo: 'INGRESO',
-          monto: 2.0,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
-        this.registrarMovimiento({
-          idFondo: getFondoId('OPERACION_MANT'),
-          concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef} - Operación y Mantenimiento`,
-          tipo: 'INGRESO',
-          monto: 4.0,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
-        this.registrarMovimiento({
-          idFondo: getFondoId('PAGO_LECTOR'),
-          concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef} - Honorarios Lector`,
-          tipo: 'INGRESO',
-          monto: 0.5,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
-        this.registrarMovimiento({
-          idFondo: getFondoId('MORTUORIO'),
-          concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef} - Fondo Mortuorio`,
-          tipo: 'INGRESO',
-          monto: 0.5,
-          idResponsable: factura.idCajero,
-          idFactura: factura.id
-        });
+        const pPadre = Number((2.0 * ratio).toFixed(2));
+        const pOperacion = Number((4.0 * ratio).toFixed(2));
+        const pLector = Number((0.5 * ratio).toFixed(2));
+        const pMortuorio = Number((0.5 * ratio).toFixed(2));
+
+        if (pPadre > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('PADRE_PARROQUIA'),
+            concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef}${abonoTag} - Aporte al Padre/Parroquia`,
+            tipo: 'INGRESO',
+            monto: pPadre,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pPadre;
+        }
+        if (pOperacion > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('OPERACION_MANT'),
+            concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef}${abonoTag} - Operación y Mantenimiento`,
+            tipo: 'INGRESO',
+            monto: pOperacion,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pOperacion;
+        }
+        if (pLector > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('PAGO_LECTOR'),
+            concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef}${abonoTag} - Honorarios Lector`,
+            tipo: 'INGRESO',
+            monto: pLector,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pLector;
+        }
+        if (pMortuorio > 0) {
+          this.registrarMovimiento({
+            idFondo: getFondoId('MORTUORIO'),
+            concepto: `Cobro cuota normal #${factura.numeroFactura}${socioRef}${abonoTag} - Fondo Mortuorio`,
+            tipo: 'INGRESO',
+            monto: pMortuorio,
+            idResponsable: factura.idCajero,
+            idFactura: factura.id
+          });
+          sumaAsignada += pMortuorio;
+        }
       }
     }
 
     // 2. Fondo Pro-mejoras
     if (factura.valorExcedente > 0) {
-      this.registrarMovimiento({
-        idFondo: getFondoId('PRO_MEJORAS'),
-        concepto: `Recaudación excedente consumo #${factura.numeroFactura}${socioRef}`,
-        tipo: 'INGRESO',
-        monto: factura.valorExcedente,
-        idResponsable: factura.idCajero,
-        idFactura: factura.id
-      });
+      const pExcedente = Number((factura.valorExcedente * ratio).toFixed(2));
+      if (pExcedente > 0) {
+        this.registrarMovimiento({
+          idFondo: getFondoId('PRO_MEJORAS'),
+          concepto: `Recaudación excedente consumo #${factura.numeroFactura}${socioRef}${abonoTag}`,
+          tipo: 'INGRESO',
+          monto: pExcedente,
+          idResponsable: factura.idCajero,
+          idFactura: factura.id
+        });
+        sumaAsignada += pExcedente;
+      }
     }
 
     // 3. Fondo de Alcantarillado
     if (factura.valorAlcantarillado > 0) {
-      this.registrarMovimiento({
-        idFondo: getFondoId('ALCANTARILLADO'),
-        concepto: `Recaudación servicio alcantarillado #${factura.numeroFactura}${socioRef}`,
-        tipo: 'INGRESO',
-        monto: factura.valorAlcantarillado,
-        idResponsable: factura.idCajero,
-        idFactura: factura.id
-      });
+      const pAlcant = Number((factura.valorAlcantarillado * ratio).toFixed(2));
+      if (pAlcant > 0) {
+        this.registrarMovimiento({
+          idFondo: getFondoId('ALCANTARILLADO'),
+          concepto: `Recaudación servicio alcantarillado #${factura.numeroFactura}${socioRef}${abonoTag}`,
+          tipo: 'INGRESO',
+          monto: pAlcant,
+          idResponsable: factura.idCajero,
+          idFactura: factura.id
+        });
+        sumaAsignada += pAlcant;
+      }
     }
 
     // 4. Fondo de Multas y Rubros Extraordinarios
     if (factura.valorMultas > 0) {
+      const pMultas = Number((factura.valorMultas * ratio).toFixed(2));
+      if (pMultas > 0) {
+        this.registrarMovimiento({
+          idFondo: getFondoId('MULTAS_EXTRAS'),
+          concepto: `Recaudación multas y cuotas extraordinarias #${factura.numeroFactura}${socioRef}${abonoTag}`,
+          tipo: 'INGRESO',
+          monto: pMultas,
+          idResponsable: factura.idCajero,
+          idFactura: factura.id
+        });
+        sumaAsignada += pMultas;
+      }
+    }
+
+    // Ajuste por redondeo al fondo de operación para evitar discrepancias de centavos
+    const diff = Number((montoReal - sumaAsignada).toFixed(2));
+    if (diff !== 0 && Math.abs(diff) <= 0.10) {
       this.registrarMovimiento({
-        idFondo: getFondoId('MULTAS_EXTRAS'),
-        concepto: `Recaudación multas y cuotas extraordinarias #${factura.numeroFactura}${socioRef}`,
-        tipo: 'INGRESO',
-        monto: factura.valorMultas,
+        idFondo: getFondoId('OPERACION_MANT'),
+        concepto: `Ajuste contable #${factura.numeroFactura}${socioRef}${abonoTag}`,
+        tipo: diff > 0 ? 'INGRESO' : 'EGRESO',
+        monto: Math.abs(diff),
         idResponsable: factura.idCajero,
         idFactura: factura.id
       });

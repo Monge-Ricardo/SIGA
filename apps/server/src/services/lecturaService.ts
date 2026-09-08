@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import { sqliteDb } from '../db/sqlite.ts';
+import { supabaseClient } from '../db/supabase.ts';
 import { ValidationRules } from '../shared.ts';
 import type { Lectura, Periodo } from '../shared.ts';
+
 
 interface LecturaRow {
   id: string;
@@ -371,8 +373,27 @@ export class LecturaService {
       WHERE l.id = ?
     `).get(id) as LecturaRow;
 
+    // Sincronizar lectura con Supabase
+    supabaseClient.syncRecord('lecturas', {
+      id: row.id,
+      id_medidor: row.id_medidor,
+      id_socio: row.id_socio,
+      id_periodo: row.id_periodo,
+      lectura_anterior: row.lectura_anterior,
+      lectura_actual: row.lectura_actual,
+      consumo_total: row.consumo_total,
+      excedente_m3: row.excedente_m3,
+      fecha_lectura: row.fecha_lectura,
+      id_lector: row.id_lector,
+      observaciones: row.observaciones,
+      version: row.version,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }).catch((err) => console.warn('[Supabase Sync Lectura]', err));
+
     return this.mapRowToLectura(row);
   }
+
 
   public cerrarPeriodo(idPeriodo: string): Periodo {
     const db = sqliteDb.getRawDb();

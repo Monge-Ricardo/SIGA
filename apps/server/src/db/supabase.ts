@@ -92,7 +92,7 @@ export class SupabaseClient {
    * Sincroniza un registro local con la tabla remota en Supabase (Upsert)
    */
   public async syncRecord(tableName: string, record: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
-    if (!this.isConfigured) return { success: true };
+    if (!this.isConfigured || process.env.NODE_ENV === 'test' || process.env.DISABLE_SUPABASE_SYNC === 'true') return { success: true };
 
     const result = await this.request(tableName, {
       method: 'POST',
@@ -109,6 +109,38 @@ export class SupabaseClient {
 
     return { success: true };
   }
+
+  /**
+   * Elimina un registro de una tabla en Supabase por su ID o clave primaria
+   */
+  public async deleteRecord(tableName: string, id: string, idColumn = 'id'): Promise<{ success: boolean; error?: string }> {
+    if (!this.isConfigured || process.env.NODE_ENV === 'test' || process.env.DISABLE_SUPABASE_SYNC === 'true') return { success: true };
+
+    const result = await this.request(`${tableName}?${idColumn}=eq.${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+
+    if (result.error) {
+      console.warn(`⚠️ [Supabase Sync] Error eliminando de tabla ${tableName} (${idColumn}=${id}):`, result.error);
+      return { success: false, error: result.error };
+    }
+
+    return { success: true };
+  }
+
+
+  /**
+   * Obtiene registros desde Supabase
+   */
+  public async fetchRecords<T = Record<string, unknown>>(tableName: string, queryParams = ''): Promise<{ data: T[] | null; error: string | null }> {
+    if (!this.isConfigured) {
+      return { data: null, error: 'Supabase no está configurado.' };
+    }
+
+    const endpoint = queryParams ? `${tableName}?${queryParams}` : tableName;
+    return this.request<T[]>(endpoint, { method: 'GET' });
+  }
 }
 
 export const supabaseClient = new SupabaseClient();
+

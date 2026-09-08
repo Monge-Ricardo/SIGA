@@ -275,7 +275,7 @@ async function syncSupabase() {
   }]);
 
   // 3. Socios (en lotes de 50)
-  console.log(' - Subiendo 80 socios...');
+  console.log(` - Subiendo ${data.socios.length} socios...`);
   const sociosPayload = data.socios.map(s => ({
     id: s.id,
     codigo_socio: s.codigo_socio,
@@ -294,7 +294,7 @@ async function syncSupabase() {
   }
 
   // 4. Medidores (en lotes de 50)
-  console.log(' - Subiendo 88 medidores acometidas...');
+  console.log(` - Subiendo ${data.medidores.length} medidores acometidas...`);
   const medidoresPayload = data.medidores.map(m => ({
     id: m.id,
     id_socio: m.id_socio,
@@ -311,7 +311,8 @@ async function syncSupabase() {
   }
 
   // 5. Lecturas de Base Inicial
-  console.log(' - Subiendo 88 lecturas base...');
+  console.log(` - Subiendo ${data.medidores.length} lecturas base...`);
+
   const lecturasPayload = data.medidores.map((m, idx) => {
     const pseudoId = `44444444-0000-0000-0000-${String(idx + 1).padStart(12, '0')}`;
     return {
