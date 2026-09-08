@@ -1,6 +1,7 @@
 import { requireAuth, getCurrentUser, apiFetch } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
+import { syncEngine } from './sync-engine.js';
 
 // Guard de autenticación (Accesible por ADMIN y CAJERO)
 const currentUser = requireAuth(['ADMIN', 'CAJERO']);
@@ -8,8 +9,6 @@ if (currentUser) {
   injectAppLayout('caja');
 }
 
-const DB_NAME = 'SIGAComunitarioDemoDB';
-const DB_VERSION = 2;
 let db = null;
 
 const TARIFAS_CONFIG = {
@@ -23,42 +22,14 @@ const TARIFAS_CONFIG = {
 
 const PERIODO_ACTUAL = '2026-08';
 
-function initIndexedDB() {
-  return new Promise((resolve) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onupgradeneeded = (event) => {
-      const dbInstance = event.target.result;
-      if (!dbInstance.objectStoreNames.contains('socios')) {
-        dbInstance.createObjectStore('socios', { keyPath: 'id' });
-      }
-      if (!dbInstance.objectStoreNames.contains('sectores')) {
-        dbInstance.createObjectStore('sectores', { keyPath: 'id' });
-      }
-      if (!dbInstance.objectStoreNames.contains('lecturas')) {
-        dbInstance.createObjectStore('lecturas', { keyPath: 'id' });
-      }
-      if (!dbInstance.objectStoreNames.contains('cobros')) {
-        dbInstance.createObjectStore('cobros', { keyPath: 'id' });
-      }
-      if (!dbInstance.objectStoreNames.contains('movimientos_caja')) {
-        dbInstance.createObjectStore('movimientos_caja', { keyPath: 'id' });
-      }
-      if (!dbInstance.objectStoreNames.contains('sync_queue')) {
-        dbInstance.createObjectStore('sync_queue', { keyPath: 'id' });
-      }
-    };
-
-    request.onsuccess = (event) => {
-      db = event.target.result;
-      resolve(db);
-    };
-
-    request.onerror = () => {
-      console.warn('IndexedDB no disponible, usando modo API directo');
-      resolve(null);
-    };
-  });
+async function initIndexedDB() {
+  try {
+    db = await syncEngine.getDb();
+    return db;
+  } catch (e) {
+    console.warn('IndexedDB no disponible, usando modo API directo:', e);
+    return null;
+  }
 }
 
 // Variables del Módulo
@@ -462,31 +433,8 @@ async function displaySocioPlanilla(socio) {
   const tieneAlcant = socio.tieneAlcantarillado === true;
   const recargoAlcant = tieneAlcant ? TARIFAS_CONFIG.RECARGO_ALCANTARILLADO : 0.0;
 
-  // Buscar lectura real registrada por el Lector en campo (IndexedDB)
-  let lecturaReal = null;
-  if (db) {
-    lecturaReal = await new Promise((resolve) => {
-      try {
-        const tx = db.transaction(['lecturas'], 'readonly');
-        const store = tx.objectStore('lecturas');
-        const req = store.getAll();
-        req.onsuccess = () => {
-          const all = req.result || [];
-          const encontrada = all.find((l) =>
-            (l.clienteId === socio.id || l.idSocio === socio.id || l.id_socio === socio.id) &&
-            (l.periodo === PERIODO_ACTUAL || l.periodo_codigo === PERIODO_ACTUAL || l.id_periodo === PERIODO_ACTUAL)
-          );
-          resolve(encontrada || null);
-        };
-        req.onerror = () => resolve(null);
-      } catch (e) {
-        resolve(null);
-      }
-    });
-  }
-
-  const lant = lecturaReal?.lecturaAnterior ?? lecturaReal?.lectura_anterior ?? socio.lecturaAnterior ?? socio.lectura_anterior ?? 150;
-  const lact = lecturaReal?.lecturaActual ?? lecturaReal?.lectura_actual ?? (lant + 35);
+  const lant = 150;
+  const lact = lant + 35; // Consumo estándar
   const consumoM3 = Math.max(0, lact - lant);
   const excedenteM3 = Math.max(0, consumoM3 - TARIFAS_CONFIG.LIMITE_BASE_M3);
   const valorExcedenteUSD = Number((excedenteM3 * TARIFAS_CONFIG.EXCEDENTE_POR_M3).toFixed(2));
@@ -1165,6 +1113,11 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
     }
   }
 
+  // Encolar mutación Git Append-Only para el cobro
+  if (cobroFinal) {
+    await syncEngine.enqueueMutation('cobros', cobroFinal.id, 'CREATE', cobroFinal);
+  }
+
   // Actualizar socio en memoria
   cachedSocios = cachedSocios.map((s) => {
     if (s.id === selectedSocio.id) {
@@ -1500,8 +1453,27 @@ document.getElementById('formGasto')?.addEventListener('submit', async (e) => {
     return;
   }
 
+  const movimientoRecord = {
+    id: 'egr-' + crypto.randomUUID(),
+    tipo: 'EGRESO',
+    categoria,
+    monto,
+    descripcion,
+    comprobante,
+    fecha: new Date().toISOString()
+  };
+
+  if (db) {
+    try {
+      const tx = db.transaction(['movimientos_caja'], 'readwrite');
+      tx.objectStore('movimientos_caja').add(movimientoRecord);
+    } catch (e) {}
+  }
+
+  await syncEngine.enqueueMutation('movimientos_caja', movimientoRecord.id, 'CREATE', movimientoRecord);
+
   try {
-    // Registrar Egreso en el Backend API (Libro Mayor 3 Columnas)
+    // Registrar Egreso en el Backend API (Libro Mayor 3 Columnas) si hay red
     await apiFetch('/api/v1/fondos/egresos', {
       method: 'POST',
       body: JSON.stringify({
@@ -1513,7 +1485,7 @@ document.getElementById('formGasto')?.addEventListener('submit', async (e) => {
       })
     });
   } catch (err) {
-    console.warn('[Caja] Error registrando egreso en backend:', err.message);
+    console.warn('[Caja] Egreso guardado localmente en offline:', err.message);
   }
 
   modalGasto.style.display = 'none';

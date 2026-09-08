@@ -1,4 +1,6 @@
 import { getCurrentUser, logout } from './auth.js';
+import { syncEngine, SYNC_CONFIG } from './sync-engine.js';
+import { Swal } from './sweetalert.js';
 
 // Registrar Service Worker para PWA Offline-First
 if ('serviceWorker' in navigator) {
@@ -149,6 +151,12 @@ export function injectAppLayout(activePageId) {
     </div>
 
     <div class="top-header-right">
+      <button class="btn-git-sync-chip" id="btnGitStatusTop" title="Centro de Sincronización Git">
+        <span class="git-status-dot"></span>
+        <span id="gitStatusLabel">🟢 Sincronizado</span>
+        <span class="git-pending-count" id="topGitPendingBadge" style="display: none;">0</span>
+      </button>
+
       <div class="top-user-chip">
         <span class="user-chip-avatar">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</span>
         <div class="user-chip-info">
@@ -219,6 +227,158 @@ export function injectAppLayout(activePageId) {
 
   // Simulador de Red
   initNetworkSimulator();
+
+  // Escuchador Global de Sincronización Git-Like
+  initGitSyncListener();
+}
+
+function initGitSyncListener() {
+  const chipBtn = document.getElementById('btnGitStatusTop');
+  const label = document.getElementById('gitStatusLabel');
+  const badge = document.getElementById('topGitPendingBadge');
+  const queueBadge = document.getElementById('queueBadge');
+  const networkStatusText = document.getElementById('networkStatusText');
+  const toggleNetworkBtn = document.getElementById('toggleNetworkBtn');
+
+  function updateVisualStatus(detail) {
+    const { status, pendingCount } = detail;
+
+    if (badge) {
+      if (pendingCount > 0) {
+        badge.textContent = pendingCount;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    if (queueBadge) {
+      queueBadge.textContent = `${pendingCount} pendientes en Outbox`;
+      queueBadge.style.background = pendingCount > 0 ? '#fef08a' : '#dcfce7';
+      queueBadge.style.color = pendingCount > 0 ? '#854d0e' : '#166534';
+    }
+
+    if (!chipBtn || !label) return;
+
+    chipBtn.className = 'btn-git-sync-chip';
+
+    if (status === 'PUSHING') {
+      chipBtn.classList.add('syncing');
+      label.textContent = '⬆️ Subiendo...';
+    } else if (status === 'PULLING') {
+      chipBtn.classList.add('syncing');
+      label.textContent = '⬇️ Descargando...';
+    } else if (status === 'OFFLINE' || !navigator.onLine) {
+      chipBtn.classList.add('offline');
+      label.textContent = '🔌 Modo Offline';
+      if (networkStatusText) networkStatusText.textContent = 'Modo Fuera de Línea';
+      if (toggleNetworkBtn) toggleNetworkBtn.className = 'btn-network-sidebar offline';
+    } else if (pendingCount > 0) {
+      chipBtn.classList.add('pending');
+      label.textContent = `🟡 ${pendingCount} por subir`;
+      if (networkStatusText) networkStatusText.textContent = 'En Línea';
+      if (toggleNetworkBtn) toggleNetworkBtn.className = 'btn-network-sidebar online';
+    } else if (status === 'ERROR') {
+      chipBtn.classList.add('error');
+      label.textContent = '⚠️ Error Sync';
+    } else {
+      label.textContent = '🟢 Sincronizado';
+      if (networkStatusText) networkStatusText.textContent = 'En Línea';
+      if (toggleNetworkBtn) toggleNetworkBtn.className = 'btn-network-sidebar online';
+    }
+  }
+
+  window.addEventListener('siga-sync-status', (ev) => {
+    updateVisualStatus(ev.detail || {});
+  });
+
+  // Inicializar estado actual
+  syncEngine.getPendingCount().then((count) => {
+    updateVisualStatus({
+      status: navigator.onLine ? 'SYNCED' : 'OFFLINE',
+      pendingCount: count
+    });
+  });
+
+  // Clic abre modal Git
+  chipBtn?.addEventListener('click', () => {
+    openGlobalSyncModal();
+  });
+}
+
+function openGlobalSyncModal() {
+  syncEngine.getPendingCount().then((pendingCount) => {
+    const isOnline = navigator.onLine;
+    const lastSync = syncEngine.getLastSyncTimestamp();
+
+    Swal.fire({
+      title: '🔄 Centro Git de Sincronización',
+      html: `
+        <div style="text-align: left; font-size: 0.88rem; color: #334155; line-height: 1.4;">
+          <div style="background: ${isOnline ? '#f0fdf4' : '#fff7ed'}; border: 1px solid ${isOnline ? '#bbf7d0' : '#fed7aa'}; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <strong style="color: ${isOnline ? '#166534' : '#9a3412'}; font-size: 0.95rem;">
+                ${isOnline ? '🟢 Conectado a la Red' : '🔌 Modo Fuera de Línea (Offline)'}
+              </strong>
+              <span style="font-size: 0.75rem; color: #64748b;">Dispositivo: <code>${syncEngine.deviceId}</code></span>
+            </div>
+            <div>• Mutaciones locales pendientes por subir: <strong>${pendingCount}</strong></div>
+            <div>• Última sincronización: <span style="font-family: monospace;">${lastSync !== '1970-01-01T00:00:00.000Z' ? new Date(lastSync).toLocaleTimeString() : 'Nunca'}</span></div>
+            <div>• Repositorio Remoto (Origin): <strong>Supabase Cloud</strong> (${SYNC_CONFIG.SUPABASE_URL.slice(8, 28)}...)</div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+            <button type="button" id="btnModalPushGlobal" class="btn btn-primary" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.88rem; background: #0284c7; border: none; border-radius: 6px; color: white; cursor: pointer;">
+              ⬆️ Subir Cambios Locales (Push)
+            </button>
+            <button type="button" id="btnModalPullGlobal" class="btn" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.88rem; border: 1px solid #059669; color: #065f46; background: #ecfdf5; border-radius: 6px; cursor: pointer;">
+              ⬇️ Descargar Actualizaciones de la Nube (Pull)
+            </button>
+            <button type="button" id="btnModalSyncAllGlobal" class="btn btn-outline" style="width: 100%; padding: 9px; font-weight: 700; font-size: 0.82rem; border: 1px solid #64748b; color: #334155; border-radius: 6px; background: white; cursor: pointer;">
+              🔄 Sincronización Completa Bidireccional
+            </button>
+          </div>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCloseButton: true,
+      didOpen: () => {
+        document.getElementById('btnModalPushGlobal')?.addEventListener('click', async () => {
+          Swal.showLoading();
+          const res = await syncEngine.pushPending();
+          Swal.fire({
+            icon: res.success ? 'success' : 'warning',
+            title: res.success ? '¡Push Completado!' : 'Aviso de Sincronización',
+            text: res.success ? `Se subieron ${res.pushed || 0} cambios.` : (res.reason || res.error || 'Error de conexión')
+          });
+        });
+
+        document.getElementById('btnModalPullGlobal')?.addEventListener('click', async () => {
+          Swal.showLoading();
+          const res = await syncEngine.pullDeltas();
+          Swal.fire({
+            icon: res.success ? 'success' : 'warning',
+            title: res.success ? '¡Pull Completado!' : 'Aviso de Sincronización',
+            text: res.success ? `Se descargaron y fusionaron ${res.pulled || 0} registros.` : (res.error || 'Error de conexión')
+          }).then(() => {
+            window.location.reload();
+          });
+        });
+
+        document.getElementById('btnModalSyncAllGlobal')?.addEventListener('click', async () => {
+          Swal.showLoading();
+          await syncEngine.syncAll();
+          Swal.fire({
+            icon: 'success',
+            title: '¡Sincronización Completada!',
+            text: 'Base de datos local sincronizada con la nube.'
+          }).then(() => {
+            window.location.reload();
+          });
+        });
+      }
+    });
+  });
 }
 
 let isOnlineSimulator = true;
@@ -239,12 +399,14 @@ function initNetworkSimulator() {
       networkBanner.className = 'status-banner banner-online';
       bannerTitle.textContent = 'Conexión Activa';
       bannerDesc.textContent = 'Los datos se guardan en IndexedDB local y se sincronizan con SQLite central.';
+      window.dispatchEvent(new Event('online'));
     } else {
       toggleNetworkBtn.className = 'btn-network-sidebar offline';
       networkStatusText.textContent = 'Modo Local / Fuera de Línea';
       networkBanner.className = 'status-banner banner-offline';
       bannerTitle.textContent = 'Modo Fuera de Línea (Offline)';
       bannerDesc.textContent = 'Sin conexión de red. Todas las operaciones se almacenan localmente en IndexedDB.';
+      window.dispatchEvent(new Event('offline'));
     }
   });
 }

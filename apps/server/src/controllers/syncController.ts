@@ -8,6 +8,135 @@ import { fondosService } from '../services/fondosService.ts';
 import { sqliteDb } from '../db/sqlite.ts';
 import { supabaseClient } from '../db/supabase.ts';
 
+export const handlePush = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { clientId, lastSyncTimestamp, mutations } = (req.body || {}) as SyncBatchRequest;
+
+    if (!clientId || !Array.isArray(mutations)) {
+      res.status(400).json({ error: 'Formato inválido. Se requiere clientId y array de mutations.' });
+      return;
+    }
+
+    const acks: SyncAck[] = [];
+
+    // Procesar cada mutación con el resolver de conflictos
+    for (const mutation of mutations) {
+      const resolution = ConflictResolver.resolveLWW(mutation, undefined);
+      acks.push(resolution.ack);
+
+      // Si Supabase Cloud está configurado, replicar también a la nube
+      if (supabaseClient.isEnabled() && mutation.payload) {
+        const p = mutation.payload as Record<string, unknown>;
+        if (mutation.entity === 'lecturas') {
+          await supabaseClient.syncRecord('lecturas', {
+            id: mutation.entityId,
+            id_socio: p.clienteId || p.idSocio,
+            id_medidor: p.idMedidor || null,
+            id_periodo: p.periodo || p.idPeriodo || '2026-08',
+            lectura_anterior: Number(p.lecturaAnterior || 0),
+            lectura_actual: Number(p.lecturaActual || 0),
+            consumo_total: Number(p.consumoM3 || 0),
+            excedente_m3: Number(p.excedenteM3 || 0),
+            fecha_lectura: p.updatedAt || new Date().toISOString(),
+            id_lector: 'usr-lector',
+            observaciones: p.observaciones || 'Toma en campo',
+            updated_at: new Date().toISOString()
+          }).catch(() => {});
+        } else if (mutation.entity === 'socios' || mutation.entity === 'clientes') {
+          await supabaseClient.syncRecord('socios', {
+            id: mutation.entityId,
+            codigo_socio: p.codigoSocio || p.codigoCliente,
+            nombres: p.nombres,
+            apellidos: p.apellidos,
+            cedula_ruc: p.cedulaRuc || p.identificacion,
+            id_sector: p.sectorId || p.idSector || '11111111-0000-0000-0000-000000000001',
+            direccion: p.direccion || 'Comunidad',
+            estado: p.estadoServicio || 'ACTIVO',
+            updated_at: new Date().toISOString()
+          }).catch(() => {});
+        }
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      serverTimestamp: new Date().toISOString(),
+      acks,
+      pushedCount: acks.filter((a) => a.status === 'ACCEPTED').length
+    });
+  } catch (error) {
+    console.error('[SyncController Push Error]:', error);
+    res.status(500).json({ error: 'Error procesando Push de mutaciones.' });
+  }
+};
+
+export const handlePull = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const since = req.query.since || '1970-01-01T00:00:00.000Z';
+    const db = sqliteDb.getRawDb();
+
+    // Obtener socios creados o actualizados después de 'since' (o todos si since es inicio)
+    const socios = since === '1970-01-01T00:00:00.000Z'
+      ? db.prepare('SELECT * FROM socios').all()
+      : db.prepare('SELECT * FROM socios WHERE updated_at >= ?').all(since);
+
+    const sectores = db.prepare('SELECT * FROM sectores').all();
+    const medidores = db.prepare('SELECT * FROM medidores').all();
+
+    const lecturas = since === '1970-01-01T00:00:00.000Z'
+      ? db.prepare('SELECT * FROM lecturas ORDER BY fecha_lectura DESC LIMIT 500').all()
+      : db.prepare('SELECT * FROM lecturas WHERE updated_at >= ?').all(since);
+
+    const facturas = since === '1970-01-01T00:00:00.000Z'
+      ? db.prepare('SELECT * FROM facturas ORDER BY created_at DESC LIMIT 500').all()
+      : db.prepare('SELECT * FROM facturas WHERE updated_at >= ?').all(since);
+
+    // Normalizar a formato interno de la PWA
+    const normalizedSocios = (socios as any[]).map((s) => ({
+      id: s.id,
+      codigoSocio: s.codigo_socio,
+      nombres: s.nombres,
+      apellidos: s.apellidos,
+      nombreCompleto: `${s.nombres || ''} ${s.apellidos || ''}`.trim() || s.codigo_socio,
+      cedulaRuc: s.cedula_ruc,
+      sectorId: s.id_sector,
+      medidorNumero: s.medidor_numero,
+      tieneAlcantarillado: Boolean(s.tiene_alcantarillado),
+      telefono: s.telefono,
+      direccion: s.direccion,
+      estadoServicio: s.estado || 'ACTIVO',
+      updatedAt: s.updated_at
+    }));
+
+    const normalizedLecturas = (lecturas as any[]).map((l) => ({
+      id: l.id,
+      idMedidor: l.id_medidor,
+      clienteId: l.id_socio,
+      idSocio: l.id_socio,
+      periodo: l.id_periodo,
+      lecturaAnterior: Number(l.lectura_anterior || 0),
+      lecturaActual: Number(l.lectura_actual || 0),
+      consumoM3: Number(l.consumo_total || 0),
+      excedenteM3: Number(l.excedente_m3 || 0),
+      observaciones: l.observaciones || '',
+      updatedAt: l.updated_at || l.fecha_lectura
+    }));
+
+    res.status(200).json({
+      success: true,
+      serverTimestamp: new Date().toISOString(),
+      socios: normalizedSocios,
+      sectores: sectores.map((sec: any) => ({ id: sec.id, codigo: sec.codigo_sector, nombre: sec.nombre_sector })),
+      medidores: medidores.map((m: any) => ({ id: m.id, idSocio: m.id_socio, numeroMedidor: m.numero_medidor, alias: m.alias })),
+      lecturas: normalizedLecturas,
+      facturas: facturas
+    });
+  } catch (error) {
+    console.error('[SyncController Pull Error]:', error);
+    res.status(500).json({ error: 'Error procesando Pull de datos remotos.' });
+  }
+};
+
 export const handleBatchSync = async (req: Request, res: Response): Promise<void> => {
   try {
     const { clientId, lastSyncTimestamp, mutations } = (req.body || {}) as SyncBatchRequest;

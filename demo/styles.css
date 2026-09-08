@@ -437,6 +437,80 @@ body.has-sidebar-layout {
   transform: translateY(-1px);
 }
 
+/* Git Status Chip en Top Header */
+.btn-git-sync-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  padding: 0.35rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-git-sync-chip:hover {
+  background: #dcfce7;
+  transform: translateY(-1px);
+}
+
+.btn-git-sync-chip.syncing {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.btn-git-sync-chip.pending {
+  background: #fefce8;
+  border-color: #fef08a;
+  color: #854d0e;
+}
+
+.btn-git-sync-chip.offline {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #64748b;
+}
+
+.btn-git-sync-chip.error {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.git-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.btn-git-sync-chip.syncing .git-status-dot {
+  background: #3b82f6;
+  animation: pulse-dot 1s infinite;
+}
+
+.btn-git-sync-chip.pending .git-status-dot {
+  background: #eab308;
+}
+
+.btn-git-sync-chip.offline .git-status-dot {
+  background: #94a3b8;
+}
+
+.git-pending-count {
+  background: #f59e0b;
+  color: white;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .btn-close-sidebar-mobile {
   display: none;
   background: transparent;

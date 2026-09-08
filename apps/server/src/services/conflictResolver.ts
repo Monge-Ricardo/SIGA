@@ -16,8 +16,9 @@ export class ConflictResolver {
       const record = payload as Record<string, unknown>;
 
       switch (entity) {
-        case 'clientes': {
-          if (action === 'CREATE') {
+        case 'clientes':
+        case 'socios' as any: {
+          if (action === 'CREATE' || action === 'UPSERT') {
             socioService.createSocio({
               codigoSocio: (record.codigoCliente || record.codigoSocio) as string,
               nombres: record.nombres as string || (record.nombreCompleto as string)?.split(' ')[0] || '',
@@ -42,9 +43,10 @@ export class ConflictResolver {
         }
 
         case 'lecturas': {
-          if (action === 'CREATE' || action === 'UPDATE') {
+          if (action === 'CREATE' || action === 'UPDATE' || action === 'UPSERT') {
             lecturaService.registrarLectura({
               idSocio: (record.clienteId || record.idSocio) as string,
+              idMedidor: (record.idMedidor || record.id_medidor) as string || undefined,
               idPeriodo: (record.periodo || record.idPeriodo) as string,
               lecturaActual: (record.lecturaActual as number) || 0,
               lecturaAnterior: record.lecturaAnterior as number,
@@ -55,8 +57,9 @@ export class ConflictResolver {
           break;
         }
 
-        case 'cobros': {
-          if (action === 'CREATE' || action === 'UPDATE') {
+        case 'cobros':
+        case 'facturas' as any: {
+          if (action === 'CREATE' || action === 'UPDATE' || action === 'UPSERT') {
             const facturaId = (record.id || entityId) as string;
             const facturaExistente = facturacionService.getFacturaById(facturaId);
             if (facturaExistente && facturaExistente.estadoPago !== 'PAGADO') {

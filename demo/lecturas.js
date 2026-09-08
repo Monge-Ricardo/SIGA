@@ -1,6 +1,7 @@
 import { requireAuth, apiFetch } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
+import { syncEngine } from './sync-engine.js';
 
 // Guard de autenticación (Accesible por ADMIN, CAJERO y LECTOR)
 const currentUser = requireAuth(['ADMIN', 'CAJERO', 'LECTOR']);
@@ -8,44 +9,17 @@ if (currentUser) {
   injectAppLayout('lecturas');
 }
 
-const DB_NAME = 'SIGAComunitarioDemoDB';
-const DB_VERSION = 3;
 let db = null;
 
-function initIndexedDB() {
-  return new Promise((resolve) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onupgradeneeded = (event) => {
-      const dbInstance = event.target.result;
-      if (!dbInstance.objectStoreNames.contains('socios')) {
-        dbInstance.createObjectStore('socios', { keyPath: 'id' });
-      }
-      if (!dbInstance.objectStoreNames.contains('sectores')) {
-        dbInstance.createObjectStore('sectores', { keyPath: 'id' });
-      }
-      if (!dbInstance.objectStoreNames.contains('lecturas')) {
-        const lecturasStore = dbInstance.createObjectStore('lecturas', { keyPath: 'id' });
-        lecturasStore.createIndex('periodo', 'periodo', { unique: false });
-        lecturasStore.createIndex('clienteId', 'clienteId', { unique: false });
-      }
-      if (!dbInstance.objectStoreNames.contains('sync_queue')) {
-        const queueStore = dbInstance.createObjectStore('sync_queue', { keyPath: 'id' });
-        queueStore.createIndex('status', 'status', { unique: false });
-      }
-    };
-
-    request.onsuccess = async (event) => {
-      db = event.target.result;
-      await seedLecturasIfEmpty();
-      resolve(db);
-    };
-
-    request.onerror = () => {
-      console.warn('IndexedDB no disponible para lecturas, usando API REST directa');
-      resolve(null);
-    };
-  });
+async function initIndexedDB() {
+  try {
+    db = await syncEngine.getDb();
+    await seedLecturasIfEmpty();
+    return db;
+  } catch (err) {
+    console.warn('Error inicializando base de datos local:', err);
+    return null;
+  }
 }
 
 async function seedLecturasIfEmpty() {
@@ -330,55 +304,23 @@ async function saveLecturaLocal(lecturaData) {
     lecturaActual: Number(lecturaData.lecturaActual),
     consumoM3: Number(lecturaData.consumoM3),
     excedenteM3: Number(lecturaData.excedenteM3),
-    observaciones: lecturaData.observaciones || 'Toma de lectura en campo',
-    origen: lecturaData.origen || 'LECTOR',
+    observaciones: lecturaData.observaciones || (currentUser?.rol === 'CAJERO' ? 'Modificado por Cajero' : 'Toma de lectura en campo'),
+    origen: lecturaData.origen || (currentUser?.rol === 'CAJERO' ? 'CAJERO' : 'LECTOR'),
     updatedAt: new Date().toISOString()
   };
 
-  // 1. Guardar en IndexedDB local (Garantía offline)
+  // 1. Guardar en IndexedDB local (Garantía offline inmediata <20 ms)
   if (db) {
     try {
-      const tx = db.transaction(['lecturas', 'sync_queue'], 'readwrite');
-      const lecturasStore = tx.objectStore('lecturas');
-      const queueStore = tx.objectStore('sync_queue');
-
-      lecturasStore.put(rec);
-
-      queueStore.add({
-        id: 'mut-' + crypto.randomUUID().slice(0, 8),
-        entity: 'lecturas',
-        entityId: id,
-        action: 'UPSERT',
-        payload: rec,
-        localTimestamp: new Date().toISOString(),
-        status: 'PENDING'
-      });
+      const tx = db.transaction(['lecturas'], 'readwrite');
+      tx.objectStore('lecturas').put(rec);
     } catch (e) {
       console.warn('[Lecturas] Error guardando en IndexedDB:', e);
     }
   }
 
-  // 2. Sincronizar de inmediato con el Backend REST API (SQLite & Supabase)
-  try {
-    const res = await apiFetch('/api/v1/lecturas', {
-      method: 'POST',
-      body: JSON.stringify({
-        idSocio: lecturaData.clienteId,
-        idMedidor: lecturaData.idMedidor,
-        numeroMedidor: lecturaData.medidorNumero,
-        idPeriodo: lecturaData.periodo,
-        lecturaActual: Number(lecturaData.lecturaActual),
-        lecturaAnterior: Number(lecturaData.lecturaAnterior),
-        observaciones: lecturaData.observaciones || 'Toma de lectura en campo'
-      })
-    });
-    console.log(`[Lecturas Sync] Lectura guardada y sincronizada: ${lecturaData.medidorNumero} = ${lecturaData.lecturaActual} m³`);
-    if (res.data) {
-      rec.id = res.data.id;
-    }
-  } catch (apiErr) {
-    console.log('[Lecturas] Guardado localmente en offline. Se sincronizará automáticamente al reconectar.');
-  }
+  // 2. Registrar en cola outbox Git (Commit local) y disparar Push si hay red
+  await syncEngine.enqueueMutation('lecturas', id, 'UPSERT', rec);
 
   return rec;
 }
@@ -396,6 +338,8 @@ async function renderLecturasUI() {
   const titleEl = document.getElementById('moduleTitleLecturas');
   const subEl = document.getElementById('moduleSubtitleLecturas');
   const btnCierre = document.getElementById('btnCierreCiclo');
+  const btnPull = document.getElementById('btnPullLector');
+  const btnPush = document.getElementById('btnPushLector');
 
   if (isCajeroOAdmin) {
     if (titleEl) titleEl.innerHTML = '📋 Módulo 2: Revisión de Lecturas y Cierre de Ciclo';
@@ -403,11 +347,16 @@ async function renderLecturasUI() {
       subEl.textContent = 'Auditoría de micromedición en campo, edición de lecturas, detección de consumos y cierre oficial del ciclo para emisión de planillas a Caja.';
     }
     if (btnCierre) btnCierre.style.display = 'inline-flex';
+    if (btnPull) btnPull.style.display = 'inline-flex';
+    if (btnPush) btnPush.style.display = 'none';
   } else {
     if (titleEl) titleEl.innerHTML = '⏱️ Módulo 2: Toma de Lecturas en Campo';
     if (subEl) {
       subEl.textContent = 'Captura rápida de lecturas en ruta por sector. Al ingresar la lectura se guarda y sincroniza automáticamente con el servidor central.';
     }
+    if (btnCierre) btnCierre.style.display = 'none';
+    if (btnPull) btnPull.style.display = 'none';
+    if (btnPush) btnPush.style.display = 'inline-flex';
   }
 
   const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
@@ -909,29 +858,125 @@ document.getElementById('btnCierreCiclo')?.addEventListener('click', async () =>
   }
 });
 
-// Sincronización Manual
+// Sincronización Git-Like (Local-First Push/Pull)
+async function executePush() {
+  Swal.fire({
+    title: '⬆️ Subiendo Cambios (Push)...',
+    text: 'Enviando lecturas registradas a la Nube...',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  const res = await syncEngine.pushPending();
+  if (res.success) {
+    Swal.fire({
+      icon: 'success',
+      title: '¡Push Exitoso!',
+      html: `<p>Se subieron <strong>${res.pushed || 0}</strong> cambios a la nube sin errores.</p>`
+    });
+  } else {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Aviso de Sincronización',
+      text: res.reason || res.error || 'No se pudo conectar. Las lecturas permanecen seguras en el celular.'
+    });
+  }
+  await renderLecturasUI();
+}
+
+async function executePull() {
+  Swal.fire({
+    title: '⬇️ Descargando Datos (Pull)...',
+    text: 'Consultando socios, medidores y lecturas del servidor...',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  const res = await syncEngine.pullDeltas();
+  if (res.success) {
+    await renderLecturasUI();
+    Swal.fire({
+      icon: 'success',
+      title: '¡Pull Exitoso!',
+      html: `<p>Se descargaron y actualizaron <strong>${res.pulled || 0}</strong> registros en este dispositivo.</p>`
+    });
+  } else {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Aviso de Sincronización',
+      text: res.error || 'No se pudo consultar el servidor remoto.'
+    });
+  }
+}
+
+async function executeFullSync() {
+  Swal.fire({
+    title: '🔄 Sincronizando Todo...',
+    text: 'Ejecutando ciclo Pull + Push con la nube...',
+    allowOutsideClick: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  const res = await syncEngine.syncAll(currentUser?.rol || 'LECTOR');
+  await renderLecturasUI();
+  Swal.fire({
+    icon: 'success',
+    title: '¡Sincronización Completa!',
+    html: `
+      <div style="text-align: left; font-size: 0.9rem;">
+        <p>✅ <strong>${cachedSocios.length}</strong> Socios al día.</p>
+        <p>✅ <strong>${cachedLecturas.length}</strong> Lecturas sincronizadas en tiempo real.</p>
+      </div>
+    `
+  });
+}
+
 async function openSyncManagerModal() {
-  const currentServerUrl = localStorage.getItem('SIGA_SERVER_URL') || '';
-  const countSocios = cachedSocios.length;
-  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
-  const lecturas = await getLecturasPeriodo(periodo);
-  const tomadasCount = lecturas.filter((l) => l.lecturaActual !== undefined && l.lecturaActual > 0).length;
+  const pendingCount = await syncEngine.getPendingCount();
+  const lastSync = syncEngine.getLastSyncTimestamp();
+  const serverUrl = syncEngine.getServerUrl();
+  const isOnline = navigator.onLine;
 
   Swal.fire({
-    title: '🔄 Sincronización SIGA',
+    title: '🔄 Centro Git de Sincronización',
     html: `
       <div style="text-align: left; font-size: 0.88rem; color: #334155; line-height: 1.4;">
-        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
-          <div style="font-weight: 700; color: #166534; margin-bottom: 4px;">📱 Estado del Padrón y Micromedición:</div>
-          <div>• <strong>${countSocios}</strong> socios registrados en padrón</div>
-          <div>• <strong>${tomadasCount}</strong> lecturas registradas en período <strong>${periodo}</strong></div>
+        <div style="background: ${isOnline ? '#f0fdf4' : '#fff7ed'}; border: 1px solid ${isOnline ? '#bbf7d0' : '#fed7aa'}; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <strong style="color: ${isOnline ? '#166534' : '#9a3412'}; font-size: 0.95rem;">
+              ${isOnline ? '🟢 En línea (Conectado)' : '🔌 Modo Fuera de Línea (Offline)'}
+            </strong>
+            <span style="font-size: 0.75rem; color: #64748b;">ID: <code>${syncEngine.deviceId}</code></span>
+          </div>
+          <div>• <strong>${pendingCount}</strong> mutaciones locales pendientes por subir (Push).</div>
+          <div>• Último Sync: <span style="font-family: monospace;">${lastSync !== '1970-01-01T00:00:00.000Z' ? new Date(lastSync).toLocaleTimeString() : 'Nunca'}</span></div>
+          <div>• Servidor Remoto: <strong>Supabase Cloud</strong> (${syncEngine.getServerUrl() ? 'Servidor Local Activo' : 'Nube Principal'})</div>
         </div>
 
-        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 14px;">
-          <button type="button" id="btnSyncCloudSupabase" class="btn btn-primary" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.88rem; background: #0284c7; border: none; border-radius: 6px; color: white; cursor: pointer;">
-            ☁️ Sincronizar Base de Datos (SQLite & Supabase)
+        <div style="margin-bottom: 12px;">
+          <label style="font-size: 0.78rem; font-weight: 700; color: #475569; display: block; margin-bottom: 4px;">
+            ⚙️ Servidor Local IP/URL (Opcional - dejar vacío para Supabase directo):
+          </label>
+          <input 
+            type="text" 
+            id="inputModalServerUrl" 
+            value="${serverUrl}" 
+            placeholder="ej: http://192.168.1.100:4000"
+            style="width: 100%; padding: 6px 10px; font-size: 0.8rem; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box;"
+          />
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+          <button type="button" id="btnModalPush" class="btn btn-primary" style="width: 100%; padding: 9px; font-weight: 700; font-size: 0.88rem; background: #0284c7; border: none; border-radius: 6px; color: white; cursor: pointer;">
+            ⬆️ Subir Mis Lecturas de Campo (Push)
           </button>
-          <button type="button" id="btnExportLecturasCSV" class="btn btn-outline" style="width: 100%; padding: 9px; font-weight: 700; font-size: 0.85rem; border: 1px solid #64748b; color: #334155; border-radius: 6px; background: white; cursor: pointer;">
+          <button type="button" id="btnModalPull" class="btn" style="width: 100%; padding: 9px; font-weight: 700; font-size: 0.88rem; border: 1px solid #059669; color: #065f46; background: #ecfdf5; border-radius: 6px; cursor: pointer;">
+            ⬇️ Descargar Padrón y Cambios de la Nube (Pull)
+          </button>
+          <button type="button" id="btnModalFullSync" class="btn btn-outline" style="width: 100%; padding: 8px; font-weight: 700; font-size: 0.82rem; border: 1px solid #64748b; color: #334155; border-radius: 6px; background: white; cursor: pointer;">
+            🔄 Sincronización Completa Bidireccional
+          </button>
+          <button type="button" id="btnExportLecturasCSV" class="btn btn-outline" style="width: 100%; padding: 8px; font-weight: 700; font-size: 0.82rem; border: 1px solid #cbd5e1; color: #64748b; border-radius: 6px; background: #f8fafc; cursor: pointer;">
             📤 Exportar Reporte de Lecturas (CSV)
           </button>
         </div>
@@ -940,48 +985,29 @@ async function openSyncManagerModal() {
     showConfirmButton: false,
     showCloseButton: true,
     didOpen: () => {
-      document.getElementById('btnSyncCloudSupabase')?.addEventListener('click', async () => {
-        await performFullSync();
+      const inputUrl = document.getElementById('inputModalServerUrl');
+      inputUrl?.addEventListener('change', () => {
+        syncEngine.setServerUrl(inputUrl.value.trim());
+      });
+
+      document.getElementById('btnModalPush')?.addEventListener('click', async () => {
+        await executePush();
+      });
+
+      document.getElementById('btnModalPull')?.addEventListener('click', async () => {
+        await executePull();
+      });
+
+      document.getElementById('btnModalFullSync')?.addEventListener('click', async () => {
+        await executeFullSync();
       });
 
       document.getElementById('btnExportLecturasCSV')?.addEventListener('click', async () => {
+        const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
         exportLecturasCSV(periodo);
       });
     }
   });
-}
-
-async function performFullSync() {
-  Swal.fire({
-    title: 'Sincronizando Base de Datos...',
-    text: 'Actualizando padrón y lecturas con SQLite local y Supabase...',
-    allowOutsideClick: false,
-    didOpen: () => Swal.showLoading()
-  });
-
-  try {
-    const res = await apiFetch('/api/v1/sync/supabase', { method: 'POST' });
-    await renderLecturasUI();
-
-    Swal.fire({
-      icon: 'success',
-      title: '¡Sincronización Completada!',
-      html: `
-        <div style="text-align: left; font-size: 0.9rem;">
-          <p>✅ <strong>${cachedSocios.length}</strong> Socios al día.</p>
-          <p>✅ <strong>${cachedLecturas.length}</strong> Lecturas sincronizadas en tiempo real.</p>
-        </div>
-      `
-    });
-  } catch (err) {
-    // Si offline, recargar UI local
-    await renderLecturasUI();
-    Swal.fire({
-      icon: 'info',
-      title: 'Modo Offline',
-      text: 'Datos sincronizados en el almacenamiento local del dispositivo.'
-    });
-  }
 }
 
 async function exportLecturasCSV(periodo) {
@@ -1029,6 +1055,8 @@ document.getElementById('selectPeriodo')?.addEventListener('change', async () =>
 document.getElementById('selectSectorRuta')?.addEventListener('change', renderTableAndMetrics);
 document.getElementById('searchSocioLectura')?.addEventListener('input', renderTableAndMetrics);
 document.getElementById('btnSyncModal')?.addEventListener('click', openSyncManagerModal);
+document.getElementById('btnPullLector')?.addEventListener('click', executePull);
+document.getElementById('btnPushLector')?.addEventListener('click', executePush);
 
 // Inicializar PWA
 initIndexedDB().then(renderLecturasUI);

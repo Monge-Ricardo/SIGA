@@ -68,15 +68,47 @@ export function getAuthToken() {
 }
 
 export function getServerBaseUrl() {
-  return localStorage.getItem('SIGA_SERVER_URL') || '';
+  const configured = (localStorage.getItem('SIGA_SERVER_URL') || '').trim();
+  if (configured) return configured;
+
+  // Si estamos en un APK WebView o protocolo file:, evitar ruta relativa appassets
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.origin.includes('appassets.androidplatform.net') ||
+      window.location.protocol === 'file:' ||
+      navigator.userAgent.includes('SIGALector'))
+  ) {
+    return localStorage.getItem('SIGA_SERVER_URL') || '';
+  }
+
+  // En navegador web tradicional (localhost:4000 o servidor remoto)
+  return typeof window !== 'undefined' ? window.location.origin : '';
+}
+
+export function resolveApiUrl(path) {
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+  const base = getServerBaseUrl();
+  if (base) {
+    return `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+  }
+  return path;
 }
 
 export async function apiFetch(url, options = {}) {
   const token = getAuthToken();
-  const serverBase = getServerBaseUrl();
-  const fullUrl = (url.startsWith('http://') || url.startsWith('https://'))
-    ? url
-    : (serverBase ? `${serverBase.replace(/\/$/, '')}${url}` : url);
+  const fullUrl = resolveApiUrl(url);
+
+  // Si estamos en WebView y no hay servidor configurado, y es ruta relativa que iría a appassets, no disparar fetch fallido
+  if (
+    typeof window !== 'undefined' &&
+    window.location.origin.includes('appassets.androidplatform.net') &&
+    !getServerBaseUrl() &&
+    !fullUrl.startsWith('http')
+  ) {
+    throw new Error('Servidor central no configurado en ajustes del lector.');
+  }
 
   const headers = {
     'Content-Type': 'application/json',
@@ -87,7 +119,11 @@ export async function apiFetch(url, options = {}) {
   const res = await fetch(fullUrl, { ...options, headers });
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
-    if (res.status === 401 && !url.includes('/auth/login') && window.location.protocol !== 'file:') {
+    const isOfflineToken = token === 'android-local-token' || token === 'local-session-jwt';
+    const isWebView = typeof window !== 'undefined' && (window.location.origin.includes('appassets.androidplatform.net') || window.location.protocol === 'file:');
+
+    // Solo redirigir a login si NO estamos en WebView y NO estamos en token local offline
+    if (res.status === 401 && !url.includes('/auth/login') && !isWebView && !isOfflineToken) {
       console.warn('[Auth] Token inválido o expirado. Limpiando credenciales y redirigiendo a login...');
       sessionStorage.removeItem(AUTH_STORAGE_KEY);
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -113,10 +149,11 @@ export async function login(identifier, password) {
 
   // 1. Intento de autenticación contra la API REST (/api/v1/auth/login)
   try {
+    const loginUrl = resolveApiUrl('/api/v1/auth/login');
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-    const res = await fetch('/api/v1/auth/login', {
+    const res = await fetch(loginUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: cleanId, password: cleanPass }),
