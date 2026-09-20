@@ -1,28 +1,32 @@
-import { sqliteDb, SQLiteDatabase } from './sqlite.ts';
 import { supabaseClient, SupabaseClient } from './supabase.ts';
 
+/**
+ * Gestor central de conexión a la base de datos remota (Supabase PostgreSQL).
+ * Arquitectura de 2 Capas: La persistencia local reside en IndexedDB (cliente)
+ * y la persistencia central reside en Supabase Cloud.
+ */
 export class CentralDatabase {
   private isConnected = false;
-  public local: SQLiteDatabase = sqliteDb;
   public cloud: SupabaseClient = supabaseClient;
 
   public async connect(): Promise<void> {
-    console.log('[CentralDB] Inicializando motor de base de datos dual (SQLite Local + Supabase)...');
-    this.isConnected = true;
+    console.log('[CentralDB] Inicializando conexión hacia Supabase Cloud PostgreSQL...');
+    this.isConnected = this.cloud.isEnabled();
   }
 
   public async disconnect(): Promise<void> {
-    console.log('[CentralDB] Cerrando conexiones de base de datos.');
+    console.log('[CentralDB] Conexión cerrada.');
     this.isConnected = false;
   }
 
-  public getStatus(): { isConnected: boolean; local: boolean; cloud: boolean } {
+  public getStatus(): { isConnected: boolean; cloud: boolean; url: string | null } {
     return {
-      isConnected: this.isConnected,
-      local: true,
-      cloud: this.cloud.isEnabled()
+      isConnected: this.isConnected || this.cloud.isEnabled(),
+      cloud: this.cloud.isEnabled(),
+      url: this.cloud.getUrl()
     };
   }
 }
 
 export const centralDb = new CentralDatabase();
+

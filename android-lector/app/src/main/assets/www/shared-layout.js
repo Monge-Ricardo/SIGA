@@ -1,4 +1,4 @@
-import { getCurrentUser, logout } from './auth.js';
+import { getCurrentUser, logout, refreshCurrentUserProfile } from './auth.js';
 import { syncEngine, SYNC_CONFIG } from './sync-engine.js';
 import { Swal } from './sweetalert.js';
 
@@ -16,12 +16,25 @@ export function injectAppLayout(activePageId) {
   const container = document.querySelector('.container');
   if (!container) return;
 
+  // Purga proactiva de cachés antiguas del Service Worker
+  if (typeof window !== 'undefined' && 'caches' in window) {
+    caches.keys().then((names) => {
+      names.forEach((name) => {
+        if (name !== 'siga-pwa-v40') {
+          caches.delete(name);
+        }
+      });
+    }).catch(() => {});
+  }
+
+  let displayName = user?.nombreCompleto || user?.nombre_completo || user?.nombre || user?.username || 'Usuario';
+
   // Añadir clase al body para el layout con sidebar
   document.body.classList.add('has-sidebar-layout');
 
   const roleColors = {
     ADMIN: { bg: '#e0e7ff', text: '#4338ca', label: '👑 ADMINISTRADOR' },
-    CAJERO: { bg: '#dcfce7', text: '#15803d', label: '💵 TESORERÍA / CAJA' },
+    CAJERO: { bg: '#dcfce7', text: '#15803d', label: '💵 CAJERO' },
     LECTOR: { bg: '#fef3c7', text: '#b45309', label: '⏱️ LECTOR DE CAMPO' }
   };
   const roleInfo = roleColors[user?.rol] || { bg: '#f1f5f9', text: '#475569', label: user?.rol || 'USUARIO' };
@@ -83,7 +96,7 @@ export function injectAppLayout(activePageId) {
     <div class="sidebar-user-card">
       <div class="sidebar-user-avatar">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</div>
       <div class="sidebar-user-info">
-        <div class="sidebar-user-name">${user?.nombre || user?.username || 'Usuario'}</div>
+        <div class="sidebar-user-name">${displayName}</div>
         <span class="sidebar-role-pill" style="background: ${roleInfo.bg}; color: ${roleInfo.text};">
           ${roleInfo.label}
         </span>
@@ -151,23 +164,19 @@ export function injectAppLayout(activePageId) {
     </div>
 
     <div class="top-header-right">
-      <button class="btn-git-sync-chip" id="btnGitStatusTop" title="Centro de Sincronización Git">
+      <button class="btn-git-sync-chip" id="btnGitStatusTop" title="Estado de Conexión">
         <span class="git-status-dot"></span>
-        <span id="gitStatusLabel">🟢 Sincronizado</span>
+        <span id="gitStatusLabel">🟢 En Línea</span>
         <span class="git-pending-count" id="topGitPendingBadge" style="display: none;">0</span>
       </button>
 
       <div class="top-user-chip">
         <span class="user-chip-avatar">${user?.rol === 'ADMIN' ? '👑' : user?.rol === 'CAJERO' ? '💵' : '⏱️'}</span>
         <div class="user-chip-info">
-          <span class="user-chip-name">${user?.nombre || user?.username || 'Usuario'}</span>
+          <span class="user-chip-name">${displayName}</span>
           <span class="user-chip-role">${roleInfo.label}</span>
         </div>
       </div>
-
-      <button class="btn btn-top-logout" id="btnLogoutTop" title="Cerrar sesión inmediatamente">
-        🚪 Cerrar Sesión
-      </button>
     </div>
   `;
 
@@ -179,12 +188,12 @@ export function injectAppLayout(activePageId) {
     <div class="banner-content">
       <span class="banner-icon">🌐</span>
       <div>
-        <strong id="bannerTitle">Conexión Activa</strong>
-        <p id="bannerDesc">Los datos se guardan en IndexedDB local y se sincronizan con SQLite central.</p>
+        <strong id="bannerTitle">Conexión con el Servidor</strong>
+        <p id="bannerDesc">Tus lecturas se guardan de forma segura y se sincronizan directamente con la base de datos central.</p>
       </div>
     </div>
     <div class="banner-action">
-      <span class="queue-badge" id="queueBadge">0 pendientes en Outbox</span>
+      <span class="queue-badge" id="queueBadge">0 pendientes por subir</span>
     </div>
   `;
 
@@ -228,8 +237,19 @@ export function injectAppLayout(activePageId) {
   // Simulador de Red
   initNetworkSimulator();
 
-  // Escuchador Global de Sincronización Git-Like
+  // Escuchador Global de Sincronización
   initGitSyncListener();
+
+  // Sincronizar dinámicamente perfil desde la base de datos central en segundo plano
+  refreshCurrentUserProfile().then((fresh) => {
+    if (fresh) {
+      const freshName = fresh.nombreCompleto || fresh.nombre || fresh.username;
+      const chipEl = document.querySelector('.user-chip-name');
+      if (chipEl && freshName) chipEl.textContent = freshName;
+      const sideEl = document.querySelector('.sidebar-user-name');
+      if (sideEl && freshName) sideEl.textContent = freshName;
+    }
+  }).catch(() => {});
 }
 
 function initGitSyncListener() {
@@ -253,7 +273,7 @@ function initGitSyncListener() {
     }
 
     if (queueBadge) {
-      queueBadge.textContent = `${pendingCount} pendientes en Outbox`;
+      queueBadge.textContent = `${pendingCount} pendientes por subir`;
       queueBadge.style.background = pendingCount > 0 ? '#fef08a' : '#dcfce7';
       queueBadge.style.color = pendingCount > 0 ? '#854d0e' : '#166534';
     }
@@ -267,10 +287,10 @@ function initGitSyncListener() {
       label.textContent = '⬆️ Subiendo...';
     } else if (status === 'PULLING') {
       chipBtn.classList.add('syncing');
-      label.textContent = '⬇️ Descargando...';
+      label.textContent = '⬇️ Actualizando...';
     } else if (status === 'OFFLINE' || !navigator.onLine) {
       chipBtn.classList.add('offline');
-      label.textContent = '🔌 Modo Offline';
+      label.textContent = '🔌 Sin Conexión';
       if (networkStatusText) networkStatusText.textContent = 'Modo Fuera de Línea';
       if (toggleNetworkBtn) toggleNetworkBtn.className = 'btn-network-sidebar offline';
     } else if (pendingCount > 0) {
@@ -280,9 +300,9 @@ function initGitSyncListener() {
       if (toggleNetworkBtn) toggleNetworkBtn.className = 'btn-network-sidebar online';
     } else if (status === 'ERROR') {
       chipBtn.classList.add('error');
-      label.textContent = '⚠️ Error Sync';
+      label.textContent = '⚠️ Error Conexión';
     } else {
-      label.textContent = '🟢 Sincronizado';
+      label.textContent = '🟢 En Línea';
       if (networkStatusText) networkStatusText.textContent = 'En Línea';
       if (toggleNetworkBtn) toggleNetworkBtn.className = 'btn-network-sidebar online';
     }
@@ -300,7 +320,7 @@ function initGitSyncListener() {
     });
   });
 
-  // Clic abre modal Git
+  // Clic abre modal simplificado de estado
   chipBtn?.addEventListener('click', () => {
     openGlobalSyncModal();
   });
@@ -312,30 +332,26 @@ function openGlobalSyncModal() {
     const lastSync = syncEngine.getLastSyncTimestamp();
 
     Swal.fire({
-      title: '🔄 Centro Git de Sincronización',
+      title: '📡 Estado de Conexión con la Nube',
       html: `
         <div style="text-align: left; font-size: 0.88rem; color: #334155; line-height: 1.4;">
           <div style="background: ${isOnline ? '#f0fdf4' : '#fff7ed'}; border: 1px solid ${isOnline ? '#bbf7d0' : '#fed7aa'}; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
               <strong style="color: ${isOnline ? '#166534' : '#9a3412'}; font-size: 0.95rem;">
-                ${isOnline ? '🟢 Conectado a la Red' : '🔌 Modo Fuera de Línea (Offline)'}
+                ${isOnline ? '🟢 Conectado a la Nube' : '🔌 Modo Fuera de Línea'}
               </strong>
               <span style="font-size: 0.75rem; color: #64748b;">Dispositivo: <code>${syncEngine.deviceId}</code></span>
             </div>
-            <div>• Mutaciones locales pendientes por subir: <strong>${pendingCount}</strong></div>
+            <div>• Lecturas pendientes por subir: <strong>${pendingCount}</strong></div>
             <div>• Última sincronización: <span style="font-family: monospace;">${lastSync !== '1970-01-01T00:00:00.000Z' ? new Date(lastSync).toLocaleTimeString() : 'Nunca'}</span></div>
-            <div>• Repositorio Remoto (Origin): <strong>Supabase Cloud</strong> (${SYNC_CONFIG.SUPABASE_URL.slice(8, 28)}...)</div>
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
-            <button type="button" id="btnModalPushGlobal" class="btn btn-primary" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.88rem; background: #0284c7; border: none; border-radius: 6px; color: white; cursor: pointer;">
-              ⬆️ Subir Cambios Locales (Push)
+            <button type="button" id="btnModalPushGlobal" class="btn btn-primary" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.9rem; background: #0284c7; border: none; border-radius: 6px; color: white; cursor: pointer;">
+              ⬆️ Subir Lecturas a la Nube
             </button>
-            <button type="button" id="btnModalPullGlobal" class="btn" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.88rem; border: 1px solid #059669; color: #065f46; background: #ecfdf5; border-radius: 6px; cursor: pointer;">
-              ⬇️ Descargar Actualizaciones de la Nube (Pull)
-            </button>
-            <button type="button" id="btnModalSyncAllGlobal" class="btn btn-outline" style="width: 100%; padding: 9px; font-weight: 700; font-size: 0.82rem; border: 1px solid #64748b; color: #334155; border-radius: 6px; background: white; cursor: pointer;">
-              🔄 Sincronización Completa Bidireccional
+            <button type="button" id="btnModalPullGlobal" class="btn" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.9rem; border: 1px solid #059669; color: #065f46; background: #ecfdf5; border-radius: 6px; cursor: pointer;">
+              🔄 Actualizar Datos desde la Nube
             </button>
           </div>
         </div>
@@ -345,36 +361,58 @@ function openGlobalSyncModal() {
       didOpen: () => {
         document.getElementById('btnModalPushGlobal')?.addEventListener('click', async () => {
           Swal.showLoading();
-          const res = await syncEngine.pushPending();
-          Swal.fire({
-            icon: res.success ? 'success' : 'warning',
-            title: res.success ? '¡Push Completado!' : 'Aviso de Sincronización',
-            text: res.success ? `Se subieron ${res.pushed || 0} cambios.` : (res.reason || res.error || 'Error de conexión')
-          });
+          const res = await syncEngine.pushPending(true);
+          const p = res.pushed || 0;
+          const tot = res.total || 0;
+          const rej = res.rejected || 0;
+          if (tot === 0) {
+            Swal.fire({
+              icon: 'info',
+              title: 'Al Día',
+              text: 'No hay lecturas pendientes por subir.'
+            });
+          } else if (rej === 0 && p > 0) {
+            Swal.fire({
+              icon: 'success',
+              title: '¡Lecturas Subidas con Éxito!',
+              text: `Se subieron las ${p} lecturas correctamente a la nube.`
+            });
+          } else if (p > 0 && rej > 0) {
+            Swal.fire({
+              icon: 'warning',
+              title: 'Subida Parcial',
+              text: `Se subieron ${p} de ${tot} lecturas. Quedan ${rej} pendientes.`
+            });
+          } else {
+            const firstErr = res.acks?.find((a) => a.status === 'REJECTED')?.error;
+            Swal.fire({
+              icon: 'error',
+              title: 'Aviso de Sincronización',
+              text: firstErr || res.reason || res.error || 'No se pudieron subir las lecturas.'
+            });
+          }
         });
 
         document.getElementById('btnModalPullGlobal')?.addEventListener('click', async () => {
           Swal.showLoading();
           const res = await syncEngine.pullDeltas();
-          Swal.fire({
-            icon: res.success ? 'success' : 'warning',
-            title: res.success ? '¡Pull Completado!' : 'Aviso de Sincronización',
-            text: res.success ? `Se descargaron y fusionaron ${res.pulled || 0} registros.` : (res.error || 'Error de conexión')
-          }).then(() => {
-            window.location.reload();
-          });
-        });
-
-        document.getElementById('btnModalSyncAllGlobal')?.addEventListener('click', async () => {
-          Swal.showLoading();
-          await syncEngine.syncAll();
-          Swal.fire({
-            icon: 'success',
-            title: '¡Sincronización Completada!',
-            text: 'Base de datos local sincronizada con la nube.'
-          }).then(() => {
-            window.location.reload();
-          });
+          if (res.success) {
+            Swal.fire({
+              icon: 'success',
+              title: '¡Datos Actualizados!',
+              text: `Se actualizaron los datos desde la nube correctamente.`
+            }).then(() => {
+              if (window.location.pathname.includes('lecturas')) {
+                window.location.reload();
+              }
+            });
+          } else {
+            Swal.fire({
+              icon: 'warning',
+              title: 'Aviso',
+              text: res.error || 'No se pudo conectar con la nube.'
+            });
+          }
         });
       }
     });
@@ -393,13 +431,15 @@ function initNetworkSimulator() {
 
   toggleNetworkBtn.addEventListener('click', () => {
     isOnlineSimulator = !isOnlineSimulator;
+    syncEngine.isSimulatedOffline = !isOnlineSimulator;
     if (isOnlineSimulator) {
       toggleNetworkBtn.className = 'btn-network-sidebar online';
       networkStatusText.textContent = 'En Línea';
       networkBanner.className = 'status-banner banner-online';
       bannerTitle.textContent = 'Conexión Activa';
-      bannerDesc.textContent = 'Los datos se guardan en IndexedDB local y se sincronizan con SQLite central.';
+      bannerDesc.textContent = 'Los datos se guardan en IndexedDB local y se sincronizan con Supabase Cloud.';
       window.dispatchEvent(new Event('online'));
+      setTimeout(() => syncEngine.pushPending().catch(() => {}), 500);
     } else {
       toggleNetworkBtn.className = 'btn-network-sidebar offline';
       networkStatusText.textContent = 'Modo Local / Fuera de Línea';

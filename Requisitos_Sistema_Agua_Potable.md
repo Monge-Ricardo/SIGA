@@ -6,8 +6,8 @@
 ### 📌 Ficha Técnica del Proyecto
 * **Nombre del Sistema:** Sistema de Gestión de Agua Potable y Alcantarillado Comunitario (*SIGA-Comunitario*)
 * **Entorno de Despliegue:** Hardware de bajos recursos (Optimizado para procesadores Intel Inside / Celeron / 2GB–4GB RAM).
-* **Arquitectura Recomendada:** Monolito ligero / Aplicación de escritorio local o Web local (ej. SQLite + Python/FastAPI/Tkinter/Electron ligero o PHP/SQLite).
-* **Versión:** 1.0.0
+* **Arquitectura Recomendada:** Arquitectura de 2 Capas Offline-First (Capa 1: PWA / IndexedDB local para respuesta instantánea <50ms y autonomía 100% offline; Capa 2: Supabase PostgreSQL Cloud para centralización remota y respaldos; Servidor Node.js ligero como host estático y proxy CORS).
+* **Versión:** 2.0.0
 * **Fecha:** Agosto 2026
 
 ---
@@ -23,7 +23,7 @@ El sistema tiene como objetivo automatizar el ciclo integral de la junta de agua
 | ID | Requisito | Descripción |
 | :--- | :--- | :--- |
 | **RNF-01** | **Bajo Consumo de Recursos** | El sistema debe ejecutarse de forma fluida en equipos con procesador **Intel Inside / Celeron / Pentium** y 2 GB a 4 GB de memoria RAM. |
-| **RNF-02** | **Motor de Base de Datos Ligero** | Uso de **SQLite** embebido o **MariaDB Lite**, sin necesidad de servidores dedicados pesados. |
+| **RNF-02** | **Persistencia de 2 Capas (Sin SQLite)** | Persistencia local en el cliente vía **IndexedDB** (`siga_offline_db`) y persistencia central en la nube vía **Supabase PostgreSQL**, sin dependencia de bases de datos locales intermedias como SQLite. |
 | **RNF-03** | **Modo Offline / Local** | Operación 100% local sin dependencia obligatoria de conexión a Internet para cobro y toma de lecturas. |
 | **RNF-04** | **Integridad Transaccional** | Bloqueo de lecturas y facturas ya cobradas para evitar descuadres de caja y alteraciones históricas. |
 
@@ -184,8 +184,8 @@ Cada pago de cuota básica normal de $7.00 se fracciona automáticamente al mome
 
 ## 6. CRONOGRAMA DE IMPLEMENTACIÓN RECOMENDADO
 
-* **Fase 1:** Base de datos SQLite y Módulo de Socios con cálculo dinámico de 3ra Edad.
-* **Fase 2:** Módulo de Toma de Lecturas (Rol Lector) con validación $L_{act} \ge L_{ant}$ y cálculo de excedente ($>30	ext{ m}^3$).
+* **Fase 1:** Persistencia local en IndexedDB, sincronización con Supabase Cloud y Módulo de Socios con cálculo dinámico de 3ra Edad.
+* **Fase 2:** Módulo de Toma de Lecturas (Rol Lector) con validación $L_{act} \ge L_{ant}$ y cálculo de excedente ($>30\text{ m}^3$).
 * **Fase 3:** Motor de Facturación, cobro en caja y liquidación con desglose de alcantarillado, multas y deudas anteriores.
 * **Fase 4:** Libro Mayor de Contraloría (Fondos con 3 columnas: Ingreso, Egreso, Saldo) y reparto del canon base.
 * **Fase 5:** Módulo de Reportería (Mensual, Trimestral, Semestral, Anual) por socio y sector.

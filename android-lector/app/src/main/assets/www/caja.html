@@ -79,13 +79,6 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="selectSocioCobro" style="font-size: 0.8rem; color: #64748b;">O seleccionar del padrón alfabético:</label>
-          <select id="selectSocioCobro" style="font-size: 0.9rem; font-weight: 600;">
-            <option value="">-- Buscar o seleccionar socio del padrón --</option>
-          </select>
-        </div>
-
         <!-- Información y Desglose de la Planilla -->
         <div id="socioPlanillaDetails" style="display: none; flex-direction: column; gap: 1rem;">
           <!-- Socio Mini Card -->
@@ -101,28 +94,31 @@
             </div>
           </div>
 
-          <!-- Medicion del Mes -->
           <div class="tariff-breakdown-box">
-            <div class="breakdown-row" style="color: #0369a1; font-weight: 700; border-bottom: 1px dashed #cbd5e1; padding-bottom: 4px;">
-              <span>⏱️ Lectura Anterior: <strong id="posLant">0</strong> m³</span>
-              <span>⏱️ Lectura Actual: <strong id="posLact">0</strong> m³</span>
-              <span>Consumo: <strong id="posConsumo">0</strong> m³</span>
+            <!-- Desglose de Medidores del Mes (Soporta 1 o más medidores individuales) -->
+            <div style="margin-bottom: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.85rem; font-weight: 800; color: #0369a1;">
+                  💧 Medidores y Consumo del Mes:
+                </span>
+                <span style="font-size: 0.74rem; color: #64748b;">Marque los que cancelará hoy</span>
+              </div>
+              <div id="containerMedidoresPOS" style="display: flex; flex-direction: column; gap: 8px;">
+                <!-- Inyectado dinámicamente: Tarjeta por cada medidor con desglose individual y checkbox -->
+              </div>
             </div>
 
-            <!-- Rubros Desglosados -->
-            <div class="breakdown-row" style="margin-top: 6px;">
-              <span>🔹 Cargo Fijo Base (hasta 30 m³):</span>
-              <strong id="posCargoBase">$7.00</strong>
-            </div>
-
-            <div class="breakdown-row">
-              <span>🔹 Excedente (<span id="posExcedenteM3">0</span> m³ x $0.10):</span>
-              <strong id="posExcedenteUSD">$0.00</strong>
-            </div>
-
-            <div class="breakdown-row">
-              <span>🔹 Servicio de Alcantarillado:</span>
-              <strong id="posAlcantarilladoUSD">$0.00</strong>
+            <!-- Deuda Anterior de Alcantarillado con Casilla de Selección -->
+            <div id="sectionDeudaAlcantarillado" style="display: none; margin-top: 8px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.82rem; font-weight: 700; color: #0284c7;">
+                  🌊 Deuda Anterior de Alcantarillado:
+                </span>
+                <span style="font-size: 0.73rem; color: #64748b;">Marque la casilla si abonará hoy</span>
+              </div>
+              <div id="containerDeudaAlcantarillado" style="display: flex; flex-direction: column; gap: 4px;">
+                <!-- Inyectado dinámicamente con checkbox -->
+              </div>
             </div>
 
             <!-- Deudas Anteriores / Meses Pendientes con Checkboxes -->
@@ -206,15 +202,49 @@
 
       <!-- Right Column: Recibos Emitidos Hoy -->
       <div class="table-container-card">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-          <h3 style="font-size: 1rem; font-weight: 800; color: #0f172a;">
-            🧾 Recibos Emitidos Hoy
-          </h3>
-          <span class="badge-code" id="fechaHoyBadge"></span>
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h3 style="font-size: 1rem; font-weight: 800; color: #0f172a; margin: 0;">
+              🧾 Recibos Emitidos
+            </h3>
+            <span class="badge-code" id="fechaHoyBadge"></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <button class="btn btn-secondary" id="btnPrintCuadreHoy" style="padding: 0.35rem 0.75rem; font-size: 0.82rem; font-weight: 700; gap: 4px;" title="Imprimir reporte y cuadre diario de todos los recibos emitidos hoy">
+              🖨️ Imprimir Cuadre del Día
+            </button>
+          </div>
         </div>
-        <div class="table-responsive">
+
+        <!-- Barra de filtros: Hoy / Todos + Buscador en vivo -->
+        <div style="padding: 0.65rem 1rem; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+          <div class="filter-tabs-pills" style="display: flex; gap: 4px;">
+            <button type="button" id="tabRecibosHoy" class="btn btn-sm btn-primary" style="padding: 0.3rem 0.75rem; font-size: 0.8rem; font-weight: 700;">
+              📅 Hoy (<span id="countRecibosHoy">0</span>)
+            </button>
+            <button type="button" id="tabRecibosTodos" class="btn btn-sm btn-outline-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.8rem; font-weight: 600; background: #ffffff; border: 1px solid #cbd5e1; color: #475569;">
+              📋 Historial (<span id="countRecibosTodos">0</span>)
+            </button>
+          </div>
+          <div style="flex: 1; min-width: 180px; max-width: 260px;">
+            <input 
+              type="text" 
+              id="inputBuscarReciboTabla" 
+              placeholder="🔍 Filtrar recibo o socio..." 
+              style="width: 100%; padding: 0.35rem 0.65rem; font-size: 0.82rem; border: 1px solid #cbd5e1; border-radius: 6px; outline: none;"
+            />
+          </div>
+        </div>
+
+        <!-- Resumen de recaudación del filtro -->
+        <div id="resumenRecibosBar" style="padding: 0.4rem 1rem; background: #f1f5f9; font-size: 0.78rem; color: #334155; display: flex; justify-content: space-between; align-items: center;">
+          <span id="txtResumenRecibos">Recibos emitidos hoy: <strong>0</strong></span>
+          <span id="txtMontoResumenRecibos">Total Recaudado: <strong style="color: #0284c7; font-size: 0.88rem;">$0.00 USD</strong></span>
+        </div>
+
+        <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
           <table class="data-table">
-            <thead>
+            <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 1;">
               <tr>
                 <th>N° Recibo</th>
                 <th>Abonado</th>
@@ -325,7 +355,7 @@
                 <th class="sub-col">Total</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="reciboTableBody">
               <tr class="data-row">
                 <td id="reciboTblLact">185</td>
                 <td id="reciboTblLant">150</td>
@@ -354,8 +384,9 @@
             <div class="footer-left">
               <div class="pishilata-disclaimer">Válido como comprobante de pago si tiene sello de cancelación.</div>
               <div class="pishilata-cajero-tag">
-                <span>Atendido por: <strong id="reciboCajeroTxt">Gladys Guamán (Tesorera)</strong></span> &bull; 
-                <span>Método: <strong id="reciboMetodoTxt">EFECTIVO</strong></span>
+                <span>Atendido por: <strong id="reciboCajeroTxt">Cajero Responsable</strong></span> &bull; 
+                <span>Método: <strong id="reciboMetodoTxt">EFECTIVO</strong></span> &bull; 
+                <span>N° Recibo: <strong id="reciboCodigoTxt" style="color: #b91c1c; font-weight: 800;">REC-001316</strong></span>
               </div>
             </div>
 
@@ -396,6 +427,88 @@
           </button>
         </div>
         <button class="btn btn-primary" id="btnDoneRecibo" style="font-weight: 700; padding: 0.6rem 1.5rem;">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL CUADRE / LISTADO DE RECIBOS DEL DÍA (OFICIAL PISHILATA) -->
+  <div id="modalCuadreDiarioPrint" class="modal-overlay" style="display: none;">
+    <div class="modal-card" style="max-width: 880px; width: 96%; padding: 0; background: #fff;">
+      <div class="modal-header" style="padding: 1rem 1.25rem; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="font-size: 1.15rem; font-weight: 800; color: #0f172a; margin: 0;">
+          📑 Cuadre y Listado de Recibos Emitidos Hoy
+        </h3>
+        <button class="btn-close-modal" id="btnCloseCuadreModal">&times;</button>
+      </div>
+
+      <div style="padding: 1.5rem; overflow-x: auto;" id="printableCuadreContent">
+        <div class="pishilata-cuadre-report" style="color: #0f172a; font-family: 'Segoe UI', system-ui, sans-serif;">
+          <!-- Cabecera Oficial -->
+          <div style="text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 0.75rem; margin-bottom: 1rem;">
+            <h2 style="font-size: 1.15rem; font-weight: 900; margin: 0; text-transform: uppercase; color: #0f172a;">
+              Junta Administradora de Agua Potable y Alcantarillado "PISHILATA"
+            </h2>
+            <div style="font-size: 0.85rem; font-weight: 700; color: #475569; margin-top: 2px;">
+              PROVINCIA DE TUNGURAHUA &bull; ECUADOR
+            </div>
+            <div style="font-size: 1rem; font-weight: 800; color: #0284c7; margin-top: 6px; letter-spacing: 0.5px;">
+              REPORTE DIARIO DE RECAUDACIÓN Y CIERRE DE CAJA
+            </div>
+          </div>
+
+          <!-- Metadatos de la Jornada -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.88rem;">
+            <div><strong>Fecha de Emisión:</strong> <span id="cuadreFechaTxt">13 de Septiembre del 2026</span></div>
+            <div><strong>Atendido por:</strong> <span id="cuadreCajeroTxt">Cajero Responsable</span></div>
+            <div><strong>Total Recibos:</strong> <span id="cuadreTotalRecibosTxt" style="font-weight: 800; color: #0284c7;">0</span></div>
+            <div><strong>Total Recaudado:</strong> <span id="cuadreTotalRecaudadoTxt" style="font-weight: 900; color: #16a34a; font-size: 1rem;">$0.00 USD</span></div>
+          </div>
+
+          <!-- Tabla Detallada de Recibos de Hoy -->
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-bottom: 1.5rem;" class="pishilata-table">
+            <thead>
+              <tr style="background: #0f172a; color: #ffffff;">
+                <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">N° Recibo</th>
+                <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Hora</th>
+                <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Abonado / Socio</th>
+                <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Cuenta / Cédula</th>
+                <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Medidor</th>
+                <th style="padding: 6px 8px; text-align: center; border: 1px solid #0f172a;">Método</th>
+                <th style="padding: 6px 8px; text-align: right; border: 1px solid #0f172a;">Cobrado ($)</th>
+              </tr>
+            </thead>
+            <tbody id="cuadreTableBody">
+              <!-- Filas dinámicas -->
+            </tbody>
+            <tfoot>
+              <tr style="background: #f1f5f9; font-weight: 900; font-size: 0.9rem;">
+                <td colspan="6" style="padding: 8px; text-align: right; border: 1px solid #334155;">TOTAL RECAUDADO EN EL DÍA:</td>
+                <td style="padding: 8px; text-align: right; border: 1px solid #334155; color: #0284c7;" id="cuadreFooterTotal">$0.00</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <!-- Firmas de Responsabilidad -->
+          <div style="display: flex; justify-content: space-around; margin-top: 3rem; padding-top: 1rem;">
+            <div style="text-align: center; width: 240px; border-top: 1.5px solid #0f172a; padding-top: 6px;">
+              <strong id="cuadreFirmaCajero">Cajero Responsable</strong>
+              <div style="font-size: 0.78rem; color: #64748b;">Recaudador / Cajero Oficial</div>
+            </div>
+            <div style="text-align: center; width: 240px; border-top: 1.5px solid #0f172a; padding-top: 6px;">
+              <strong>Presidente / Tesorería</strong>
+              <div style="font-size: 0.78rem; color: #64748b;">Junta de Agua Potable Pishilata</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="padding: 1rem 1.25rem; justify-content: space-between; border-top: 1px solid #e2e8f0; background: #f8fafc; flex-wrap: wrap; gap: 0.5rem;">
+        <button class="btn btn-secondary" id="btnPrintCuadreModalBtn" style="font-weight: 700; gap: 6px; padding: 0.6rem 1.25rem;">
+          🖨️ Imprimir Cuadre Diario (PDF)
+        </button>
+        <button class="btn btn-primary" id="btnCloseCuadreModalBtn" style="font-weight: 700; padding: 0.6rem 1.5rem;">
           Cerrar
         </button>
       </div>

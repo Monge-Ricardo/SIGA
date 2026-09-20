@@ -198,8 +198,8 @@ export class ExpressApp extends Router {
       req.query = queryObj;
       req.params = {};
 
-      // 1. Manejo de Archivos Estáticos Frontend si es GET
-      if (req.method === 'GET' && !req.path.startsWith('/api/')) {
+      // 1. Manejo de Archivos Estáticos Frontend si es GET o HEAD
+      if (['GET', 'HEAD'].includes(req.method || '') && !req.path.startsWith('/api/')) {
         for (const dir of this.staticDirs) {
           let relativeFilePath = req.path === '/' ? 'login.html' : req.path.replace(/^\//, '');
           let filePath = path.join(dir, relativeFilePath);
@@ -211,7 +211,11 @@ export class ExpressApp extends Router {
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
             res.setHeader('Pragma', 'no-cache');
             res.setHeader('Expires', '0');
-            fs.createReadStream(filePath).pipe(res);
+            if (req.method === 'HEAD') {
+              res.end();
+            } else {
+              fs.createReadStream(filePath).pipe(res);
+            }
             return;
           }
 
@@ -223,7 +227,11 @@ export class ExpressApp extends Router {
               res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
               res.setHeader('Pragma', 'no-cache');
               res.setHeader('Expires', '0');
-              fs.createReadStream(htmlPath).pipe(res);
+              if (req.method === 'HEAD') {
+                res.end();
+              } else {
+                fs.createReadStream(htmlPath).pipe(res);
+              }
               return;
             }
           }

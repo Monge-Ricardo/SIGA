@@ -34,7 +34,7 @@ export class SupabaseClient {
     if (this.isConfigured) {
       console.log(`📡 [Supabase] Configurado y listo para sincronizar con: ${this.url}`);
     } else {
-      console.log('ℹ️ [Supabase] Modo 100% Offline / SQLite local activo (SUPABASE_URL no configurada).');
+      console.log('ℹ️ [Supabase] Modo Offline / Sin conexión remota (SUPABASE_URL no configurada).');
     }
   }
 
@@ -72,7 +72,8 @@ export class SupabaseClient {
           Prefer: 'return=representation',
           ...options.headers
         },
-        body: options.body ? JSON.stringify(options.body) : undefined
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: AbortSignal.timeout(8000)
       });
 
       if (!response.ok) {
@@ -80,10 +81,22 @@ export class SupabaseClient {
         return { data: null, error: `[Supabase HTTP ${response.status}] ${errorText}` };
       }
 
-      const data = (await response.json()) as T;
+      if (response.status === 204) {
+        return { data: null, error: null };
+      }
+
+      const text = await response.text();
+      if (!text || !text.trim()) {
+        return { data: null, error: null };
+      }
+
+      const data = JSON.parse(text) as T;
       return { data, error: null };
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido al consultar Supabase';
+      const cause = (err as any)?.cause?.message || (err as any)?.cause?.code;
+      const message = err instanceof Error
+        ? `${err.message}${cause ? ` (${cause})` : ''}`
+        : 'Error desconocido al consultar Supabase';
       return { data: null, error: message };
     }
   }
@@ -94,12 +107,26 @@ export class SupabaseClient {
   public async syncRecord(tableName: string, record: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
     if (!this.isConfigured || process.env.NODE_ENV === 'test' || process.env.DISABLE_SUPABASE_SYNC === 'true') return { success: true };
 
-    const result = await this.request(tableName, {
+    let payload = record;
+    if (tableName === 'socios' || tableName === 'clientes') {
+      const { id_sector, medidor_numero, nombre_sector, ...cleanSocio } = record as any;
+      payload = cleanSocio;
+    } else if (tableName === 'facturas') {
+      const { monto_pagado, saldo_pendiente, socio_nombre, socio_cedula, periodo_codigo, observaciones, ...cleanFactura } = record as any;
+      payload = cleanFactura;
+    } else if (tableName === 'medidores') {
+      const { lectura_actual, lectura_anterior, consumo, socio_nombre, ...cleanMedidor } = record as any;
+      payload = cleanMedidor;
+    }
+
+    const endpoint = tableName === 'lecturas' ? `${tableName}?on_conflict=id_medidor,id_periodo` : tableName;
+
+    const result = await this.request(endpoint, {
       method: 'POST',
       headers: {
         Prefer: 'resolution=merge-duplicates,return=representation'
       },
-      body: record
+      body: payload
     });
 
     if (result.error) {
@@ -110,18 +137,23 @@ export class SupabaseClient {
     return { success: true };
   }
 
-  /**
-   * Elimina un registro de una tabla en Supabase por su ID o clave primaria
-   */
   public async deleteRecord(tableName: string, id: string, idColumn = 'id'): Promise<{ success: boolean; error?: string }> {
     if (!this.isConfigured || process.env.NODE_ENV === 'test' || process.env.DISABLE_SUPABASE_SYNC === 'true') return { success: true };
 
-    const result = await this.request(`${tableName}?${idColumn}=eq.${encodeURIComponent(id)}`, {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let actualColumn = idColumn;
+    if (idColumn === 'id' && !uuidRegex.test(id)) {
+      if (tableName === 'facturas') actualColumn = 'numero_factura';
+      else if (tableName === 'socios') actualColumn = 'cedula_ruc';
+      else if (tableName === 'medidores') actualColumn = 'numero_medidor';
+    }
+
+    const result = await this.request(`${tableName}?${actualColumn}=eq.${encodeURIComponent(id)}`, {
       method: 'DELETE'
     });
 
     if (result.error) {
-      console.warn(`⚠️ [Supabase Sync] Error eliminando de tabla ${tableName} (${idColumn}=${id}):`, result.error);
+      console.warn(`⚠️ [Supabase Sync] Error eliminando de tabla ${tableName} (${actualColumn}=${id}):`, result.error);
       return { success: false, error: result.error };
     }
 

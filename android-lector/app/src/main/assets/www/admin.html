@@ -65,20 +65,36 @@
             <input type="number" id="cfgRecargoAlcantarillado" step="0.01" required style="width: 100%; padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
           </div>
 
-          <div style="background: #f8fafc; padding: 0.75rem; border-radius: 6px; border: 1px dashed #cbd5e1;">
-            <div style="font-size: 0.78rem; font-weight: 700; color: #475569; margin-bottom: 0.5rem;">
-              Reparto Contable de la Cuota Normal ($7.00):
+          <div style="background: #f8fafc; padding: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1;">
+            <div style="font-size: 0.82rem; font-weight: 700; color: #1e293b; margin-bottom: 0.5rem; display: flex; justify-content: space-between;">
+              <span>🏛️ Reparto Contable de Fondos Base:</span>
+              <span style="font-size: 0.72rem; color: #64748b;">(Excedentes van 100% a Pro-Mejoras)</span>
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.8rem;">
-              <div>Padre / Parroquia: <strong>$2.00</strong></div>
-              <div>Operación / Mantenimiento: <strong>$4.00</strong></div>
-              <div>Honorarios Lector: <strong>$0.50</strong></div>
-              <div>Fondo Mortuorio: <strong>$0.50</strong></div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem;">
+              <div class="form-group">
+                <label for="cfgRepartoOperacion" style="font-size: 0.75rem; font-weight: 700; color: #475569;">Operación y Mant. ($) *</label>
+                <input type="number" id="cfgRepartoOperacion" step="0.01" min="0" required style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #cbd5e1; font-weight: 700;" />
+              </div>
+              <div class="form-group">
+                <label for="cfgRepartoPadre" style="font-size: 0.75rem; font-weight: 700; color: #475569;">Padre / Parroquia ($) *</label>
+                <input type="number" id="cfgRepartoPadre" step="0.01" min="0" required style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #cbd5e1; font-weight: 700;" />
+              </div>
+              <div class="form-group">
+                <label for="cfgRepartoLector" style="font-size: 0.75rem; font-weight: 700; color: #475569;">Honorarios Lector ($) *</label>
+                <input type="number" id="cfgRepartoLector" step="0.01" min="0" required style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #cbd5e1; font-weight: 700;" />
+              </div>
+              <div class="form-group">
+                <label for="cfgRepartoMortuorio" style="font-size: 0.75rem; font-weight: 700; color: #475569;">Fondo Mortuorio ($) *</label>
+                <input type="number" id="cfgRepartoMortuorio" step="0.01" min="0" required style="width: 100%; padding: 0.4rem; border-radius: 4px; border: 1px solid #cbd5e1; font-weight: 700;" />
+              </div>
+            </div>
+            <div style="margin-top: 0.5rem; font-size: 0.72rem; color: #0369a1; background: #e0f2fe; padding: 0.45rem 0.65rem; border-radius: 4px; border: 1px solid #bae6fd;">
+              👵 <strong>Adulto Mayor / 3ra Edad ($5.00):</strong> $2.00 Padre (Parroquia), $2.00 Operación, $0.50 Lector, $0.50 Mortuorio.
             </div>
           </div>
 
           <button type="submit" id="btnGuardarTarifas" class="btn btn-primary" style="margin-top: 0.5rem;">
-            💾 Guardar Configuración de Tarifas
+            💾 Guardar Parámetros y Tarifas
           </button>
         </form>
       </div>
@@ -114,10 +130,11 @@
                 <th>Código</th>
                 <th>Nombre del Sector</th>
                 <th>Descripción</th>
+                <th style="text-align: center; width: 140px;">Acciones</th>
               </tr>
             </thead>
             <tbody id="tbodySectores">
-              <tr><td colspan="3" style="text-align: center; color: #64748b;">Cargando sectores...</td></tr>
+              <tr><td colspan="4" style="text-align: center; color: #64748b;">Cargando sectores...</td></tr>
             </tbody>
           </table>
         </div>
@@ -153,9 +170,10 @@
           <div class="form-group">
             <label style="font-size: 0.8rem; font-weight: 700;">Rol del Sistema *</label>
             <select id="usrRol" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;">
-              <option value="CAJERO">CAJERO (Tesorero / Operador Integral)</option>
+              <option value="CAJERO">CAJERO (Cajero / Cobros)</option>
               <option value="LECTOR">LECTOR (Toma de Micromedición)</option>
               <option value="ADMIN">ADMIN (Gobernanza y Directiva)</option>
+              <option value="AUDITOR">AUDITOR (Solo Consulta / Reportes)</option>
             </select>
           </div>
         </div>
@@ -174,12 +192,97 @@
               <th>Rol Asignado</th>
               <th>Estado</th>
               <th>Fecha de Creación</th>
+              <th style="text-align: center; width: 220px;">Acciones</th>
             </tr>
           </thead>
           <tbody id="tbodyUsuarios">
-            <tr><td colspan="5" style="text-align: center; color: #64748b;">Cargando usuarios...</td></tr>
+            <tr><td colspan="6" style="text-align: center; color: #64748b;">Cargando usuarios...</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Modal Editar Usuario -->
+    <div id="modalEditarUsuario" class="admin-modal-backdrop" style="display: none;">
+      <div class="admin-modal-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 0.4rem;">
+            <span>✏️</span> Modificar Usuario del Sistema
+          </h3>
+          <button type="button" id="btnCerrarModalUsuario" style="background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #64748b; line-height: 1;">&times;</button>
+        </div>
+
+        <form id="formEditarUsuario" style="display: flex; flex-direction: column; gap: 0.75rem;">
+          <input type="hidden" id="editUsrId" />
+
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700; color: #475569;">Nombre de Usuario (Login) *</label>
+            <input type="text" id="editUsrUsername" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1; font-weight: 600;" />
+            <small style="color: #64748b; font-size: 0.72rem; display: block; margin-top: 0.2rem;">Identificador único de acceso al sistema.</small>
+          </div>
+
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700; color: #475569;">Nombre Completo *</label>
+            <input type="text" id="editUsrNombre" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          </div>
+
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700; color: #475569;">Rol Asignado *</label>
+            <select id="editUsrRol" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;">
+              <option value="CAJERO">CAJERO (Cajero / Cobros)</option>
+              <option value="LECTOR">LECTOR (Toma de Micromedición)</option>
+              <option value="ADMIN">ADMIN (Gobernanza y Directiva)</option>
+              <option value="AUDITOR">AUDITOR (Solo Consulta / Reportes)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700; color: #475569;">Nueva Contraseña (Opcional)</label>
+            <input type="password" id="editUsrPassword" placeholder="Dejar en blanco para conservar actual" style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+            <small style="color: #64748b; font-size: 0.72rem; display: block; margin-top: 0.2rem;">Escriba una nueva clave solo si desea restablecerla.</small>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem;">
+            <button type="button" class="btn btn-sm btn-secondary" id="btnCancelarEditarUsuario">Cancelar</button>
+            <button type="submit" class="btn btn-sm btn-primary">Guardar Cambios</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal Editar Sector -->
+    <div id="modalEditarSector" class="admin-modal-backdrop" style="display: none;">
+      <div class="admin-modal-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0; display: flex; align-items: center; gap: 0.4rem;">
+            <span>✏️</span> Modificar Sector Geográfico
+          </h3>
+          <button type="button" id="btnCerrarModalSector" style="background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #64748b; line-height: 1;">&times;</button>
+        </div>
+
+        <form id="formEditarSector" style="display: flex; flex-direction: column; gap: 0.75rem;">
+          <input type="hidden" id="editSecId" />
+
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700; color: #475569;">Código de Sector *</label>
+            <input type="text" id="editSecCodigo" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1; text-transform: uppercase;" />
+          </div>
+
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700; color: #475569;">Nombre del Sector *</label>
+            <input type="text" id="editSecNombre" required style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          </div>
+
+          <div class="form-group">
+            <label style="font-size: 0.8rem; font-weight: 700; color: #475569;">Descripción de la Zona</label>
+            <input type="text" id="editSecDesc" style="width: 100%; padding: 0.45rem; border-radius: 4px; border: 1px solid #cbd5e1;" />
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem;">
+            <button type="button" class="btn btn-sm btn-secondary" id="btnCancelarEditarSector">Cancelar</button>
+            <button type="submit" class="btn btn-sm btn-primary">Guardar Cambios</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

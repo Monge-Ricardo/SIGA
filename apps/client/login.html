@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iniciar Sesión • SIGA-Comunitario</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0284c7" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="login.css" />
+</head>
+<body class="login-body">
+  <div class="login-wrapper">
+    <div class="login-header">
+      <div class="logo">💧</div>
+      <h1>SIGA-Comunitario</h1>
+      <p>Sistema Integral de Agua Potable y Facturación</p>
+    </div>
+
+    <form id="formLogin">
+      <div class="form-group">
+        <label for="loginUser">Usuario o Correo</label>
+        <input 
+          type="text" 
+          id="loginUser" 
+          class="form-control-input" 
+          placeholder="Ingrese su usuario o correo" 
+          required 
+          autocomplete="username"
+          autofocus
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="loginPassword">Contraseña</label>
+        <input 
+          type="password" 
+          id="loginPassword" 
+          class="form-control-input" 
+          placeholder="Ingrese su contraseña" 
+          required 
+          autocomplete="current-password"
+        />
+      </div>
+
+      <div id="loginError" class="error-box"></div>
+
+      <button 
+        type="submit" 
+        id="btnSubmit" 
+        class="btn btn-primary" 
+        style="width: 100%; padding: 0.75rem; font-size: 1rem; font-weight: 700; border-radius: 6px; background: #0284c7; border: none; color: white; cursor: pointer;"
+      >
+        Iniciar Sesión
+      </button>
+    </form>
+  </div>
+
+  <script type="module">
+    import { login } from './auth.js';
+
+    // Registrar Service Worker PWA
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(console.warn);
+    }
+
+    const showError = (msg) => {
+      const errEl = document.getElementById('loginError');
+      errEl.textContent = `⚠️ ${msg}`;
+      errEl.style.display = 'block';
+    };
+
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('expired') === '1') {
+      showError('Su sesión ha expirado o el token no es válido. Por favor ingrese sus credenciales nuevamente.');
+    }
+
+    document.getElementById('formLogin').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const identifier = document.getElementById('loginUser').value;
+      const pass = document.getElementById('loginPassword').value;
+      const btn = document.getElementById('btnSubmit');
+
+      btn.disabled = true;
+      btn.textContent = 'Verificando...';
+      document.getElementById('loginError').style.display = 'none';
+
+      try {
+        const u = await login(identifier, pass);
+        if (u.rol === 'LECTOR') {
+          window.location.href = 'lecturas.html';
+        } else if (u.rol === 'CAJERO') {
+          window.location.href = 'caja.html';
+        } else {
+          window.location.href = 'socios.html';
+        }
+      } catch (err) {
+        showError(err.message || 'Credenciales incorrectas.');
+        btn.disabled = false;
+        btn.textContent = 'Iniciar Sesión';
+      }
+    });
+  </script>
+</body>
+</html>

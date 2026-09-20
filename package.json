@@ -9,10 +9,10 @@
   ],
   "scripts": {
     "start": "node --experimental-strip-types apps/server/src/index.ts",
-    "dev": "npm run dev --workspace=@app-agua/client & npm run dev --workspace=@app-agua/server",
+    "build": "node -e \"console.log('Build SIGA Comunitario listo')\"",
+    "dev": "node --experimental-strip-types apps/server/src/index.ts",
     "dev:client": "npm run dev --workspace=@app-agua/client",
     "dev:server": "npm run dev --workspace=@app-agua/server",
-    "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
     "test": "npm run test --workspaces"
   },

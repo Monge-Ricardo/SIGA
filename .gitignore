@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 .pnp
 .pnp.js
@@ -44,3 +44,12 @@ Thumbs.db
 # Temporary files
 temp/
 tmp/
+~$*.xlsx
+.artifacts/
+**/.artifacts/
+
+# Local scripts & audits with sensitive tokens
+scripts/
+*.xlsx
+excel_payments.json
+android-lector/SIGALector.apk

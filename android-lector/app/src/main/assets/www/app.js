@@ -387,8 +387,13 @@ function renderMetrics(socios) {
   document.getElementById('metricCarteraTotal').textContent = `$${carteraTotal.toFixed(2)} pendiente`;
 }
 
+function normalizeSearchText(text) {
+  if (!text || typeof text !== 'string') return '';
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
 function renderSociosTable(allSocios) {
-  const q = (document.getElementById('filterBusqueda').value || '').toLowerCase().trim();
+  const q = normalizeSearchText(document.getElementById('filterBusqueda')?.value);
   const sectorId = document.getElementById('filterSector').value;
   const estadoServicio = document.getElementById('filterEstadoServicio').value;
   const condicion = document.getElementById('filterCondicion').value;
@@ -397,10 +402,10 @@ function renderSociosTable(allSocios) {
   let filtrados = allSocios.filter((s) => {
     if (q) {
       const match =
-        s.nombreCompleto.toLowerCase().includes(q) ||
-        s.cedulaRuc.toLowerCase().includes(q) ||
-        s.codigoSocio.toLowerCase().includes(q) ||
-        (s.medidorNumero && s.medidorNumero.toLowerCase().includes(q));
+        normalizeSearchText(s.nombreCompleto).includes(q) ||
+        normalizeSearchText(s.cedulaRuc).includes(q) ||
+        normalizeSearchText(s.codigoSocio).includes(q) ||
+        (s.medidorNumero && normalizeSearchText(s.medidorNumero).includes(q));
       if (!match) return false;
     }
     if (sectorId !== 'TODOS' && s.sectorId !== sectorId) return false;

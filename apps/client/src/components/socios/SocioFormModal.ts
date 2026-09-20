@@ -104,6 +104,11 @@ export function createSocioFormModal(options: SocioFormModalOptions): HTMLElemen
     </div>
 
     <div class="form-group">
+      <label for="inputLecturaInicial">Lectura Inicial (m³)</label>
+      <input type="number" step="0.01" min="0" id="inputLecturaInicial" value="${socioToEdit?.lecturaInicial ?? 0}" placeholder="0.00" />
+    </div>
+
+    <div class="form-group">
       <label for="inputTelefono">Teléfono de Contacto</label>
       <input type="tel" id="inputTelefono" value="${socioToEdit?.telefono || ''}" placeholder="Ej. 0991234567" />
     </div>
@@ -225,6 +230,7 @@ export function createSocioFormModal(options: SocioFormModalOptions): HTMLElemen
     const sectorId = (form.querySelector('#selectSector') as HTMLSelectElement).value;
     const sectorSeleccionado = sectores.find((s) => s.id === sectorId);
     const medidorNumero = (form.querySelector('#inputMedidor') as HTMLInputElement).value.trim();
+    const lecturaInicial = parseFloat((form.querySelector('#inputLecturaInicial') as HTMLInputElement)?.value || '0') || 0;
     const telefono = (form.querySelector('#inputTelefono') as HTMLInputElement).value.trim();
     const direccion = (form.querySelector('#inputDireccion') as HTMLInputElement).value.trim();
     const fechaAfiliacion = (form.querySelector('#inputFechaAfil') as HTMLInputElement).value;
@@ -250,6 +256,7 @@ export function createSocioFormModal(options: SocioFormModalOptions): HTMLElemen
           sectorId,
           nombreSector: sectorSeleccionado?.nombre,
           medidorNumero: medidorNumero || undefined,
+          lecturaInicial,
           telefono: telefono || undefined,
           direccion: direccion || undefined,
           fechaAfiliacion,
@@ -271,6 +278,7 @@ export function createSocioFormModal(options: SocioFormModalOptions): HTMLElemen
           direccion,
           telefono,
           medidorNumero: medidorNumero || `MED-${Math.floor(10000 + Math.random() * 90000)}`,
+          lecturaInicial,
           tieneAlcantarillado,
           estadoServicio,
           estadoCuenta: 'AL_DIA',

@@ -8,6 +8,8 @@
   border-bottom: 2px solid #e2e8f0;
   margin-bottom: 1.5rem;
   padding-bottom: 0.25rem;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .report-tab-btn {
@@ -17,13 +19,18 @@
   border: 1px solid #e2e8f0;
   border-bottom: none;
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: #64748b;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 0.4rem;
   transition: all 0.15s;
+}
+
+.report-tab-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 .report-tab-btn.active {
@@ -63,6 +70,15 @@
   margin-top: 0.35rem;
 }
 
+.modal-overlay {
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @media print {
   .app-header, 
   .app-nav, 
@@ -77,10 +93,14 @@
   body {
     background: white !important;
     color: black !important;
-    font-size: 12pt;
+    font-size: 11pt;
   }
   .card {
     box-shadow: none !important;
-    border: 1px solid #000 !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+  #informeAsambleaBox {
+    border: none !important;
+    padding: 0 !important;
   }
 }

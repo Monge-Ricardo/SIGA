@@ -16,13 +16,13 @@ export const USERS_SEED: Array<Usuario & { password: string; cargo: string }> = 
     cargo: 'Administrador General / Directiva'
   },
   {
-    id: 'usr-tesorero',
-    nombre: 'María Elena Morales',
-    email: 'tesorero@agua.com',
+    id: 'usr-cajero',
+    nombre: 'Maribel Miño',
+    email: 'cajero@agua.com',
     password: 'caja',
     rol: 'CAJERO',
     activo: true,
-    cargo: 'Tesorera / Recaudadora'
+    cargo: 'Cajera'
   },
   {
     id: 'usr-lector',

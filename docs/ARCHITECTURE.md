@@ -1,18 +1,18 @@
-﻿# Arquitectura del Sistema App Agua (Offline-First)
+# Arquitectura del Sistema App Agua (Offline-First)
 
 ## 1. Visión General
 El sistema está diseñado bajo el paradigma **Local-First / Offline-First**. El cliente (navegador/PWA) no depende de la red para permitir a los usuarios registrar lecturas de medidores, emitir recibos de cobro de agua, o registrar entradas y salidas de caja. Toda la persistencia primaria ocurre en **IndexedDB** local, respondiendo a la UI en menos de 50 ms.
 
 ```
 +-------------------------------------------------------------+
-|                      CLIENTE (PWA)                          |
+|               CAPA 1: CLIENTE (PWA / ANDROID)               |
 |                                                             |
 |   +--------------------+          +---------------------+   |
-|   |  UI (Components)   | <------> | IndexedDB (Dexie)   |   |
-|   +--------------------+  <50ms   | - clientes          |   |
-|             |                     | - lecturas          |   |
-|             v (Encolar)           | - cobros            |   |
-|   +--------------------+          | - movimientos_caja  |   |
+|   |  UI (HTML5/JS/CSS) | <------> | IndexedDB           |   |
+|   +--------------------+  <50ms   | (siga_offline_db)   |   |
+|             |                     | - socios, medidores |   |
+|             v (Encolar)           | - lecturas, facturas|   |
+|   +--------------------+          | - cobros, fondos    |   |
 |   | sync_queue (Outbox)| <--------+---------------------+   |
 |   +--------------------+                                    |
 |             | (Segundo plano)                               |
@@ -22,20 +22,22 @@ El sistema está diseñado bajo el paradigma **Local-First / Offline-First**. El
 |   +--------------------+                                    |
 +-------------|-----------------------------------------------+
               |
-              | POST /api/v1/sync (Batch Deltas cuando hay red)
+              | POST /api/v1/sync/proxy o REST directo
               v
 +-------------------------------------------------------------+
-|                     SERVIDOR CENTRAL                        |
+|    SERVIDOR NODE.JS (Host Estático + Proxy Transparente)    |
+|   (Express: Servidor HTTP ligero y sin base de datos local)  |
++-------------------------------------------------------------+
+              |
+              | Conexión Segura HTTPS / REST API
+              v
++-------------------------------------------------------------+
+|         CAPA 2: NUBE CENTRAL (SUPABASE POSTGRESQL)          |
 |                                                             |
-|   +--------------------+          +---------------------+   |
-|   | Express / Fastify  | -------> | ConflictResolver    |   |
-|   | (SyncController)   |          | (Last-Write-Wins)   |   |
-|   +--------------------+          +---------------------+   |
-|             |                                               |
-|             v                                               |
-|   +-----------------------------------------------------+   |
-|   | Base de Datos Central (PostgreSQL / SQLite)         |   |
-|   +-----------------------------------------------------+   |
+|   - Base de Datos Relacional Central                        |
+|   - Tablas canónicas: socios, medidores, lecturas,          |
+|     facturas, fondos_catalogo, fondos_movimientos, etc.     |
+|   - Manejo de concurrencia y respaldos automáticos          |
 +-------------------------------------------------------------+
 ```
 

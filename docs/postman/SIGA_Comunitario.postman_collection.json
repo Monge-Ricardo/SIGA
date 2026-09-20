@@ -2,7 +2,7 @@
   "info": {
     "name": "SIGA-Comunitario API",
     "_postman_id": "c1f7a8b2-4d29-4a92-93cb-98f5a6b7e012",
-    "description": "Colección de pruebas REST para el Sistema de Gestión de Agua Potable y Alcantarillado Comunitario (SIGA-Comunitario) con soporte Offline-First, SQLite y Supabase.",
+    "description": "Colección de pruebas REST para el Sistema de Gestión de Agua Potable y Alcantarillado Comunitario (SIGA-Comunitario) con arquitectura de 2 capas (IndexedDB Offline-First y Supabase Cloud).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [

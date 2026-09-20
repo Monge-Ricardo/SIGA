@@ -2414,7 +2414,7 @@ body.has-sidebar-layout {
   .metrics-grid,
   .caja-layout-grid,
   .table-container-card,
-  .modal-overlay:not(#modalReciboPrint),
+  .modal-overlay:not(#modalReciboPrint):not(#modalCuadreDiarioPrint),
   .modal-header,
   .modal-actions,
   .btn-close-modal,
@@ -2489,6 +2489,90 @@ body.has-sidebar-layout {
   .pishilata-stamp-seal .stamp-inner {
     border-color: #b91c1c !important;
     color: #b91c1c !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Asegurar visualización impecable del número de recibo y correlativo al imprimir */
+  #modalReciboPrint div[style*="overflow-x"] {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .pishilata-meta-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    width: 100% !important;
+  }
+
+  .pishilata-num-badge,
+  .pishilata-num-badge span,
+  .pishilata-num-badge .num-highlight,
+  #reciboNumero,
+  #reciboCodigoTxt {
+    display: inline-block !important;
+    visibility: visible !important;
+    color: #b91c1c !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    font-weight: 900 !important;
+  }
+
+  .pishilata-cajero-tag span strong {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Ocultar modales no activos al imprimir */
+  #modalReciboPrint[style*="display: none"] {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  #modalCuadreDiarioPrint[style*="display: none"] {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  /* Impresión oficial del Cuadre Diario de Recibos */
+  #modalCuadreDiarioPrint {
+    position: static !important;
+    display: block !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    box-shadow: none !important;
+  }
+
+  #modalCuadreDiarioPrint .modal-card {
+    position: static !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+  }
+
+  #modalCuadreDiarioPrint div[style*="overflow-x"] {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .pishilata-cuadre-report {
+    width: 100% !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 2mm 5mm !important;
+  }
+
+  .pishilata-cuadre-report th,
+  .pishilata-cuadre-report td {
+    border-color: #000000 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }

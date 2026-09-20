@@ -1,61 +1,28 @@
-﻿import { defineConfig } from 'vite';
-import { VitePWA } from 'vite-plugin-pwa';
+import { defineConfig } from 'vite';
+import path from 'node:path';
 
 export default defineConfig({
-  plugins: [
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
-      manifest: {
-        name: 'Sistema de Cobro de Agua y Caja',
-        short_name: 'AppAgua',
-        description: 'Gestión Offline-First de cobro de agua y flujo de caja',
-        theme_color: '#0284c7',
-        background_color: '#f8fafc',
-        display: 'standalone',
-        orientation: 'portrait',
-        icons: [
-          {
-            src: 'pwa-192x192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png'
-          }
-        ]
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'google-fonts-cache',
-              expiration: {
-                maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              }
-            }
-          }
-        ]
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:4000',
+        changeOrigin: true
       }
-    })
-  ],
+    }
+  },
   build: {
     target: 'esnext',
-    minify: 'terser',
     rollupOptions: {
-      output: {
-        manualChunks: {
-          dexie: ['dexie']
-        }
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        login: path.resolve(__dirname, 'login.html'),
+        caja: path.resolve(__dirname, 'caja.html'),
+        socios: path.resolve(__dirname, 'socios.html'),
+        lecturas: path.resolve(__dirname, 'lecturas.html'),
+        fondos: path.resolve(__dirname, 'fondos.html'),
+        reportes: path.resolve(__dirname, 'reportes.html'),
+        admin: path.resolve(__dirname, 'admin.html')
       }
     }
   }

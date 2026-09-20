@@ -1,0 +1,20 @@
+{
+  "name": "SIGA-Comunitario • Sistema de Agua Potable",
+  "short_name": "SIGA Agua",
+  "description": "Sistema de gestión, micromedición y cobro de agua potable comunitario 100% Offline-First",
+  "start_url": "index.html",
+  "id": "/index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f8fafc",
+  "theme_color": "#0284c7",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

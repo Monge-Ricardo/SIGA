@@ -2,15 +2,40 @@
  * SIGA-Comunitario • Módulo de Autenticación y Manejo de Tokens
  */
 
+/**
+ * Normaliza texto eliminando acentos, tildes y diacríticos (ej: Ángel -> angel)
+ */
+export function normalizeSearchText(text) {
+  if (!text) return '';
+  return String(text)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Comprueba si todos los términos/tokens de la búsqueda están presentes en el texto destino
+ * ignorando acentos, mayúsculas y orden de palabras.
+ */
+export function matchesSearchTokens(targetText, query) {
+  if (!query) return true;
+  const cleanTarget = normalizeSearchText(targetText);
+  const cleanQuery = normalizeSearchText(query);
+  const tokens = cleanQuery.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  return tokens.every((token) => cleanTarget.includes(token));
+}
+
 export const USERS_SEED = [
   {
     id: 'usr-cajero',
     username: 'cajero',
     email: 'cajero@agua.com',
-    nombre: 'Tesorero / Cobrador General',
+    nombre: 'Operador de Caja',
     passwords: ['Cajero123*', 'cajero', 'caja'],
     rol: 'CAJERO',
-    cargo: 'Tesorero / Recaudador Integral'
+    cargo: 'Cajera'
   },
   {
     id: 'usr-admin',
@@ -57,10 +82,49 @@ export function getCurrentUser() {
     return null;
   }
   try {
-    return JSON.parse(data);
+    const user = JSON.parse(data);
+    if (user) {
+      const nom = user.nombreCompleto || user.nombre_completo || user.nombre || user.username || '';
+      user.nombre = nom;
+      user.nombreCompleto = nom;
+      user.nombre_completo = nom;
+    }
+    return user;
   } catch (e) {
     return null;
   }
+}
+
+export async function refreshCurrentUserProfile() {
+  try {
+    const token = getAuthToken();
+    if (!token || token === 'android-local-token' || token === 'local-session-jwt') {
+      return getCurrentUser();
+    }
+    const res = await apiFetch('/api/v1/auth/me');
+    if (res && res.usuario) {
+      const u = res.usuario;
+      const cur = getCurrentUser() || {};
+      const nom = u.nombreCompleto || u.nombre_completo || u.username;
+      const updated = {
+        ...cur,
+        id: u.id,
+        username: u.username,
+        nombre: nom,
+        nombreCompleto: nom,
+        nombre_completo: nom,
+        rol: u.rol || cur.rol,
+        cargo: u.rol === 'ADMIN' ? 'Administrador General' : u.rol === 'CAJERO' ? 'Cajera' : 'Lector de Campo',
+        activo: u.activo
+      };
+      sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    }
+  } catch (err) {
+    // Si estamos offline o falla la red, usar perfil en caché
+  }
+  return getCurrentUser();
 }
 
 export function getAuthToken() {
@@ -78,7 +142,7 @@ export function getServerBaseUrl() {
       window.location.protocol === 'file:' ||
       navigator.userAgent.includes('SIGALector'))
   ) {
-    return localStorage.getItem('SIGA_SERVER_URL') || '';
+    return localStorage.getItem('SIGA_SERVER_URL') || 'http://10.0.2.2:4000';
   }
 
   // En navegador web tradicional (localhost:4000 o servidor remoto)
@@ -94,6 +158,49 @@ export function resolveApiUrl(path) {
     return `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
   }
   return path;
+}
+
+function xhrFetch(fullUrl, options = {}, headers = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      const xhr = new XMLHttpRequest();
+      const method = (options.method || 'GET').toUpperCase();
+      xhr.open(method, fullUrl, true);
+
+      Object.entries(headers).forEach(([k, v]) => {
+        try {
+          xhr.setRequestHeader(k, v);
+        } catch (_) {}
+      });
+
+      xhr.onload = () => {
+        resolve({
+          ok: xhr.status >= 200 && xhr.status < 300,
+          status: xhr.status,
+          statusText: xhr.statusText,
+          json: async () => {
+            try {
+              return JSON.parse(xhr.responseText);
+            } catch {
+              return {};
+            }
+          },
+          text: async () => xhr.responseText
+        });
+      };
+
+      xhr.onerror = () => reject(new Error('Error de red en XHR'));
+      xhr.ontimeout = () => reject(new Error('Tiempo de espera agotado en XHR'));
+
+      if (options.body) {
+        xhr.send(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
+      } else {
+        xhr.send();
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 export async function apiFetch(url, options = {}) {
@@ -116,7 +223,19 @@ export async function apiFetch(url, options = {}) {
     ...(options.headers || {})
   };
 
-  const res = await fetch(fullUrl, { ...options, headers });
+  let res;
+  // Usar xhrFetch directamente para evitar interferencia de extensiones de navegador (ej. 200.js TypeError M_ID)
+  try {
+    res = await xhrFetch(fullUrl, options, headers);
+  } catch (xhrErr) {
+    console.warn('[apiFetch] XHR falló, intentando fetch fallback:', xhrErr);
+    try {
+      res = await fetch(fullUrl, { cache: options.method && options.method !== 'GET' ? 'no-store' : 'default', ...options, headers });
+    } catch (fetchErr) {
+      throw xhrErr;
+    }
+  }
+
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     const isOfflineToken = token === 'android-local-token' || token === 'local-session-jwt';
@@ -163,12 +282,15 @@ export async function login(identifier, password) {
 
     if (res.ok) {
       const data = await res.json();
+      const nom = data.usuario.nombreCompleto || data.usuario.nombre_completo || data.usuario.username;
       const sessionUser = {
         id: data.usuario.id,
-        nombre: data.usuario.nombreCompleto,
+        nombre: nom,
+        nombreCompleto: nom,
+        nombre_completo: nom,
         username: data.usuario.username,
         rol: data.usuario.rol,
-        cargo: data.usuario.rol === 'ADMIN' ? 'Administrador General' : data.usuario.rol === 'CAJERO' ? 'Tesorero / Recaudador' : 'Lector de Campo',
+        cargo: data.usuario.rol === 'ADMIN' ? 'Administrador General' : data.usuario.rol === 'CAJERO' ? 'Cajera' : 'Lector de Campo',
         loggedAt: new Date().toISOString()
       };
       

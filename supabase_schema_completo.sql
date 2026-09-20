@@ -266,7 +266,7 @@ ORDER BY m.fecha ASC;
 INSERT INTO usuarios (id, username, password_hash, nombre_completo, rol, activo)
 VALUES 
   ('00000000-0000-0000-0000-000000000001', 'admin', 'pbkdf2:admin', 'Carlos Morales (Administrador)', 'ADMIN', true),
-  ('00000000-0000-0000-0000-000000000002', 'cajero', 'pbkdf2:cajero', 'Gladys Guamán (Tesorera / Cajera)', 'CAJERO', true),
+  ('00000000-0000-0000-0000-000000000002', 'cajero', 'pbkdf2:cajero', 'Maribel Miño (Cajera)', 'CAJERO', true),
   ('00000000-0000-0000-0000-000000000003', 'lector', 'pbkdf2:lector', 'Manuel Tacuri (Lector de Campo)', 'LECTOR', true)
 ON CONFLICT (username) DO NOTHING;
 

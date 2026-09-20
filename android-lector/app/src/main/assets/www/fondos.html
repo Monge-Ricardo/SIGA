@@ -23,12 +23,16 @@
         </p>
       </div>
 
-      <div style="display: flex; gap: 0.5rem;">
+      <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+        <div id="liveSyncStatus" style="display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #15803d; font-weight: 600; background: #dcfce7; padding: 0.4rem 0.8rem; border-radius: 999px; border: 1px solid #bbf7d0;">
+          <span style="display: inline-block; width: 8px; height: 8px; background: #22c55e; border-radius: 50%;"></span>
+          <span id="liveSyncStatusText">En vivo • Auto-actualizado</span>
+        </div>
         <button class="btn btn-primary" id="btnNuevoEgreso">
-          💸 Registrar Egreso con Comprobante
+          💸 Registrar Egreso
         </button>
-        <button class="btn btn-secondary" id="btnRefrescarFondos">
-          🔄 Actualizar
+        <button class="btn btn-secondary" id="btnConfigurarFondos" style="display: none;" title="Administrar catálogo y bases de fondos (Solo Admin)">
+          ⚙️ Administrar Fondos
         </button>
       </div>
     </div>
@@ -37,7 +41,7 @@
     <div class="padre-special-card" id="padreSpecialBox">
       <div>
         <h3 style="font-size: 1.05rem; font-weight: 700; color: #4c1d95; margin: 0 0 0.25rem 0; display: flex; align-items: center; gap: 0.4rem;">
-          <span>⛪</span> Fondo Parroquial ($2.00 por cuota base normal)
+          <span>⛪</span> Fondo Parroquial (Aporte al Padre)
         </h3>
         <p style="font-size: 0.82rem; color: #5b21b6; margin: 0;" id="padreSpecialText">
           Cargando informe de recaudación y entregas para la parroquia...
@@ -54,33 +58,35 @@
       </div>
     </div>
 
-    <!-- Grid de Resumen de los 7 Fondos -->
+    <!-- Grid de Resumen de los 7 Fondos (100% dinámico desde BD) -->
     <div class="fondos-grid-summary" id="fondosSummaryGrid">
       <div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: #64748b;">
-        Cargando balance de los 7 fondos...
+        Cargando balance de los 7 fondos comunitarios desde la base de datos...
       </div>
     </div>
 
     <!-- Tabla del Libro Mayor de 3 Columnas -->
     <div class="card" style="padding: 1.25rem;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem;">
-        <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0;">
-          📖 Libro Mayor General de Movimientos
-        </h3>
+        <div>
+          <h3 style="font-size: 1.1rem; font-weight: 800; color: #0f172a; margin: 0;">
+            📖 Libro Mayor General de Movimientos
+          </h3>
+          <span style="font-size: 0.78rem; color: #64748b;" id="totalRegistrosTexto">Cargando movimientos...</span>
+        </div>
         
-        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-          <select id="filtroFondoSelect" class="form-control" style="padding: 0.4rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1;">
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+          <select id="filtroFondoSelect" class="form-control" style="padding: 0.45rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1; min-width: 220px;">
             <option value="">Todos los Fondos</option>
-            <option value="PADRE">Aporte Parroquial (Padre)</option>
-            <option value="OPERACION_MANT">Operación y Mantenimiento</option>
-            <option value="HONORARIOS_LECTOR">Honorarios Lector</option>
-            <option value="FONDO_MORTUORIO">Fondo Mortuorio</option>
-            <option value="PRO_MEJORAS">Fondo Pro-mejoras</option>
-            <option value="MULTAS_EXTRAS">Multas y Cuotas Extras</option>
-            <option value="ALCANTARILLADO">Fondo de Alcantarillado</option>
           </select>
 
-          <input type="text" id="buscarConceptoInput" placeholder="Buscar por concepto o comprobante..." style="padding: 0.4rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1; min-width: 240px;" />
+          <select id="filtroTipoSelect" class="form-control" style="padding: 0.45rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1;">
+            <option value="">Todos los Tipos</option>
+            <option value="INGRESO">Ingresos (+)</option>
+            <option value="EGRESO">Egresos (-)</option>
+          </select>
+
+          <input type="text" id="buscarConceptoInput" placeholder="Buscar concepto, comprobante, socio..." style="padding: 0.45rem 0.75rem; font-size: 0.85rem; border-radius: 6px; border: 1px solid #cbd5e1; min-width: 260px;" />
         </div>
       </div>
 
@@ -88,18 +94,19 @@
         <table class="table" id="tablaLibroMayor">
           <thead>
             <tr>
-              <th style="width: 130px;">Fecha / Hora</th>
-              <th>Fondo Comunitario</th>
+              <th style="width: 125px;">Fecha</th>
+              <th style="width: 170px;">Fondo</th>
               <th>Concepto / Detalle</th>
-              <th style="width: 140px;">Comprobante</th>
-              <th style="text-align: right; width: 110px; color: #16a34a;">Ingreso (+)</th>
-              <th style="text-align: right; width: 110px; color: #dc2626;">Egreso (-)</th>
-              <th style="text-align: right; width: 120px; font-weight: 800;">Saldo (=)</th>
+              <th style="width: 130px;">Comprobante</th>
+              <th style="text-align: right; width: 105px; color: #16a34a;">Ingreso (+)</th>
+              <th style="text-align: right; width: 105px; color: #dc2626;">Egreso (-)</th>
+              <th style="text-align: right; width: 110px; font-weight: 800;">Saldo (=)</th>
+              <th id="thAccionAdmin" style="text-align: center; width: 95px; display: none;">Acción</th>
             </tr>
           </thead>
           <tbody id="tbodyLibroMayor">
             <tr>
-              <td colspan="7" style="text-align: center; padding: 2rem; color: #64748b;">
+              <td colspan="8" style="text-align: center; padding: 2rem; color: #64748b;">
                 Cargando movimientos del libro mayor...
               </td>
             </tr>
@@ -109,7 +116,7 @@
     </div>
   </div>
 
-  <!-- Modal: Registrar Egreso con Comprobante -->
+  <!-- Modal 1: Registrar Egreso con Comprobante -->
   <div class="modal-overlay" id="modalEgreso" style="display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 999; align-items: center; justify-content: center; padding: 1rem;">
     <div class="modal-content" style="background: white; border-radius: 10px; max-width: 500px; width: 100%; padding: 1.75rem; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2);">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
@@ -123,13 +130,7 @@
         <div class="form-group">
           <label for="egresoIdFondo" style="font-weight: 600; font-size: 0.85rem;">Fondo a Debitar *</label>
           <select id="egresoIdFondo" required style="width: 100%; padding: 0.55rem; border-radius: 6px; border: 1px solid #cbd5e1;">
-            <option value="OPERACION_MANT">Operación y Mantenimiento</option>
-            <option value="PADRE">Aporte Parroquial (Padre)</option>
-            <option value="HONORARIOS_LECTOR">Honorarios Lector</option>
-            <option value="FONDO_MORTUORIO">Fondo Mortuorio</option>
-            <option value="PRO_MEJORAS">Fondo Pro-mejoras</option>
-            <option value="MULTAS_EXTRAS">Multas y Cuotas Extras</option>
-            <option value="ALCANTARILLADO">Fondo de Alcantarillado</option>
+            <option value="">Cargando fondos...</option>
           </select>
         </div>
 
@@ -162,6 +163,34 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal 2: Administrar Catálogo de Fondos -->
+  <div class="modal-overlay" id="modalConfigFondos" style="display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 999; align-items: center; justify-content: center; padding: 1rem;">
+    <div class="modal-content" style="background: white; border-radius: 10px; max-width: 650px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 1.75rem; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+        <h3 style="margin: 0; font-size: 1.2rem; font-weight: 800; color: #0f172a;">
+          ⚙️ Catálogo y Parámetros de Fondos
+        </h3>
+        <button id="btnCerrarModalConfig" style="background: none; border: none; font-size: 1.25rem; cursor: pointer; color: #64748b;">✕</button>
+      </div>
+
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 0.85rem; margin-bottom: 1rem; font-size: 0.83rem; color: #1e40af; line-height: 1.4;">
+        ℹ️ <strong>Reglas de Distribución Oficiales:</strong><br/>
+        • <strong>Tarifa Normal ($7.00):</strong> $4.00 Operación y Mantenimiento, $2.00 Padre (Parroquia), $0.50 Lector, $0.50 Mortuorio.<br/>
+        • <strong>Tercera Edad ($5.00):</strong> $2.00 Padre (Parroquia), $2.00 Operación y Mantenimiento, $0.50 Lector, $0.50 Mortuorio.<br/>
+        • <strong>Pro-Mejoras:</strong> 100% de los excedentes de consumo en m³.<br/>
+        • <strong>Alcantarillado y Multas/Mingas:</strong> 100% íntegro a sus fondos respectivos.
+      </div>
+
+      <div id="listaFondosConfig" style="display: flex; flex-direction: column; gap: 0.75rem;">
+        <div style="text-align: center; color: #64748b; padding: 1rem;">Cargando catálogo de fondos...</div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; margin-top: 1.25rem;">
+        <button type="button" id="btnCerrarModalConfigBtn" class="btn btn-secondary">Cerrar</button>
+      </div>
     </div>
   </div>
 

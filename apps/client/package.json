@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@app-agua/client",
   "version": "1.0.0",
   "private": true,
@@ -9,8 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@app-agua/shared": "*",
-    "dexie": "^4.0.1"
+    "@app-agua/shared": "*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

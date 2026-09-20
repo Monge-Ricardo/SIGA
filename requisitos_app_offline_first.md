@@ -30,7 +30,7 @@ El sistema debe operar de forma ininterrumpida en hardware de gama de entrada (*
 ### 3. Requisitos Funcionales (RF)
 
 #### 3.1. Gestión de Datos y Almacenamiento Local
-* **RF-01 (Base de Datos Local):** Implementar persistencia completa en el cliente mediante **IndexedDB** (vía Dexie.js/RxDB) o **SQLite** local.
+* **RF-01 (Base de Datos Local 100% Autónoma):** Implementar persistencia completa en el cliente mediante **IndexedDB** (`siga_offline_db`), garantizando lecturas y escrituras en <50ms sin intermediarios ni dependencias de SQLite.
 * **RF-02 (Cache-First para Assets):** Almacenar en caché todos los componentes estáticos (fuentes, SVGs, scripts) mediante Service Workers para permitir el arranque en frío sin conexión.
 * **RF-03 (Identificadores Distribuidos):** Generar claves primarias localmente mediante **UUIDv4 / CUID / ULID** para evitar colisiones de IDs autoincrementales durante la creación offline.
 
@@ -47,12 +47,13 @@ El sistema debe operar de forma ininterrumpida en hardware de gama de entrada (*
 
 ---
 
-### 4. Matriz de Stack Técnico Recomendado
+### 4. Matriz de Stack Técnico (Arquitectura de 2 Capas)
 
-| Componente | Opción Recomendada | Alternativa Viable | Descartado para este Entorno |
+| Componente | Opción Implementada | Alternativa Viable | Descartado para este Entorno |
 | :--- | :--- | :--- | :--- |
-| **Desktop / Web** | PWA (Vite + React/Svelte) | Tauri (WebView2 + Rust) | Electron (Excesivo uso de RAM/CPU) |
-| **Móvil** | React Native (Offline-First) | PWA Instalable | WebViews embebidos no cacheados |
-| **BD Local (Cliente)** | IndexedDB (Dexie.js) | SQLite (WatermelonDB / OP-SQLite)| LocalStorage (Límite de 5MB, síncrono) |
+| **Desktop / Web** | PWA (HTML5 + Vanilla JS / Vite) | Tauri (WebView2 + Rust) | Electron (Excesivo uso de RAM/CPU) |
+| **Móvil** | Android WebView / PWA Offline | React Native | WebViews embebidos sin caché local |
+| **BD Local (Capa 1)** | IndexedDB (`siga_offline_db`) | Dexie.js wrapper | SQLite embebido (eliminado para simplificar a 2 capas) |
+| **BD Central (Capa 2)** | Supabase (PostgreSQL Cloud) | PostgreSQL Administrado | Bases de datos relacionales locales intermedias |
 | **Estrategia Caché** | Workbox (Service Worker) | CacheStorage API nativa | Carga dinámica por CDN remota |
-| **Protocolo Sync** | REST / Batch Deltas | WebSockets ligeros | GraphQL sobrecargado / Polling corto |
+| **Protocolo Sync** | REST / Batch Deltas + CORS Proxy | WebSockets ligeros | GraphQL sobrecargado / Polling corto |

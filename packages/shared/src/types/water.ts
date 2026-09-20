@@ -13,6 +13,8 @@ export interface Medidor {
   estado: EstadoSocio;
   nombreSector?: string;
   codigoSector?: string;
+  lecturaAnterior?: number;
+  lecturaInicial?: number;
   version?: number;
   createdAt?: string;
   updatedAt?: string;
@@ -47,6 +49,7 @@ export interface Socio {
   sectorId?: string;
   nombreSector?: string;
   medidorNumero?: string;
+  lecturaInicial?: number;
   tieneAlcantarillado?: boolean;
   version: number;
   createdAt: string;
@@ -169,6 +172,10 @@ export interface TarifaConfig {
   repartoNormalOperacion: number; // $4.00
   repartoNormalLector: number; // $0.50
   repartoNormalMortuorio: number; // $0.50
+  repartoSeniorPadre?: number; // $2.00
+  repartoSeniorOperacion?: number; // $2.00
+  repartoSeniorLector?: number; // $0.50
+  repartoSeniorMortuorio?: number; // $0.50
   activo: boolean;
   createdAt: string;
 }
