@@ -48,6 +48,7 @@ import {
   liquidarPeriodo,
   pasarLecturasACaja,
   cobrarFactura,
+  updateFactura,
   deleteFactura,
   sincronizarFacturas,
   getMultas,
@@ -183,6 +184,8 @@ apiRouter.post('/facturas/:id/cobrar', authenticateJWT, requireRoles('CAJERO', '
 apiRouter.post('/caja/cobrar/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), cobrarFactura);
 apiRouter.post('/caja/liquidar', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), liquidarFactura);
 apiRouter.post('/facturas/sincronizar', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), sincronizarFacturas);
+apiRouter.patch('/facturas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), updateFactura);
+apiRouter.put('/facturas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), updateFactura);
 apiRouter.delete('/facturas/:id', authenticateJWT, requireRoles('ADMIN'), deleteFactura);
 apiRouter.get('/facturas/:id/abonos', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'AUDITOR'), getFacturaAbonos);
 

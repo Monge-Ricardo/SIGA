@@ -3143,6 +3143,69 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
+export const updateFactura = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ error: 'ID o número de factura es requerido.' });
+      return;
+    }
+    const body = req.body || {};
+
+    let factura: Record<string, any> | null = null;
+    if (isValidUUID(id)) {
+      const byId = await supabaseClient.fetchRecords<Record<string, any>>('facturas', `id=eq.${encodeURIComponent(id)}&limit=1`);
+      if (byId.data && byId.data.length > 0) factura = byId.data[0];
+    }
+    if (!factura) {
+      const byNum = await supabaseClient.fetchRecords<Record<string, any>>('facturas', `numero_factura=eq.${encodeURIComponent(id)}&limit=1`);
+      if (byNum.data && byNum.data.length > 0) factura = byNum.data[0];
+    }
+
+    if (!factura) {
+      res.status(404).json({ error: `Factura ${id} no encontrada.` });
+      return;
+    }
+
+    const patchPayload: Record<string, any> = {};
+    if (body.estado_pago !== undefined || body.estadoPago !== undefined) {
+      patchPayload.estado_pago = body.estado_pago || body.estadoPago;
+    }
+    if (body.total_pagar !== undefined || body.totalPagar !== undefined) {
+      patchPayload.total_pagar = Number(body.total_pagar ?? body.totalPagar);
+    }
+    if (body.total_mes !== undefined || body.totalMes !== undefined) {
+      patchPayload.total_mes = Number(body.total_mes ?? body.totalMes);
+    }
+    if (body.valor_deuda_anterior !== undefined || body.valorDeudaAnterior !== undefined) {
+      patchPayload.valor_deuda_anterior = Number(body.valor_deuda_anterior ?? body.valorDeudaAnterior);
+    }
+    if (body.fecha_pago !== undefined || body.fechaPago !== undefined) {
+      patchPayload.fecha_pago = body.fecha_pago || body.fechaPago;
+    }
+    if (body.metodo_pago !== undefined || body.metodoPago !== undefined) {
+      patchPayload.metodo_pago = body.metodo_pago || body.metodoPago;
+    }
+
+    patchPayload.updated_at = new Date().toISOString();
+
+    const result = await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
+      method: 'PATCH',
+      body: patchPayload
+    });
+
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+
+    res.json({ success: true, data: result.data });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Error actualizando factura.';
+    res.status(400).json({ error: message });
+  }
+};
+
 export const deleteFactura = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
