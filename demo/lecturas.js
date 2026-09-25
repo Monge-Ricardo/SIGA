@@ -123,6 +123,42 @@ async function getAllSectores() {
 }
 
 async function getAllPeriodos() {
+  // 1. Si hay red, consultar períodos en tiempo real desde el backend REST API
+  if (navigator.onLine) {
+    try {
+      const res = await apiFetch('/api/v1/periodos');
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        if (db) {
+          try {
+            const tx = db.transaction(['periodos'], 'readwrite');
+            const store = tx.objectStore('periodos');
+            res.data.forEach((p) => {
+              store.put({
+                id: p.id,
+                periodoCodigo: p.periodo_codigo || p.periodoCodigo || p.id,
+                nombre: p.nombre || `Período ${p.periodo_codigo || p.periodoCodigo}`,
+                estado: p.estado || 'ABIERTO',
+                fechaInicio: p.fecha_inicio || p.fechaInicio,
+                fechaFin: p.fecha_fin || p.fechaFin
+              });
+            });
+          } catch (_e) {}
+        }
+        return res.data.map((p) => ({
+          id: p.id,
+          periodoCodigo: p.periodo_codigo || p.periodoCodigo || p.id,
+          nombre: p.nombre || `Período ${p.periodo_codigo || p.periodoCodigo}`,
+          estado: p.estado || 'ABIERTO',
+          fechaInicio: p.fecha_inicio || p.fechaInicio,
+          fechaFin: p.fecha_fin || p.fechaFin
+        }));
+      }
+    } catch (_err) {
+      console.warn('[Lecturas] Aviso consultando períodos de API:', _err);
+    }
+  }
+
+  // 2. Fallback a IndexedDB local
   if (db) {
     const localPeriodos = await new Promise((resolve) => {
       try {
@@ -137,9 +173,12 @@ async function getAllPeriodos() {
     if (localPeriodos.length > 0) return localPeriodos;
   }
 
+  // 3. Fallback dinámico genérico sin IDs hardcodeados
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
   return [
-    { id: '33333333-0000-0000-0000-000000000001', periodoCodigo: '2026-08', nombre: 'Período Agosto 2026', estado: 'ABIERTO' },
-    { id: '33333333-0000-0000-0000-000000000000', periodoCodigo: '2026-07', nombre: 'Período Julio 2026', estado: 'CERRADO' }
+    { id: `per-${yyyy}-${mm}`, periodoCodigo: `${yyyy}-${mm}`, nombre: `Período ${yyyy}-${mm}`, estado: 'ABIERTO' }
   ];
 }
 
@@ -188,8 +227,7 @@ async function getLecturasPeriodo(periodo) {
           l.periodo_codigo === periodo ||
           l.periodoCodigo === periodo ||
           l.id_periodo === periodo ||
-          l.idPeriodo === periodo ||
-          (periodo === '2026-08' && (!l.periodo || l.periodo === '2026-08'))
+          l.idPeriodo === periodo
         ));
       };
       req.onerror = () => resolve([]);
@@ -1302,12 +1340,13 @@ async function avanzarSiguientePeriodo() {
       <div style="text-align: left; font-size: 0.92rem; color: #334155; line-height: 1.5;">
         <p>Esta acción realizará las siguientes operaciones:</p>
         <ul style="padding-left: 1.2rem; margin: 0.5rem 0;">
-          <li>Cerrará oficialmente el ciclo del período actual.</li>
+          <li>Emitirá a Caja las planillas de las lecturas registradas para <strong>${currentPeriodoCodigo}</strong>.</li>
+          <li>Cerrará oficialmente el ciclo del período actual en Supabase.</li>
           <li>Habilitará el nuevo período siguiente en el calendario.</li>
           <li>Las <strong>lecturas actuales</strong> se convertirán automáticamente en las <strong>lecturas anteriores</strong> de cada medidor.</li>
-          <li>La ruta quedará lista para que el <strong>lector móvil</strong> descargue y empiece a registrar las nuevas mediciones en campo.</li>
+          <li>La ruta quedará lista para que el <strong>lector móvil</strong> empiece a registrar las nuevas mediciones en campo.</li>
         </ul>
-        <p style="color: #6b21a8; font-weight: 700; margin-top: 0.5rem;">¿Desea continuar?</p>
+        <p style="color: #6b21a8; font-weight: 700; margin-top: 0.5rem;">¿Desea avanzar el ciclo ahora?</p>
       </div>
     `,
     icon: 'question',
@@ -1322,7 +1361,7 @@ async function avanzarSiguientePeriodo() {
 
   Swal.fire({
     title: 'Avanzando Período...',
-    text: 'Cerrando ciclo y migrando lecturas hacia el nuevo mes...',
+    text: 'Cerrando ciclo, emitiendo planillas a Caja y migrando lecturas...',
     allowOutsideClick: false,
     didOpen: () => Swal.showLoading()
   });
@@ -1334,26 +1373,77 @@ async function avanzarSiguientePeriodo() {
     });
 
     if (res && res.success) {
-      const nuevoCodigo = res.data?.periodoNuevo?.codigo || 'Nuevo';
-      const cantMeds = res.data?.medidoresAvanzados || 0;
+      const d = res.data || {};
+      const nuevoCodigo = d.periodoNuevo?.codigo || 'Nuevo';
+      const cantMeds = d.medidoresAvanzados || 0;
+      const facsGen = d.periodoAnterior?.facturasGeneradas || 0;
 
+      // 1. Actualizar IndexedDB localmente con los estados de los períodos
+      if (db) {
+        try {
+          const tx = db.transaction(['periodos'], 'readwrite');
+          const store = tx.objectStore('periodos');
+          if (d.periodoAnterior) {
+            store.put({
+              id: d.periodoAnterior.id,
+              periodoCodigo: d.periodoAnterior.codigo,
+              estado: 'CERRADO'
+            });
+          }
+          if (d.periodoNuevo) {
+            store.put({
+              id: d.periodoNuevo.id,
+              periodoCodigo: d.periodoNuevo.codigo,
+              nombre: d.periodoNuevo.nombre,
+              estado: 'ABIERTO',
+              fechaInicio: d.periodoNuevo.fechaInicio,
+              fechaFin: d.periodoNuevo.fechaFin
+            });
+          }
+        } catch (_e) {
+          console.warn('[Lecturas] Aviso actualizando periodos locales:', _e);
+        }
+      }
+
+      // 2. Traer lecturas migradas y datos frescos desde Supabase Cloud
+      if (navigator.onLine && typeof syncEngine !== 'undefined') {
+        try {
+          await syncEngine.pullDeltas();
+        } catch (_syncErr) {
+          console.warn('[Lecturas] Aviso sincronizando tras avanzar periodo:', _syncErr);
+        }
+      }
+
+      // 3. Recargar períodos y renderizar UI en el nuevo período
       const periodos = await getAllPeriodos();
       populatePeriodosSelect(periodos, nuevoCodigo);
-      if (selectPeriodoEl && nuevoCodigo) {
+      if (selectPeriodoEl) {
         selectPeriodoEl.value = nuevoCodigo;
       }
       await renderLecturasUI();
 
+      // 4. Modal informativo con opciones
       Swal.fire({
         icon: 'success',
         title: '¡Período Avanzado con Éxito!',
         html: `
-          <div style="text-align: left; font-size: 0.9rem;">
-            <p>✅ El nuevo período <strong>${nuevoCodigo}</strong> ya se encuentra <strong>ABIERTO</strong>.</p>
-            <p>✅ Se prepararon <strong>${cantMeds}</strong> medidores con sus lecturas anteriores consolidadas.</p>
-            <p>📱 El lector ya puede pulsar <em>"Descargar Lecturas"</em> en su móvil para tomar los nuevos consumos.</p>
+          <div style="text-align: left; font-size: 0.9rem; line-height: 1.5;">
+            <p>✅ Ciclo anterior <strong>${currentPeriodoCodigo}</strong> cerrado correctamente.</p>
+            ${facsGen > 0 ? `<p>📄 <strong>${facsGen} planillas</strong> emitidas oficialmente a Caja.</p>` : ''}
+            <p>✅ El nuevo período <strong style="color: #0284c7;">${nuevoCodigo}</strong> ya se encuentra <strong>ABIERTO</strong>.</p>
+            <p>✅ Se prepararon <strong>${cantMeds} medidores</strong> con sus lecturas anteriores consolidadas.</p>
+            <p style="margin-top: 8px; font-size: 0.8rem; color: #64748b;">La ruta de lectura está lista para registrar los consumos del nuevo mes.</p>
           </div>
-        `
+        `,
+        showDenyButton: true,
+        confirmButtonText: '➡️ Continuar con ' + nuevoCodigo,
+        denyButtonText: '💵 Ir a Caja y Cobros',
+        confirmButtonColor: '#7c3aed',
+        denyButtonColor: '#059669'
+      }).then((r) => {
+        if (r.isDenied) {
+          window.location.href = 'caja.html';
+        }
       });
     } else {
       throw new Error(res?.error || 'No se pudo avanzar el período.');

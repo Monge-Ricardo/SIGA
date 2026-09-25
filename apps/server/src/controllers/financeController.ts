@@ -69,10 +69,34 @@ export interface FundDistribution {
   ALCANTARILLADO: number;
 }
 
+export function isPeriodoCorte(periodoCodigo?: string): boolean {
+  if (!periodoCodigo) return false;
+  const clean = String(periodoCodigo).trim();
+  // Cualquier periodo 2026-07 o anterior es corte contable inicial
+  return clean <= '2026-07' || clean.includes('2026-07') || clean.toUpperCase().includes('JUL');
+}
+
 export function calculateFacturaFundDistribution(
   factura: Record<string, any>,
   customBases?: { operacion?: number; padre?: number; lector?: number; mortuorio?: number; seniorOperacion?: number }
 ): FundDistribution {
+  const pCod = String(factura.periodo_codigo || factura.periodoCodigo || '').trim();
+  const totPagar = Number(factura.total_pagar ?? factura.totalPagar ?? factura.total_mes ?? factura.totalMes ?? 0);
+
+  // Si la factura corresponde al corte contable inicial (Julio 2026 o anterior),
+  // por acuerdo expreso de la junta administrativa, el 100% de la recaudación va a Operación y Mantenimiento
+  if (pCod && isPeriodoCorte(pCod)) {
+    return {
+      PADRE_PARROQUIA: 0,
+      OPERACION_MANT: Number(totPagar.toFixed(2)),
+      PAGO_LECTOR: 0,
+      MORTUORIO: 0,
+      PRO_MEJORAS: 0,
+      MULTAS_EXTRAS: 0,
+      ALCANTARILLADO: 0
+    };
+  }
+
   const current = typeof getCurrentTarifas === 'function' ? getCurrentTarifas() : null;
   const bOperacion = customBases?.operacion ?? current?.repartoNormalOperacion ?? 4.0;
   const bPadre = customBases?.padre ?? current?.repartoNormalPadre ?? 2.0;
@@ -84,18 +108,16 @@ export function calculateFacturaFundDistribution(
   const vExc = Number(factura.valor_excedente ?? factura.valorExcedente ?? 0);
   const vAlc = Number(factura.valor_alcantarillado ?? factura.valorAlcantarillado ?? 0);
   const vMul = Number(factura.valor_multas ?? factura.valorMultas ?? 0);
-  const vDeuda = Number(factura.valor_deuda_anterior ?? factura.valorDeudaAnterior ?? 0);
   const totalMes = Number(factura.total_mes ?? factura.totalMes ?? 0);
-  const totalPagar = Number(factura.total_pagar ?? factura.totalPagar ?? 0);
 
   let vBase = Number(factura.valor_base ?? factura.valorBase ?? 0);
-  if (totalMes === 0 && totalPagar <= vMul + vDeuda) {
+  if (totalMes === 0 && totPagar <= vMul) {
     vBase = 0;
   }
 
   const dist: FundDistribution = {
     PADRE_PARROQUIA: 0,
-    OPERACION_MANT: vDeuda,
+    OPERACION_MANT: 0, // No absorbe deudas anteriores a ciegas
     PAGO_LECTOR: 0,
     MORTUORIO: 0,
     PRO_MEJORAS: vExc,
@@ -145,6 +167,100 @@ export function calculateFacturaFundDistribution(
   }
 
   return dist;
+}
+
+/**
+ * Calcula la distribución exacta hacia los fondos para un abono parcial o total
+ * sobre una factura específica, respetando la regla de corte para periodos <= 2026-07
+ * y la prelación de servicios para periodos >= 2026-08.
+ */
+export function calculateAbonoFundDistribution(
+  factura: Record<string, any>,
+  montoAbonado: number,
+  periodoCodigo?: string
+): FundDistribution {
+  const pCod = String(periodoCodigo || factura.periodo_codigo || factura.periodoCodigo || '').trim();
+  const abono = Math.max(0, Number(montoAbonado || 0));
+
+  if (abono <= 0) {
+    return {
+      PADRE_PARROQUIA: 0,
+      OPERACION_MANT: 0,
+      PAGO_LECTOR: 0,
+      MORTUORIO: 0,
+      PRO_MEJORAS: 0,
+      MULTAS_EXTRAS: 0,
+      ALCANTARILLADO: 0
+    };
+  }
+
+  // Si es del corte inicial (Julio 2026 o anterior), todo el abono va a Operación
+  if (pCod && isPeriodoCorte(pCod)) {
+    return {
+      PADRE_PARROQUIA: 0,
+      OPERACION_MANT: Number(abono.toFixed(2)),
+      PAGO_LECTOR: 0,
+      MORTUORIO: 0,
+      PRO_MEJORAS: 0,
+      MULTAS_EXTRAS: 0,
+      ALCANTARILLADO: 0
+    };
+  }
+
+  // Para Agosto en adelante:
+  // Si el abono cubre el total de la factura, distribuimos la totalidad
+  const totalFactura = Number(factura.total_mes ?? factura.totalMes ?? factura.total_pagar ?? factura.totalPagar ?? 0);
+  const distTotal = calculateFacturaFundDistribution(factura);
+
+  if (abono >= totalFactura && totalFactura > 0) {
+    return distTotal;
+  }
+
+  // Abono parcial: Aplicar cascada de prelación comunitaria:
+  // 1. Padre ($2.00)
+  // 2. Lector ($0.50)
+  // 3. Mortuorio ($0.50)
+  // 4. Operación y Mantenimiento ($4.00 o $2.00)
+  // 5. Excedente (Pro-mejoras)
+  // 6. Alcantarillado
+  // 7. Multas
+  let rem = abono;
+  const distResult: FundDistribution = {
+    PADRE_PARROQUIA: 0,
+    OPERACION_MANT: 0,
+    PAGO_LECTOR: 0,
+    MORTUORIO: 0,
+    PRO_MEJORAS: 0,
+    MULTAS_EXTRAS: 0,
+    ALCANTARILLADO: 0
+  };
+
+  const orden: (keyof FundDistribution)[] = [
+    'PADRE_PARROQUIA',
+    'PAGO_LECTOR',
+    'MORTUORIO',
+    'OPERACION_MANT',
+    'PRO_MEJORAS',
+    'ALCANTARILLADO',
+    'MULTAS_EXTRAS'
+  ];
+
+  for (const fondo of orden) {
+    if (rem <= 0) break;
+    const reqFondo = distTotal[fondo] || 0;
+    if (reqFondo > 0) {
+      const asignado = Math.min(rem, reqFondo);
+      distResult[fondo] = Number(asignado.toFixed(2));
+      rem = Number((rem - asignado).toFixed(2));
+    }
+  }
+
+  // Si sobrara cualquier fracción de redondeo, se añade a Operación
+  if (rem > 0) {
+    distResult.OPERACION_MANT = Number((distResult.OPERACION_MANT + rem).toFixed(2));
+  }
+
+  return distResult;
 }
 
 export const getFondosCatalogo = async (_req: AuthenticatedRequest, res: Response): Promise<void> => {

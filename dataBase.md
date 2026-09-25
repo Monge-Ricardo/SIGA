@@ -51,8 +51,6 @@ CREATE TABLE public.socios (
   version integer NOT NULL DEFAULT 1,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  -- deuda_alcantarillado: mantenido para compatibilidad transicional y lectura rápida de frontend/móvil.
-  -- La cartera granular, abonos y saldos oficiales se gestionan en multas_rubros ('ALCANTARILLADO') y rubros_abonos.
   deuda_alcantarillado numeric NOT NULL DEFAULT 0.00,
   tiene_alcantarillado boolean NOT NULL DEFAULT false,
   CONSTRAINT socios_pkey PRIMARY KEY (id)
@@ -110,31 +108,16 @@ CREATE TABLE public.multas_rubros (
   id_periodo uuid,
   tipo_rubro character varying NOT NULL CHECK (tipo_rubro::text = ANY (ARRAY['ALCANTARILLADO'::character varying, 'MINGA'::character varying, 'ASAMBLEA'::character varying, 'RECONEXION'::character varying, 'CUOTA_EXTRA'::character varying, 'OTRO'::character varying]::text[])),
   monto numeric NOT NULL,
-  monto_pagado numeric NOT NULL DEFAULT 0.00,
-  saldo_pendiente numeric NOT NULL DEFAULT 0.00,
-  estado character varying NOT NULL DEFAULT 'PENDIENTE'::character varying CHECK (estado::text = ANY (ARRAY['PENDIENTE'::character varying, 'PARCIAL'::character varying, 'PAGADO'::character varying, 'ANULADO'::character varying]::text[])),
   motivo text NOT NULL,
   pagado boolean NOT NULL DEFAULT false,
   id_factura uuid,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
+  monto_pagado numeric NOT NULL DEFAULT 0.00,
+  saldo_pendiente numeric NOT NULL DEFAULT 0.00,
+  estado character varying NOT NULL DEFAULT 'PENDIENTE'::character varying CHECK (estado::text = ANY (ARRAY['PENDIENTE'::character varying, 'PARCIAL'::character varying, 'PAGADO'::character varying, 'ANULADO'::character varying]::text[])),
   CONSTRAINT multas_rubros_pkey PRIMARY KEY (id),
   CONSTRAINT multas_rubros_id_socio_fkey FOREIGN KEY (id_socio) REFERENCES public.socios(id),
   CONSTRAINT multas_rubros_id_periodo_fkey FOREIGN KEY (id_periodo) REFERENCES public.periodos(id)
-);
-CREATE TABLE public.rubros_abonos (
-  id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  id_rubro uuid NOT NULL,
-  id_factura uuid NOT NULL,
-  monto_abonado numeric NOT NULL CHECK (monto_abonado > 0),
-  saldo_anterior numeric NOT NULL,
-  saldo_restante numeric NOT NULL,
-  fecha timestamp with time zone NOT NULL DEFAULT now(),
-  id_cajero uuid,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT rubros_abonos_pkey PRIMARY KEY (id),
-  CONSTRAINT rubros_abonos_id_rubro_fkey FOREIGN KEY (id_rubro) REFERENCES public.multas_rubros(id) ON DELETE CASCADE,
-  CONSTRAINT rubros_abonos_id_factura_fkey FOREIGN KEY (id_factura) REFERENCES public.facturas(id) ON DELETE CASCADE,
-  CONSTRAINT rubros_abonos_id_cajero_fkey FOREIGN KEY (id_cajero) REFERENCES public.usuarios(id)
 );
 CREATE TABLE public.facturas (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -194,4 +177,19 @@ CREATE TABLE public.fondos_movimientos (
   CONSTRAINT fondos_movimientos_id_fondo_fkey FOREIGN KEY (id_fondo) REFERENCES public.fondos_catalogo(id),
   CONSTRAINT fondos_movimientos_id_factura_fkey FOREIGN KEY (id_factura) REFERENCES public.facturas(id),
   CONSTRAINT fondos_movimientos_id_responsable_fkey FOREIGN KEY (id_responsable) REFERENCES public.usuarios(id)
+);
+CREATE TABLE public.rubros_abonos (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  id_rubro uuid NOT NULL,
+  id_factura uuid NOT NULL,
+  monto_abonado numeric NOT NULL CHECK (monto_abonado > 0::numeric),
+  saldo_anterior numeric NOT NULL,
+  saldo_restante numeric NOT NULL,
+  fecha timestamp with time zone NOT NULL DEFAULT now(),
+  id_cajero uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT rubros_abonos_pkey PRIMARY KEY (id),
+  CONSTRAINT rubros_abonos_id_rubro_fkey FOREIGN KEY (id_rubro) REFERENCES public.multas_rubros(id),
+  CONSTRAINT rubros_abonos_id_factura_fkey FOREIGN KEY (id_factura) REFERENCES public.facturas(id),
+  CONSTRAINT rubros_abonos_id_cajero_fkey FOREIGN KEY (id_cajero) REFERENCES public.usuarios(id)
 );

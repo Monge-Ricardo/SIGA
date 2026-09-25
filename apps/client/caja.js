@@ -2320,7 +2320,24 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
       });
     }
 
-    // Enviar cobro ÚNICO a la factura principal (concentra todo el dinero recaudado y emite 1 solo recibo)
+    // Preparar lista de abonos a facturas históricas/anteriores
+    const abonosFacturasList = [];
+    for (const dId of debtInvoiceIds) {
+      const deudaObj = socioDeudasAnteriores.find((d) => d.id === dId);
+      const saldoOrig = Number(deudaObj?.totalPagar ?? deudaObj?.total_pagar ?? deudaObj?.monto ?? 0);
+      const montoAbonar = selectedDeudasAnterioresAbonosMap.has(dId)
+        ? Number(selectedDeudasAnterioresAbonosMap.get(dId))
+        : saldoOrig;
+      const abonoReal = Number(Math.min(montoAbonar, saldoOrig).toFixed(2));
+      if (abonoReal > 0) {
+        abonosFacturasList.push({
+          idFactura: dId,
+          montoAbonado: abonoReal
+        });
+      }
+    }
+
+    // Enviar cobro consolidado transaccional al backend
     let facturaConfirmada = null;
     const facturaId = mainInvoiceId;
     const resCobro = await apiFetch(`/api/v1/facturas/${mainInvoiceId}/cobrar`, {
@@ -2339,7 +2356,8 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
         totalMes: totalMesCob,
         totalPagar: totalCobroCalculado,
         abonos: abonosList,
-        multasCobradasIds: Array.from(selectedMultasIds)
+        multasCobradasIds: Array.from(selectedMultasIds),
+        abonosFacturasAnteriores: abonosFacturasList
       })
     });
 
@@ -2357,60 +2375,13 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
           method: 'PATCH',
           body: JSON.stringify({
             estado_pago: 'PAGADO',
-            total_pagar: 0.00,
-            total_mes: 0.00,
+            saldo_pendiente: 0.00,
             fecha_pago: new Date().toISOString(),
             metodo_pago: metodoPago
           })
         });
       } catch (_secErr) {
         console.warn('[Caja] Advertencia actualizando medidor secundario:', secId, _secErr);
-      }
-    }
-
-    // ACTUALIZACIÓN GENÉRICA DE DEUDAS ANTERIORES:
-    // Soporta liquidación total ($0) y abonos parciales manteniendo el saldo sobrante en PENDIENTE
-    for (const dId of debtInvoiceIds) {
-      const deudaObj = socioDeudasAnteriores.find((d) => d.id === dId);
-      const saldoOrig = Number(deudaObj?.totalPagar ?? deudaObj?.total_pagar ?? deudaObj?.monto ?? 0);
-      const montoAbonar = selectedDeudasAnterioresAbonosMap.has(dId)
-        ? Number(selectedDeudasAnterioresAbonosMap.get(dId))
-        : saldoOrig;
-      const abonoReal = Number(Math.min(montoAbonar, saldoOrig).toFixed(2));
-      const saldoRestante = Number(Math.max(0, saldoOrig - abonoReal).toFixed(2));
-
-      if (saldoRestante <= 0.001) {
-        // Liquidación total de la deuda anterior
-        try {
-          await apiFetch(`/api/v1/facturas/${dId}`, {
-            method: 'PATCH',
-            body: JSON.stringify({
-              estado_pago: 'PAGADO',
-              total_pagar: 0.00,
-              total_mes: 0.00,
-              valor_deuda_anterior: 0.00,
-              fecha_pago: new Date().toISOString(),
-              metodo_pago: metodoPago
-            })
-          });
-        } catch (_secErr) {
-          console.warn('[Caja] Advertencia liquidando deuda anterior:', dId, _secErr);
-        }
-      } else {
-        // ¡ABONO PARCIAL GENÉRICO! La factura anterior permanece PENDIENTE con su saldo restante
-        try {
-          await apiFetch(`/api/v1/facturas/${dId}`, {
-            method: 'PATCH',
-            body: JSON.stringify({
-              estado_pago: 'PENDIENTE',
-              total_pagar: saldoRestante,
-              total_mes: saldoRestante,
-              valor_deuda_anterior: saldoRestante
-            })
-          });
-        } catch (_secErr) {
-          console.warn('[Caja] Advertencia registrando abono en deuda anterior:', dId, _secErr);
-        }
       }
     }
 

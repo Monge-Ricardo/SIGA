@@ -472,6 +472,11 @@ async function updateMetricsAndHistory() {
            Number(f.totalPagar ?? f.total_pagar ?? f.montoPagado ?? f.monto_pagado ?? 0) > 0
   );
 
+  const facturasPendientes = facturasRemotas.filter(
+    (f) => (f.estadoPago === 'PENDIENTE' || f.estado_pago === 'PENDIENTE') &&
+           Number(f.totalPagar ?? f.total_pagar ?? 0) > 0
+  );
+
   if (!isWebView && facturasPagadas.length > 0) {
     // EN PWA OFICINA: El backend (Supabase) es la ÚNICA fuente de verdad. Cero cobros fantasma de IndexedDB.
     cobros = facturasPagadas
@@ -492,6 +497,29 @@ async function updateMetricsAndHistory() {
 
         const totalP = Number(f.totalPagar ?? f.total_pagar ?? 0);
         const montoP = Number(f.montoPagado ?? f.monto_pagado ?? totalP);
+        const deudaAntCob = Number(f.valorDeudaAnterior ?? f.valor_deuda_anterior ?? 0);
+        const multasCob = Number(f.valorMultas ?? f.valor_multas ?? 0);
+        const isRec = String(f.numeroFactura || f.numero_factura || '').startsWith('REC-');
+
+        // Deudas anteriores históricas pendientes para este socio
+        const deudasAntPend = facturasPendientes.filter((p) => {
+          const pSoc = p.idSocio || p.id_socio;
+          if (pSoc !== sId) return false;
+          const isAug = p.idPeriodo === '33333333-0000-0000-0000-000000000001' || p.id_periodo === '33333333-0000-0000-0000-000000000001' || String(p.numeroFactura || p.numero_factura || '').includes('202608');
+          return !isAug;
+        });
+        const saldoDeudaAntPendiente = Number(deudasAntPend.reduce((sum, p) => sum + Number(p.totalPagar ?? p.total_pagar ?? p.totalMes ?? p.total_mes ?? 0), 0).toFixed(2));
+
+        const multasPend = allLoadedMultas.filter((m) => (m.id_socio === sId || m.idSocio === sId) && m.estado !== 'PAGADO');
+        const saldoMultasPendiente = Number(multasPend.reduce((sum, m) => sum + Number(m.saldo_pendiente ?? m.monto ?? 0), 0).toFixed(2));
+
+        const tieneDeudaAntCobrada = deudaAntCob > 0;
+        const esDeudaAntAbonada = tieneDeudaAntCobrada && saldoDeudaAntPendiente > 0;
+        const esDeudaAntLiquidada = tieneDeudaAntCobrada && saldoDeudaAntPendiente <= 0.001;
+
+        const totalSaldoRestante = Number((saldoDeudaAntPendiente + saldoMultasPendiente).toFixed(2));
+        const esAbono = esDeudaAntAbonada || (multasCob > 0 && saldoMultasPendiente > 0) || (isRec && totalSaldoRestante > 0) || Boolean(f.esAbono) || Number(f.saldoPendiente ?? f.saldo_pendiente ?? 0) > 0;
+        const saldoFinalPendiente = esAbono ? (totalSaldoRestante > 0 ? totalSaldoRestante : Number(f.saldoPendiente ?? f.saldo_pendiente ?? 0)) : 0;
 
         return {
           id: f.id,
@@ -510,12 +538,17 @@ async function updateMetricsAndHistory() {
           cargoBase: f.valorBase ?? f.valor_base ?? 0,
           valorExcedenteUSD: f.valorExcedente ?? f.valor_excedente ?? 0,
           alcantarilladoUSD: f.valorAlcantarillado ?? f.valor_alcantarillado ?? 0,
-          multaExtra: f.valorMultas ?? f.valor_multas ?? 0,
-          deudaAnteriorCobrada: f.valorDeudaAnterior ?? f.valor_deuda_anterior ?? 0,
-          montoTotal: totalP,
+          multaExtra: multasCob,
+          deudaAnteriorCobrada: deudaAntCob,
+          tieneDeudaAntCobrada,
+          esDeudaAntAbonada,
+          esDeudaAntLiquidada,
+          saldoDeudaAntPendiente,
+          esAbono,
+          saldoPendiente: saldoFinalPendiente,
+          montoTotal: (esAbono && saldoFinalPendiente > 0) ? Number((montoP + saldoFinalPendiente).toFixed(2)) : totalP,
           montoPagado: montoP,
           montoAbonado: montoP,
-          saldoPendiente: f.saldoPendiente ?? f.saldo_pendiente ?? 0,
           estadoPago: 'PAGADO',
           metodoPago: f.metodoPago || f.metodo_pago || 'EFECTIVO',
           fechaPago: f.fechaPago || f.fecha_pago || f.updatedAt || f.updated_at
@@ -570,6 +603,28 @@ async function updateMetricsAndHistory() {
         const sId = f.idSocio || f.id_socio;
         const totalP = Number(f.totalPagar ?? f.total_pagar ?? 0);
         const montoP = Number(f.montoPagado ?? f.monto_pagado ?? totalP);
+        const deudaAntCob = Number(f.valorDeudaAnterior ?? f.valor_deuda_anterior ?? 0);
+        const multasCob = Number(f.valorMultas ?? f.valor_multas ?? 0);
+        const isRec = String(f.numeroFactura || f.numero_factura || '').startsWith('REC-');
+
+        const deudasAntPend = facturasPendientes.filter((p) => {
+          const pSoc = p.idSocio || p.id_socio;
+          if (pSoc !== sId) return false;
+          const isAug = p.idPeriodo === '33333333-0000-0000-0000-000000000001' || p.id_periodo === '33333333-0000-0000-0000-000000000001' || String(p.numeroFactura || p.numero_factura || '').includes('202608');
+          return !isAug;
+        });
+        const saldoDeudaAntPendiente = Number(deudasAntPend.reduce((sum, p) => sum + Number(p.totalPagar ?? p.total_pagar ?? p.totalMes ?? p.total_mes ?? 0), 0).toFixed(2));
+        const multasPend = allLoadedMultas.filter((m) => (m.id_socio === sId || m.idSocio === sId) && m.estado !== 'PAGADO');
+        const saldoMultasPendiente = Number(multasPend.reduce((sum, m) => sum + Number(m.saldo_pendiente ?? m.monto ?? 0), 0).toFixed(2));
+
+        const tieneDeudaAntCobrada = deudaAntCob > 0;
+        const esDeudaAntAbonada = tieneDeudaAntCobrada && saldoDeudaAntPendiente > 0;
+        const esDeudaAntLiquidada = tieneDeudaAntCobrada && saldoDeudaAntPendiente <= 0.001;
+
+        const totalSaldoRestante = Number((saldoDeudaAntPendiente + saldoMultasPendiente).toFixed(2));
+        const esAbono = esDeudaAntAbonada || (multasCob > 0 && saldoMultasPendiente > 0) || (isRec && totalSaldoRestante > 0) || Boolean(f.esAbono) || Number(f.saldoPendiente ?? f.saldo_pendiente ?? 0) > 0;
+        const saldoFinalPendiente = esAbono ? (totalSaldoRestante > 0 ? totalSaldoRestante : Number(f.saldoPendiente ?? f.saldo_pendiente ?? 0)) : 0;
+
         cobros.push({
           id: f.id,
           numeroRecibo: f.numeroFactura || f.numero_factura || f.id,
@@ -581,10 +636,17 @@ async function updateMetricsAndHistory() {
           socioSector: f.nombreSector || 'Sector Centro',
           periodo: perCod,
           periodoCodigo: perCod,
-          montoTotal: totalP,
+          deudaAnteriorCobrada: deudaAntCob,
+          multaExtra: multasCob,
+          tieneDeudaAntCobrada,
+          esDeudaAntAbonada,
+          esDeudaAntLiquidada,
+          saldoDeudaAntPendiente,
+          esAbono,
+          saldoPendiente: saldoFinalPendiente,
+          montoTotal: (esAbono && saldoFinalPendiente > 0) ? Number((montoP + saldoFinalPendiente).toFixed(2)) : totalP,
           montoPagado: montoP,
           montoAbonado: montoP,
-          saldoPendiente: f.saldoPendiente ?? f.saldo_pendiente ?? 0,
           estadoPago: 'PAGADO',
           metodoPago: f.metodoPago || f.metodo_pago || 'EFECTIVO',
           fechaPago: f.fechaPago || f.fecha_pago || f.updatedAt || f.updated_at
@@ -734,7 +796,7 @@ function renderRecibosTable() {
     const tr = document.createElement('tr');
     const montoVal = c.montoPagado !== undefined ? c.montoPagado : (c.montoAbonado !== undefined ? c.montoAbonado : c.montoTotal);
     const montoDisplay = Number(montoVal || 0).toFixed(2);
-    const esAbono = c.saldoPendiente !== undefined && Number(c.saldoPendiente) > 0;
+    const esAbono = Boolean(c.esAbono || (c.saldoPendiente !== undefined && Number(c.saldoPendiente) > 0));
     const fecha = c.fechaPago || c.createdAt || Date.now();
     const dObj = new Date(fecha);
     const esHoy = isFechaHoy(fecha);
@@ -742,15 +804,36 @@ function renderRecibosTable() {
       ? (esHoy ? dObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : dObj.toLocaleDateString('es-EC', { day: '2-digit', month: '2-digit' }) + ' ' + dObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
       : '--:--';
 
+    // Generar subtexto descriptivo de deuda anterior / abonos
+    let detalleDeudaHtml = '';
+    const dCob = Number(c.deudaAnteriorCobrada || 0);
+    const sPend = Number(c.saldoDeudaAntPendiente ?? c.saldoPendiente ?? 0);
+    if (dCob > 0) {
+      if (c.esDeudaAntAbonada || (esAbono && sPend > 0)) {
+        detalleDeudaHtml = `<div style="font-size:0.75rem; color:#b45309; font-weight:600; margin-top:2px;">⚠️ Deuda anterior abonada ($${dCob.toFixed(2)}) &bull; Saldo restante: $${sPend.toFixed(2)}</div>`;
+      } else {
+        detalleDeudaHtml = `<div style="font-size:0.75rem; color:#16a34a; font-weight:600; margin-top:2px;">✓ Deuda anterior liquidada ($${dCob.toFixed(2)})</div>`;
+      }
+    } else if (esAbono && Number(c.saldoPendiente || 0) > 0) {
+      detalleDeudaHtml = `<div style="font-size:0.75rem; color:#b45309; font-weight:600; margin-top:2px;">⚠️ Abono parcial &bull; Saldo restante: $${Number(c.saldoPendiente).toFixed(2)}</div>`;
+    }
+
+    const badgeAbono = esAbono
+      ? `<span style="background: #fef3c7; color: #b45309; font-size: 0.68rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; border: 1px solid #fde68a; margin-left: 4px; display: inline-block;">ABONO</span>`
+      : '';
+
     tr.innerHTML = `
-      <td><span class="badge-code" style="color:#0284c7; font-weight:700;">${c.numeroRecibo || c.numeroFactura || c.id}</span></td>
+      <td>
+        <span class="badge-code" style="color:#0284c7; font-weight:700;">${c.numeroRecibo || c.numeroFactura || c.id}</span>
+        ${badgeAbono}
+      </td>
       <td>
         <strong>${c.socioNombre || c.nombreCompleto || 'Abonado'}</strong>
-        ${esAbono ? `<div style="font-size:0.75rem; color:#b45309; font-weight:600;">⚠️ Abono parcial (Resta: $${Number(c.saldoPendiente).toFixed(2)})</div>` : ''}
+        ${detalleDeudaHtml}
       </td>
       <td style="text-align: right;">
         <strong class="text-accent" style="font-size:1rem;">$${montoDisplay}</strong>
-        ${esAbono ? `<div style="font-size:0.72rem; color:#64748b;">de $${Number(c.montoTotal || 0).toFixed(2)}</div>` : ''}
+        ${esAbono && Number(c.montoTotal || 0) > Number(montoVal || 0) ? `<div style="font-size:0.72rem; color:#64748b;">de $${Number(c.montoTotal).toFixed(2)}</div>` : ''}
       </td>
       <td><span style="font-size:0.8rem; color:#64748b;">${timeStr}</span></td>
       <td style="text-align: right; white-space: nowrap;">
@@ -2165,25 +2248,18 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
 
     // Determinar la factura principal que concentrará el cobro
     let mainInvoiceId = null;
-    const secondaryDebtInvoiceIds = [];
+    const secondaryMeterInvoiceIds = [];
 
     if (meterInvoiceIds.length > 0) {
-      // 1. Si hay factura del mes actual, esa es la factura principal que agrupa el mes y las deudas anteriores
+      // 1. Si hay factura del mes actual, esa es la factura principal del cobro
       mainInvoiceId = meterInvoiceIds[0];
-      debtInvoiceIds.forEach((id) => {
-        if (id !== mainInvoiceId) secondaryDebtInvoiceIds.push(id);
-      });
       meterInvoiceIds.slice(1).forEach((id) => {
-        if (id !== mainInvoiceId) secondaryDebtInvoiceIds.push(id);
+        if (id !== mainInvoiceId) secondaryMeterInvoiceIds.push(id);
       });
-    } else if (debtInvoiceIds.length > 0) {
-      // 2. Si no cobra mes actual, la primera deuda anterior seleccionada es la factura principal
-      mainInvoiceId = debtInvoiceIds[0];
-      debtInvoiceIds.slice(1).forEach((id) => secondaryDebtInvoiceIds.push(id));
-    }
-
-    // 3. Si no hay factura previa en Supabase (ej: cobro exclusivo de multas o alcantarillado), liquidar factura oficial
-    if (!mainInvoiceId) {
+    } else {
+      // 2. Si no se cobra factura de mes actual (abono a deudas anteriores, multas o alcantarillado),
+      // SIEMPRE se liquida una factura oficial de recibo REC-XXXXXX para concentrar el dinero
+      // de la transacción actual sin sobreescribir ni liquidar prematuramente las facturas históricas.
       const firstMedidor = selectedMeters[0] || socioCalculationsMedidores[0];
       const liquidarRes = await apiFetch('/api/v1/facturas/liquidar', {
         method: 'POST',
@@ -2244,7 +2320,24 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
       });
     }
 
-    // Enviar cobro ÚNICO a la factura principal (concentra todo el dinero recaudado y emite 1 solo recibo)
+    // Preparar lista de abonos a facturas históricas/anteriores
+    const abonosFacturasList = [];
+    for (const dId of debtInvoiceIds) {
+      const deudaObj = socioDeudasAnteriores.find((d) => d.id === dId);
+      const saldoOrig = Number(deudaObj?.totalPagar ?? deudaObj?.total_pagar ?? deudaObj?.monto ?? 0);
+      const montoAbonar = selectedDeudasAnterioresAbonosMap.has(dId)
+        ? Number(selectedDeudasAnterioresAbonosMap.get(dId))
+        : saldoOrig;
+      const abonoReal = Number(Math.min(montoAbonar, saldoOrig).toFixed(2));
+      if (abonoReal > 0) {
+        abonosFacturasList.push({
+          idFactura: dId,
+          montoAbonado: abonoReal
+        });
+      }
+    }
+
+    // Enviar cobro consolidado transaccional al backend
     let facturaConfirmada = null;
     const facturaId = mainInvoiceId;
     const resCobro = await apiFetch(`/api/v1/facturas/${mainInvoiceId}/cobrar`, {
@@ -2263,7 +2356,8 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
         totalMes: totalMesCob,
         totalPagar: totalCobroCalculado,
         abonos: abonosList,
-        multasCobradasIds: Array.from(selectedMultasIds)
+        multasCobradasIds: Array.from(selectedMultasIds),
+        abonosFacturasAnteriores: abonosFacturasList
       })
     });
 
@@ -2274,23 +2368,20 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
       facturaConfirmada = resCobro.data.factura;
     }
 
-    // Saldar facturas secundarias de deuda anterior que fueron canceladas dentro de este cobro
-    // Se marcan PAGADO con total_pagar: 0.00 para no duplicar montos recaudados ni emitir recibos dobles
-    for (const secId of secondaryDebtInvoiceIds) {
+    // Actualizar facturas secundarias del mes actual (si el socio tiene múltiples medidores)
+    for (const secId of secondaryMeterInvoiceIds) {
       try {
         await apiFetch(`/api/v1/facturas/${secId}`, {
           method: 'PATCH',
           body: JSON.stringify({
             estado_pago: 'PAGADO',
-            total_pagar: 0.00,
-            total_mes: 0.00,
-            valor_deuda_anterior: 0.00,
+            saldo_pendiente: 0.00,
             fecha_pago: new Date().toISOString(),
             metodo_pago: metodoPago
           })
         });
       } catch (_secErr) {
-        console.warn('[Caja] Advertencia actualizando factura secundaria:', secId, _secErr);
+        console.warn('[Caja] Advertencia actualizando medidor secundario:', secId, _secErr);
       }
     }
 
@@ -2329,6 +2420,29 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
     const medidorNumeroStr = medidoresCobrados.map((m) => m.numeroMedidor).join(' / ') || currentCalculation.medidorNumero;
     const numeroRecibo = facturaConfirmada?.numero_factura || facturaConfirmada?.numeroFactura || (facturaId ? `FAC-${facturaId.slice(0, 8)}` : `REC-${String(Date.now()).slice(-6)}`);
 
+    // Calcular remanentes totales exactos (Alcantarillado + Multas + Deudas Anteriores)
+    const saldoRestanteDeudasAnt = socioDeudasAnteriores
+      .filter((d) => selectedDeudasAnterioresIds.has(d.id))
+      .reduce((acc, d) => {
+        const sal = Number(d.totalPagar ?? d.total_pagar ?? d.monto ?? 0);
+        const ab = selectedDeudasAnterioresAbonosMap.has(d.id) ? Number(selectedDeudasAnterioresAbonosMap.get(d.id)) : sal;
+        return acc + Math.max(0, Number((sal - ab).toFixed(2)));
+      }, 0);
+
+    const saldoRestanteAlcant = (selectedDeudaAlcantarilladoActiva && selectedSocio?.deudaAlcantarillado > deudaAlcantCob)
+      ? Number((selectedSocio.deudaAlcantarillado - deudaAlcantCob).toFixed(2))
+      : 0;
+
+    const saldoRestanteMultas = socioMultas
+      .filter((m) => selectedMultasIds.has(m.id))
+      .reduce((acc, m) => {
+        const sal = Number(m.saldo_pendiente ?? m.monto ?? 0);
+        const ab = selectedMultasAbonosMap.get(m.id) || 0;
+        return acc + Math.max(0, Number((sal - ab).toFixed(2)));
+      }, 0);
+
+    const saldoPendienteTotal = Number((saldoRestanteAlcant + saldoRestanteMultas + saldoRestanteDeudasAnt).toFixed(2));
+
     cobroFinal = {
       id: facturaId,
       numeroRecibo,
@@ -2356,8 +2470,8 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
       montoTotal: totalCobroCalculado,
       montoAbonado: totalCobroCalculado,
       montoPagado: totalCobroCalculado,
-      saldoPendiente: hayAbonosParciales ? Number(((selectedSocio?.deudaAlcantarillado > deudaAlcantCob ? (selectedSocio.deudaAlcantarillado - deudaAlcantCob) : 0) + socioMultas.filter((m) => selectedMultasIds.has(m.id)).reduce((acc, m) => acc + Math.max(0, Number(m.saldo_pendiente ?? m.monto ?? 0) - (selectedMultasAbonosMap.get(m.id) || 0)), 0)).toFixed(2)) : 0,
-      esAbono: hayAbonosParciales,
+      saldoPendiente: saldoPendienteTotal,
+      esAbono: hayAbonosParciales || saldoPendienteTotal > 0,
       metodoPago,
       montoRecibido: metodoPago === 'EFECTIVO' ? montoRecibido : totalCobroCalculado,
       cambioEntregado: metodoPago === 'EFECTIVO' ? Math.max(0, montoRecibido - totalCobroCalculado) : 0,
@@ -2768,20 +2882,26 @@ function showReceiptModal(cobro) {
   if (totalFinalEl) totalFinalEl.textContent = `$${Number(totalFinal || 0).toFixed(2)}`;
 
   // Mostrar detalle de abono si aplica
+  const totalLabelEl = document.getElementById('reciboTotalLabel');
   const abonoInfoEl = document.getElementById('reciboAbonoInfo');
   const abonoMontoEl = document.getElementById('reciboMontoAbonado');
   const saldoPendEl = document.getElementById('reciboSaldoPendiente');
   const stampTextEl = document.getElementById('reciboStampText');
 
-  const esAbono = (cobro.saldoPendiente !== undefined && cobro.saldoPendiente > 0) || cobro.esAbono;
-  if (esAbono && abonoInfoEl) {
-    abonoInfoEl.style.display = 'block';
-    if (abonoMontoEl) abonoMontoEl.textContent = `$${(cobro.montoAbonado || cobro.montoRecibido || 0).toFixed(2)}`;
-    if (saldoPendEl) saldoPendEl.textContent = `$${cobro.saldoPendiente.toFixed(2)}`;
+  const esAbono = Boolean(cobro.esAbono || (cobro.saldoPendiente !== undefined && Number(cobro.saldoPendiente) > 0));
+  const montoCobrado = Number(cobro.montoAbonado ?? cobro.montoPagado ?? cobro.montoRecibido ?? totalFinal);
+  const saldoR = Number(cobro.saldoPendiente ?? cobro.saldoDeudaAntPendiente ?? 0);
+
+  if (esAbono) {
+    if (totalLabelEl) totalLabelEl.textContent = 'TOTAL ABONADO';
     if (stampTextEl) stampTextEl.textContent = 'ABONO REGISTRADO';
+    if (abonoInfoEl) abonoInfoEl.style.display = 'block';
+    if (abonoMontoEl) abonoMontoEl.textContent = `$${montoCobrado.toFixed(2)}`;
+    if (saldoPendEl) saldoPendEl.textContent = `$${saldoR.toFixed(2)}`;
   } else {
-    if (abonoInfoEl) abonoInfoEl.style.display = 'none';
+    if (totalLabelEl) totalLabelEl.textContent = 'TOTAL A PAGAR';
     if (stampTextEl) stampTextEl.textContent = 'CANCELADO';
+    if (abonoInfoEl) abonoInfoEl.style.display = 'none';
   }
 
   const cajeroEl = document.getElementById('reciboCajeroTxt');
@@ -2804,20 +2924,22 @@ function showReceiptModal(cobro) {
     if (cobro.observaciones || cobro.observacion || cobro.nota) {
       notas.push(String(cobro.observaciones || cobro.observacion || cobro.nota));
     }
-    const desgloses = [];
-    if (cobro.deudaAnteriorCobrada && Number(cobro.deudaAnteriorCobrada) > 0) {
-      desgloses.push(`Deuda Anterior ($${Number(cobro.deudaAnteriorCobrada).toFixed(2)})`);
+    const dCobrada = Number(cobro.deudaAnteriorCobrada || 0);
+    if (dCobrada > 0) {
+      if (cobro.esDeudaAntAbonada || (esAbono && saldoR > 0)) {
+        notas.push(`📌 Deuda anterior abonada: $${dCobrada.toFixed(2)} USD (Saldo restante: $${saldoR.toFixed(2)} USD).`);
+      } else {
+        notas.push(`✓ Deuda anterior liquidada: $${dCobrada.toFixed(2)} USD (Saldo pendiente: $0.00 USD).`);
+      }
     }
     if (cobro.multaExtra && Number(cobro.multaExtra) > 0) {
-      desgloses.push(`Multas ($${Number(cobro.multaExtra).toFixed(2)})`);
+      notas.push(`Multas: $${Number(cobro.multaExtra).toFixed(2)} USD.`);
     }
     if (cobro.deudaAlcantarilladoCobrada && Number(cobro.deudaAlcantarilladoCobrada) > 0) {
-      desgloses.push(`Alcantarillado ($${Number(cobro.deudaAlcantarilladoCobrada).toFixed(2)})`);
+      notas.push(`Alcantarillado: $${Number(cobro.deudaAlcantarilladoCobrada).toFixed(2)} USD.`);
     }
-    if (esAbono && cobro.saldoPendiente > 0) {
-      notas.push(`⚠️ Abono registrado. Saldo pendiente: $${cobro.saldoPendiente.toFixed(2)} USD.`);
-    } else if (desgloses.length > 0 && !notas.length) {
-      notas.push(`Incluye: ${desgloses.join(' + ')}.`);
+    if (esAbono && saldoR > 0 && dCobrada === 0) {
+      notas.push(`⚠️ Abono registrado. Saldo pendiente: $${saldoR.toFixed(2)} USD.`);
     }
 
     if (notas.length > 0) {

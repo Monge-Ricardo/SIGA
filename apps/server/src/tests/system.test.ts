@@ -305,3 +305,84 @@ test('10. Auditoría y Trazabilidad: Historial y Estado de Cuenta', async () => 
   assert.ok(jsonAudit, 'Debe retornar logs de auditoría');
   assert.ok(Array.isArray(jsonAudit.data), 'data de auditoría debe ser array');
 });
+
+test('11. Transición de Periodos y Distribución de Fondos (Regla Julio vs Periodos Posteriores)', async () => {
+  const { isPeriodoCorte, calculateFacturaFundDistribution, calculateAbonoFundDistribution } = await import('../controllers/financeController.ts');
+
+  // A. Verificación de corte contable
+  assert.strictEqual(isPeriodoCorte('2026-07'), true, '2026-07 debe identificarse como periodo de corte');
+  assert.strictEqual(isPeriodoCorte('2026-06'), true, '2026-06 debe identificarse como periodo anterior de corte');
+  assert.strictEqual(isPeriodoCorte('JUL-2026'), true, 'JUL-2026 con formato mes debe identificarse como corte');
+  assert.strictEqual(isPeriodoCorte('2026-08'), false, '2026-08 NO es periodo de corte');
+  assert.strictEqual(isPeriodoCorte('2026-09'), false, '2026-09 NO es periodo de corte');
+  assert.strictEqual(isPeriodoCorte(undefined), false, 'Periodo no definido no es corte');
+
+  // B. Factura de corte (Julio 2026): 100% a Operación y Mantenimiento
+  const facturaJulio = {
+    periodo_codigo: '2026-07',
+    es_tercera_edad: false,
+    valor_base: 7.0,
+    valor_excedente: 2.50,
+    valor_alcantarillado: 1.0,
+    valor_multas: 0.0,
+    total_mes: 10.50,
+    total_pagar: 10.50
+  };
+  const distJulio = calculateFacturaFundDistribution(facturaJulio);
+  assert.strictEqual(distJulio.OPERACION_MANT, 10.50, 'En periodos <= 2026-07 el 100% se destina a Operación y Mantenimiento');
+  assert.strictEqual(distJulio.PADRE_PARROQUIA, 0.0, 'No se desglosa al Padre en facturas de corte histórico');
+  assert.strictEqual(distJulio.PAGO_LECTOR, 0.0, 'No se desglosa al Lector en corte histórico');
+  assert.strictEqual(distJulio.MORTUORIO, 0.0, 'No se desglosa a Mortuorio en corte histórico');
+  assert.strictEqual(distJulio.PRO_MEJORAS, 0.0, 'No se desglosa a Pro-Mejoras en corte histórico');
+
+  // C. Factura de periodos nuevos (Agosto/Septiembre 2026): desglose completo e independiente
+  const facturaAgosto = {
+    periodo_codigo: '2026-08',
+    es_tercera_edad: false,
+    valor_base: 7.0,
+    valor_excedente: 3.0,
+    valor_alcantarillado: 1.0,
+    valor_multas: 0.0,
+    total_mes: 11.0,
+    total_pagar: 11.0
+  };
+  const distAgosto = calculateFacturaFundDistribution(facturaAgosto);
+  assert.strictEqual(distAgosto.OPERACION_MANT, 4.0, 'Operación recibe $4.00 base');
+  assert.strictEqual(distAgosto.PADRE_PARROQUIA, 2.0, 'Padre recibe $2.00');
+  assert.strictEqual(distAgosto.PAGO_LECTOR, 0.5, 'Lector recibe $0.50');
+  assert.strictEqual(distAgosto.MORTUORIO, 0.5, 'Mortuorio recibe $0.50');
+  assert.strictEqual(distAgosto.PRO_MEJORAS, 3.0, 'Pro-Mejoras recibe $3.00 de excedente');
+  assert.strictEqual(distAgosto.ALCANTARILLADO, 1.0, 'Alcantarillado recibe $1.00');
+
+  // D. Abono parcial a factura de corte (Julio): 100% a Operación y Mantenimiento
+  const abonoJulio = calculateAbonoFundDistribution(facturaJulio, 5.0, '2026-07');
+  assert.strictEqual(abonoJulio.OPERACION_MANT, 5.0, 'Abono parcial a factura de Julio va 100% a Operación');
+  assert.strictEqual(abonoJulio.PADRE_PARROQUIA, 0.0);
+
+  // E. Abonos parciales a periodos nuevos (Agosto): Cascada de prioridad comunitaria
+  // Abono de $3.00 en factura de $11.00:
+  // Cascada: Padre ($2.00 max) -> Lector ($0.50 max) -> Mortuorio ($0.50 max) = $3.00 exactos
+  const abonoParcial1 = calculateAbonoFundDistribution(facturaAgosto, 3.0, '2026-08');
+  assert.strictEqual(abonoParcial1.PADRE_PARROQUIA, 2.0, 'Padre cubre su cuota prioritaria de $2.00');
+  assert.strictEqual(abonoParcial1.PAGO_LECTOR, 0.5, 'Lector cubre su cuota de $0.50');
+  assert.strictEqual(abonoParcial1.MORTUORIO, 0.5, 'Mortuorio cubre su cuota de $0.50');
+  assert.strictEqual(abonoParcial1.OPERACION_MANT, 0.0, 'Operación no recibe todavía con abono de solo $3.00');
+  const sumaAbono1 = Object.values(abonoParcial1).reduce((acc, v) => acc + v, 0);
+  assert.strictEqual(Number(sumaAbono1.toFixed(2)), 3.0, 'La suma de fondos debe ser exactamente igual al abono de $3.00');
+
+  // Abono de $7.00 en factura de $11.00:
+  // Padre $2.00, Lector $0.50, Mortuorio $0.50, Operación $4.00 = $7.00 exactos
+  const abonoParcial2 = calculateAbonoFundDistribution(facturaAgosto, 7.0, '2026-08');
+  assert.strictEqual(abonoParcial2.PADRE_PARROQUIA, 2.0);
+  assert.strictEqual(abonoParcial2.PAGO_LECTOR, 0.5);
+  assert.strictEqual(abonoParcial2.MORTUORIO, 0.5);
+  assert.strictEqual(abonoParcial2.OPERACION_MANT, 4.0);
+  assert.strictEqual(abonoParcial2.PRO_MEJORAS, 0.0);
+  const sumaAbono2 = Object.values(abonoParcial2).reduce((acc, v) => acc + v, 0);
+  assert.strictEqual(Number(sumaAbono2.toFixed(2)), 7.0, 'La suma de fondos debe ser exactamente igual al abono de $7.00');
+
+  // Abono completo de $11.00:
+  const abonoCompleto = calculateAbonoFundDistribution(facturaAgosto, 11.0, '2026-08');
+  assert.deepStrictEqual(abonoCompleto, distAgosto, 'El abono completo debe coincidir exactamente con la distribución total');
+});
+

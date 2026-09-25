@@ -4,11 +4,70 @@ import { supabaseClient } from '../db/supabase.ts';
 import type { AuthenticatedRequest } from '../middlewares/auth.ts';
 import { ValidationRules } from '../shared.ts';
 import type { MetodoPago, MultaRubro, Sector } from '../shared.ts';
-import { calculateFacturaFundDistribution, FONDO_IDS } from './financeController.ts';
+import {
+  calculateFacturaFundDistribution,
+  calculateAbonoFundDistribution,
+  isPeriodoCorte,
+  FONDO_IDS
+} from './financeController.ts';
 import { getCurrentTarifas } from './adminController.ts';
 
 const isValidUUID = (val: unknown): boolean =>
   typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
+/**
+ * Obtiene el período actualmente ABIERTO en Supabase, o el más reciente.
+ */
+export async function getActivePeriod(): Promise<Record<string, any> | null> {
+  try {
+    const res = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'estado=eq.ABIERTO&order=fecha_inicio.desc&limit=1');
+    if (res.data && res.data.length > 0) return res.data[0];
+    const all = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc&limit=1');
+    return all.data?.[0] || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
+ * Obtiene el período inicial histórico del sistema.
+ */
+export async function getInitialPeriod(): Promise<Record<string, any> | null> {
+  try {
+    const res = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.asc&limit=1');
+    return res.data?.[0] || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
+ * Obtiene el ID del período base para lecturas iniciales de acometidas.
+ */
+export async function getBaselinePeriodId(): Promise<string> {
+  const init = await getInitialPeriod();
+  if (init?.id) return init.id;
+  const act = await getActivePeriod();
+  return (act?.id as string) || '00000000-0000-0000-0000-000000000000';
+}
+
+/**
+ * Retorna un mapa indexado de todos los períodos para resolución dinámica de códigos sin fallbacks estáticos.
+ */
+export async function getPeriodosMap(): Promise<Map<string, Record<string, any>>> {
+  const map = new Map<string, Record<string, any>>();
+  try {
+    const res = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc&limit=200');
+    for (const p of res.data || []) {
+      if (p.id) map.set(p.id, p);
+      if (p.periodo_codigo) map.set(p.periodo_codigo, p);
+      if (p.codigo) map.set(p.codigo, p);
+    }
+  } catch (_e) {
+    // fallback map vacío
+  }
+  return map;
+}
 
 // ==========================================
 // 1. SECTORES
@@ -345,7 +404,7 @@ export const getSocioEstadoCuenta = async (req: AuthenticatedRequest, res: Respo
       supabaseClient.fetchRecords<Record<string, unknown>>('multas_rubros', `id_socio=eq.${id}`),
       supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_socio=eq.${id}&order=fecha_lectura.desc`),
       supabaseClient.fetchRecords<Record<string, unknown>>('medidores', `id_socio=eq.${id}`),
-      supabaseClient.fetchRecords<Record<string, unknown>>('periodos', 'estado=eq.ABIERTO&limit=1')
+      supabaseClient.fetchRecords<Record<string, unknown>>('periodos', 'order=fecha_inicio.desc')
     ]);
 
     if (!socRes.data || socRes.data.length === 0) {
@@ -357,20 +416,24 @@ export const getSocioEstadoCuenta = async (req: AuthenticatedRequest, res: Respo
     const facturas = facRes.data || [];
     const multas = mulRes.data || [];
     const medidores = medRes.data || [];
+    const periodosList = perRes.data || [];
 
-    const periodoActivoRow = (perRes.data && perRes.data.length > 0) ? perRes.data[0] : {
-      id: '33333333-0000-0000-0000-000000000001',
-      periodo_codigo: '2026-08',
-      nombre: 'Período Agosto 2026'
-    };
-    const periodoActivoId = (periodoActivoRow.id as string) || '33333333-0000-0000-0000-000000000001';
-    const periodoActivoCod = (periodoActivoRow.periodo_codigo || periodoActivoRow.codigo || '2026-08') as string;
+    const periodosMap = new Map<string, Record<string, any>>();
+    for (const p of periodosList) {
+      if (p.id) periodosMap.set(p.id as string, p);
+      if (p.periodo_codigo) periodosMap.set(p.periodo_codigo as string, p);
+    }
+
+    const periodoActivoRow = periodosList.find((p) => p.estado === 'ABIERTO') || periodosList[0] || null;
+    const periodoActivoId = (periodoActivoRow?.id as string) || '';
+    const periodoActivoCod = (periodoActivoRow?.periodo_codigo || periodoActivoRow?.codigo || '') as string;
 
     // Normalizar todas las facturas del socio con claves duales (camelCase y snake_case)
     const facturasNormalizadas = facturas.map((f) => {
       const fNum = (f.numero_factura as string) || (f.id as string);
       const pId = (f.id_periodo as string) || '';
-      const pCod = pId === '33333333-0000-0000-0000-000000000001' ? '2026-08' : (pId === '33333333-0000-0000-0000-000000000000' ? '2026-07' : periodoActivoCod);
+      const pObj = periodosMap.get(pId);
+      const pCod = (pObj?.periodo_codigo || pObj?.codigo || (pId === periodoActivoId ? periodoActivoCod : '')) as string;
       const totP = Number(f.total_pagar || 0);
       const isPagado = f.estado_pago === 'PAGADO';
       const salPend = Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (isPagado ? 0 : totP));
@@ -622,11 +685,12 @@ export const createSocio = async (req: AuthenticatedRequest, res: Response): Pro
       await supabaseClient.syncRecord('medidores', medRecord);
 
       if (lecIni > 0) {
+        const basePeriodId = await getBaselinePeriodId();
         await supabaseClient.syncRecord('lecturas', {
           id: crypto.randomUUID(),
           id_medidor: medId,
           id_socio: id,
-          id_periodo: '33333333-0000-0000-0000-000000000000',
+          id_periodo: basePeriodId,
           lectura_anterior: lecIni,
           lectura_actual: lecIni,
           consumo_total: 0,
@@ -731,10 +795,11 @@ export const updateSocio = async (req: AuthenticatedRequest, res: Response): Pro
         await supabaseClient.syncRecord('medidores', medRecord);
 
         if (lecIni > 0) {
+          const basePeriodId = await getBaselinePeriodId();
           const lecFetch = await supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_medidor=eq.${medId}&order=fecha_lectura.asc&limit=1`);
           if (lecFetch.data && lecFetch.data.length > 0) {
             const baseLec = lecFetch.data[0];
-            if (baseLec.id_periodo === '33333333-0000-0000-0000-000000000000' || (Number(baseLec.consumo_total || 0) === 0 && Number(baseLec.lectura_anterior) === Number(baseLec.lectura_actual))) {
+            if (baseLec.id_periodo === basePeriodId || (Number(baseLec.consumo_total || 0) === 0 && Number(baseLec.lectura_anterior) === Number(baseLec.lectura_actual))) {
               await supabaseClient.request(`lecturas?id=eq.${baseLec.id}`, {
                 method: 'PATCH',
                 body: { lectura_anterior: lecIni, lectura_actual: lecIni, updated_at: now }
@@ -745,7 +810,7 @@ export const updateSocio = async (req: AuthenticatedRequest, res: Response): Pro
               id: crypto.randomUUID(),
               id_medidor: medId,
               id_socio: id,
-              id_periodo: '33333333-0000-0000-0000-000000000000',
+              id_periodo: basePeriodId,
               lectura_anterior: lecIni,
               lectura_actual: lecIni,
               consumo_total: 0,
@@ -1100,11 +1165,12 @@ export const createMedidor = async (req: AuthenticatedRequest, res: Response): P
     await supabaseClient.syncRecord('medidores', record);
 
     if (lecIni > 0) {
+      const basePeriodId = await getBaselinePeriodId();
       await supabaseClient.syncRecord('lecturas', {
         id: crypto.randomUUID(),
         id_medidor: medId,
         id_socio: idSocio,
-        id_periodo: '33333333-0000-0000-0000-000000000000',
+        id_periodo: basePeriodId,
         lectura_anterior: lecIni,
         lectura_actual: lecIni,
         consumo_total: 0,
@@ -1169,11 +1235,12 @@ export const addMedidorToSocio = async (req: AuthenticatedRequest, res: Response
     await supabaseClient.syncRecord('medidores', record);
 
     if (lecIni > 0) {
+      const basePeriodId = await getBaselinePeriodId();
       await supabaseClient.syncRecord('lecturas', {
         id: crypto.randomUUID(),
         id_medidor: medId,
         id_socio: id,
-        id_periodo: '33333333-0000-0000-0000-000000000000',
+        id_periodo: basePeriodId,
         lectura_anterior: lecIni,
         lectura_actual: lecIni,
         consumo_total: 0,
@@ -1236,10 +1303,11 @@ export const updateMedidor = async (req: AuthenticatedRequest, res: Response): P
     let finalLecIni: number | undefined = undefined;
     if (p.lecturaInicial !== undefined || p.lectura_inicial !== undefined) {
       finalLecIni = Number(p.lecturaInicial ?? p.lectura_inicial ?? 0);
+      const basePeriodId = await getBaselinePeriodId();
       const lecFetch = await supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_medidor=eq.${id}&order=fecha_lectura.asc&limit=1`);
       if (lecFetch.data && lecFetch.data.length > 0) {
         const baseLec = lecFetch.data[0];
-        if (baseLec.id_periodo === '33333333-0000-0000-0000-000000000000' || (Number(baseLec.consumo_total || 0) === 0 && Number(baseLec.lectura_anterior) === Number(baseLec.lectura_actual))) {
+        if (baseLec.id_periodo === basePeriodId || (Number(baseLec.consumo_total || 0) === 0 && Number(baseLec.lectura_anterior) === Number(baseLec.lectura_actual))) {
           await supabaseClient.request(`lecturas?id=eq.${baseLec.id}`, {
             method: 'PATCH',
             body: { lectura_anterior: finalLecIni, lectura_actual: finalLecIni, updated_at: now }
@@ -1252,7 +1320,7 @@ export const updateMedidor = async (req: AuthenticatedRequest, res: Response): P
           id: crypto.randomUUID(),
           id_medidor: id,
           id_socio: socioId,
-          id_periodo: '33333333-0000-0000-0000-000000000000',
+          id_periodo: basePeriodId,
           lectura_anterior: finalLecIni,
           lectura_actual: finalLecIni,
           consumo_total: 0,
@@ -1374,13 +1442,14 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
     const medId = medidor.id as string;
     const socioId = medidor.id_socio as string;
 
-    // 2. Cargar socio, sector, lecturas y facturas pendientes en paralelo
-    const [socRes, secRes, lecRes, facRes, mulRes] = await Promise.all([
+    // 2. Cargar socio, sector, lecturas, facturas, multas y periodos en paralelo
+    const [socRes, secRes, lecRes, facRes, mulRes, perRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, any>>('socios', `id=eq.${socioId}&limit=1`),
       medidor.id_sector ? supabaseClient.fetchRecords<Record<string, any>>('sectores', `id=eq.${medidor.id_sector}&limit=1`) : Promise.resolve({ data: [] }),
       supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_medidor=eq.${medId}&order=fecha_lectura.desc&limit=10`),
       supabaseClient.fetchRecords<Record<string, any>>('facturas', `id_medidor=eq.${medId}&order=created_at.desc`),
-      supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', `id_socio=eq.${socioId}&estado=neq.PAGADO`)
+      supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', `id_socio=eq.${socioId}&estado=neq.PAGADO`),
+      supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc')
     ]);
 
     const socio = socRes.data && socRes.data.length > 0 ? socRes.data[0] : { id: socioId, nombres: 'Socio', apellidos: '', cedula_ruc: '-' };
@@ -1388,6 +1457,16 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
     const lecturas = lecRes.data || [];
     const facturas = facRes.data || [];
     const multas = mulRes.data || [];
+    const periodosList = perRes.data || [];
+
+    const periodosMap = new Map<string, Record<string, any>>();
+    for (const p of periodosList) {
+      if (p.id) periodosMap.set(p.id as string, p);
+      if (p.periodo_codigo) periodosMap.set(p.periodo_codigo as string, p);
+    }
+    const activePeriod = periodosList.find((p) => p.estado === 'ABIERTO') || periodosList[0] || null;
+    const activePeriodId = (activePeriod?.id as string) || '';
+    const activePeriodCod = (activePeriod?.periodo_codigo || activePeriod?.codigo || '') as string;
 
     const esTercera = ValidationRules.calcularEsTerceraEdad(socio.fecha_nacimiento as string) || Boolean(socio.es_tercera_edad);
     const tarifaBase = esTercera ? 5.0 : 7.0;
@@ -1417,7 +1496,10 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
       const vMultas = Number(f.valor_multas || 0);
       const recargoAlcant = (medidor.tiene_alcantarillado && vBase > 0) ? 1.0 : 0.0;
       const vAlcant = Number(f.valor_alcantarillado || 0) > 1.0 ? recargoAlcant : Number(f.valor_alcantarillado || 0);
-      const isCurrentPeriod = f.id_periodo === '33333333-0000-0000-0000-000000000001' || String(f.numero_factura || '').includes('202608');
+      const isCurrentPeriod = f.id_periodo === activePeriodId;
+      const pObj = periodosMap.get(f.id_periodo);
+      const pCod = (pObj?.periodo_codigo || pObj?.codigo || (isCurrentPeriod ? activePeriodCod : 'Anterior')) as string;
+
       let realConsumoM3 = Number(f.consumo_m3 || 0);
       let realExcedenteM3 = Number(f.excedente_m3 || 0);
       let vExc = Number(f.valor_excedente || 0);
@@ -1433,7 +1515,7 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
         }
       }
       const totalMes = Number((vBase + vExc + vAlcant).toFixed(2));
-      const totPagar = Number((totalMes + vDeudaAnt + vMultas).toFixed(2));
+      const totPagar = Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (totalMes + vDeudaAnt + vMultas).toFixed(2));
 
       totalDeuda += totPagar;
       totalDeudaHistorica += vDeudaAnt;
@@ -1451,7 +1533,7 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
       return {
         id: f.id,
         numeroFactura: f.numero_factura || f.id,
-        periodoCodigo: isCurrentPeriod ? '2026-08' : (f.id_periodo === '33333333-0000-0000-0000-000000000000' ? '2026-07' : '2026-08'),
+        periodoCodigo: pCod,
         fechaEmision: f.fecha_emision || f.created_at,
         fechaVencimiento: f.fecha_vencimiento,
         consumoM3: realConsumoM3,
@@ -1463,18 +1545,20 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
         valorDeudaAnterior: vDeudaAnt,
         totalMes: totalMes,
         totalPagar: totPagar,
+        saldoPendiente: totPagar,
+        montoPagado: Number(f.monto_pagado || 0),
         estadoPago: f.estado_pago,
         mesesCalculados: mFactura
       };
     });
 
     const tienePagadoMes = facturasPagadas.some((f) => {
-      const isPeriodo = String(f.numero_factura || '').includes('202608') || f.id_periodo === '33333333-0000-0000-0000-000000000001';
+      const isPeriodo = f.id_periodo === activePeriodId;
       const cobroConsumo = Number(f.total_mes || 0) > 0 || Number(f.valor_base || 0) > 0;
       return isPeriodo && cobroConsumo;
     });
     const tieneAguaPendienteMes = facturasDetalladas.some((f) => {
-      const isPeriodo = (String(f.numeroFactura || '').includes('202608') || f.periodoCodigo === '2026-08');
+      return f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
       return isPeriodo && f.estadoPago === 'PENDIENTE' && Number(f.valorBase || 0) > 0;
     });
     const yaPagadoMes = tienePagadoMes && !tieneAguaPendienteMes;
@@ -1699,12 +1783,13 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
     }
 
     const socioId = socio.id as string;
-    const [medRes, facRes, mulRes, lecRes, secRes] = await Promise.all([
+    const [medRes, facRes, mulRes, lecRes, secRes, perRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, any>>('medidores', `id_socio=eq.${socioId}`),
       supabaseClient.fetchRecords<Record<string, any>>('facturas', `id_socio=eq.${socioId}&order=created_at.desc`),
       supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', `id_socio=eq.${socioId}&estado=neq.PAGADO`),
       supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_socio=eq.${socioId}&order=fecha_lectura.desc`),
-      supabaseClient.fetchRecords<Record<string, any>>('sectores')
+      supabaseClient.fetchRecords<Record<string, any>>('sectores'),
+      supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc')
     ]);
 
     const medidores = medRes.data || [];
@@ -1712,6 +1797,17 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
     const multas = mulRes.data || [];
     const lecturas = lecRes.data || [];
     const sectores = secRes.data || [];
+    const periodosList = perRes.data || [];
+
+    const periodosMap = new Map<string, Record<string, any>>();
+    for (const p of periodosList) {
+      if (p.id) periodosMap.set(p.id as string, p);
+      if (p.periodo_codigo) periodosMap.set(p.periodo_codigo as string, p);
+    }
+    const activePeriod = periodosList.find((p) => p.estado === 'ABIERTO') || periodosList[0] || null;
+    const activePeriodId = (activePeriod?.id as string) || '';
+    const activePeriodCod = (activePeriod?.periodo_codigo || activePeriod?.codigo || '') as string;
+
     const secMap = new Map(sectores.map((s) => [s.id as string, s.nombre_sector as string]));
 
     const esTercera = ValidationRules.calcularEsTerceraEdad(socio.fecha_nacimiento as string) || Boolean(socio.es_tercera_edad);
@@ -1742,8 +1838,11 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
         const vMultas = Number(f.valor_multas || 0);
         const recargoAlcant = (m.tiene_alcantarillado && vBase > 0) ? 1.0 : 0.0;
         const vAlcant = Number(f.valor_alcantarillado || 0) > 1.0 ? recargoAlcant : Number(f.valor_alcantarillado || 0);
-        const isCurrentPeriod = f.id_periodo === '33333333-0000-0000-0000-000000000001' || String(f.numero_factura || '').includes('202608');
-        const isJulyPeriod = f.id_periodo === '33333333-0000-0000-0000-000000000000' || String(f.numero_factura || '').includes('JUL');
+        const isCurrentPeriod = f.id_periodo === activePeriodId;
+        const pObj = periodosMap.get(f.id_periodo);
+        const pCod = (pObj?.periodo_codigo || pObj?.codigo || (isCurrentPeriod ? activePeriodCod : 'Anterior')) as string;
+        const isCorte = isPeriodoCorte(pCod);
+
         let realConsumoM3 = Number(f.consumo_m3 || 0);
         let realExcedenteM3 = Number(f.excedente_m3 || 0);
         let vExc = Number(f.valor_excedente || 0);
@@ -1758,9 +1857,9 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
             vExc = Number(f.valor_excedente || 0);
           }
         }
-        const totalMes = isJulyPeriod ? Number(f.total_mes || f.total_pagar || 0) : Number((vBase + vExc + vAlcant).toFixed(2));
-        const totPagar = isJulyPeriod ? Number(f.total_pagar || f.total_mes || 0) : Number((totalMes + vDeudaAnt + vMultas).toFixed(2));
-        const deudaAguaMed = isJulyPeriod ? Number(f.total_pagar || f.total_mes || 0) : Number((totalMes + vDeudaAnt).toFixed(2));
+        const totalMes = isCorte ? Number(f.total_mes || f.total_pagar || 0) : Number((vBase + vExc + vAlcant).toFixed(2));
+        const totPagar = Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (isCorte ? (f.total_pagar || totalMes) : (totalMes + vDeudaAnt + vMultas)).toFixed(2));
+        const deudaAguaMed = totPagar;
 
         mTotalDeuda += deudaAguaMed;
         let mF = 0;
@@ -1772,7 +1871,7 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
         return {
           id: f.id,
           numeroFactura: f.numero_factura || f.id,
-          periodoCodigo: isCurrentPeriod ? '2026-08' : (isJulyPeriod ? '2026-07' : (f.periodo_codigo || '2026-08')),
+          periodoCodigo: pCod,
           fechaEmision: f.fecha_emision || f.created_at,
           consumoM3: realConsumoM3,
           excedenteM3: realExcedenteM3,
@@ -1783,19 +1882,20 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
           valorDeudaAnterior: vDeudaAnt,
           totalMes: totalMes,
           totalPagar: totPagar,
+          saldoPendiente: totPagar,
+          montoPagado: Number(f.monto_pagado || 0),
           estadoPago: f.estado_pago,
           mesesAdeudados: mF
         };
       });
 
       const tienePagadoMes = medPagadas.some((f) => {
-        const isPeriodo = String(f.numero_factura || '').includes('202608') || f.id_periodo === '33333333-0000-0000-0000-000000000001';
+        const isPeriodo = f.id_periodo === activePeriodId;
         const cobroConsumo = Number(f.total_mes || 0) > 0 || Number(f.valor_base || 0) > 0;
         return isPeriodo && cobroConsumo;
       });
       const tieneAguaPendienteMes = facturasDet.some((f) => {
-        const isPeriodo = (String(f.numeroFactura || '').includes('202608') || f.periodoCodigo === '2026-08');
-        return isPeriodo && f.estadoPago === 'PENDIENTE' && Number(f.valorBase || 0) > 0;
+        return f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
       });
       const yaPagadoMes = tienePagadoMes && !tieneAguaPendienteMes;
 
@@ -1942,7 +2042,7 @@ export const cerrarPeriodo = async (req: AuthenticatedRequest, res: Response): P
 
 export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { idPeriodo } = req.body || {};
+    const { idPeriodo } = req.body || req.params || {};
     const now = new Date().toISOString();
 
     // 1. Obtener todos los periodos
@@ -1964,6 +2064,16 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
     }
 
     const currentCode = String(currentPeriod.periodo_codigo || '2026-08').trim();
+
+    // Emitir facturas a Caja de las lecturas registradas en el período que se cierra (si existen)
+    let facturasGeneradasPeriodoAnterior = 0;
+    try {
+      const resEmision = await ejecutarPasarLecturasACaja(currentPeriod.id);
+      facturasGeneradasPeriodoAnterior = resEmision.facturasGeneradas;
+    } catch (_e) {
+      // Si no había lecturas tomadas o ya estaban facturadas, continúa normalmente
+    }
+
     // Calcular siguiente código YYYY-MM
     const parts = currentCode.split('-');
     let year = parseInt(parts[0], 10) || new Date().getFullYear();
@@ -2014,20 +2124,29 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
     }
 
     // 4. Rollover de lecturas y consolidación de deudas pendientes
-    const [medRes, lecRes, facRes] = await Promise.all([
+    const [medRes, lecRes, existingNextLecRes, facRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
       supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${currentPeriod.id}&order=created_at.desc`),
+      supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${nextPeriodId}`),
       supabaseClient.fetchRecords<Record<string, any>>('facturas', 'estado_pago=eq.PENDIENTE')
     ]);
 
     const medidores = medRes.data || [];
     const lecturasCerradas = lecRes.data || [];
+    const lecturasExistentesNext = existingNextLecRes.data || [];
     const facturasPendientes = facRes.data || [];
 
     const lecMap = new Map<string, Record<string, any>>();
     for (const l of lecturasCerradas) {
       if (l.id_medidor && !lecMap.has(l.id_medidor)) {
         lecMap.set(l.id_medidor, l);
+      }
+    }
+
+    const nextLecMap = new Map<string, Record<string, any>>();
+    for (const l of lecturasExistentesNext) {
+      if (l.id_medidor && !nextLecMap.has(l.id_medidor)) {
+        nextLecMap.set(l.id_medidor, l);
       }
     }
 
@@ -2056,30 +2175,33 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
         montoTotalDeudaAnterior += subtotal;
       }
 
-      // Actualizar medidor
+      // Actualizar lectura_anterior en tabla medidores
       await supabaseClient.request(`medidores?id=eq.${mId}`, {
         method: 'PATCH',
         body: {
+          lectura_anterior: nuevaLecturaAnterior,
           updated_at: now
         }
       }).catch(() => {});
 
-      // Crear registro de lectura para el nuevo periodo
-      const nuevaLecturaId = crypto.randomUUID();
+      // Crear o actualizar registro de lectura para el nuevo periodo
+      const existingLec = nextLecMap.get(mId);
+      const nuevaLecturaId = existingLec?.id || crypto.randomUUID();
+
       await supabaseClient.syncRecord('lecturas', {
         id: nuevaLecturaId,
         id_medidor: mId,
         id_socio: m.id_socio,
         id_periodo: nextPeriodId,
         lectura_anterior: nuevaLecturaAnterior,
-        lectura_actual: null,
-        consumo_total: 0,
-        excedente_m3: 0,
-        fecha_lectura: null,
-        id_lector: '00000000-0000-0000-0000-000000000003',
+        lectura_actual: existingLec?.lectura_actual ?? null,
+        consumo_total: existingLec?.consumo_total ?? 0,
+        excedente_m3: existingLec?.excedente_m3 ?? 0,
+        fecha_lectura: existingLec?.fecha_lectura ?? null,
+        id_lector: req.user?.id || null,
         observaciones: `Apertura automática del período ${nextCode}`,
         version: 1,
-        created_at: now,
+        created_at: existingLec?.created_at || now,
         updated_at: now
       }).catch(() => {});
 
@@ -2088,12 +2210,13 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
 
     res.json({
       success: true,
-      message: `Período ${currentCode} cerrado exitosamente. Período ${nextCode} habilitado con ${medidoresAvanzados} medidores preparados. Facturas pendientes acumuladas: ${medidoresConDeuda} medidor(es) con deuda ($${montoTotalDeudaAnterior.toFixed(2)}).`,
+      message: `Período ${currentCode} cerrado exitosamente. Período ${nextCode} habilitado con ${medidoresAvanzados} medidores preparados.${facturasGeneradasPeriodoAnterior > 0 ? ` Se emitieron ${facturasGeneradasPeriodoAnterior} facturas a Caja.` : ''}`,
       data: {
         periodoAnterior: {
           id: currentPeriod.id,
           codigo: currentCode,
-          estado: 'CERRADO'
+          estado: 'CERRADO',
+          facturasGeneradas: facturasGeneradasPeriodoAnterior
         },
         periodoNuevo: {
           id: nextPeriodId,
@@ -2276,17 +2399,12 @@ export const registrarLectura = async (req: AuthenticatedRequest, res: Response)
     let finalIdPeriodo = inputPeriodo;
 
     if (!finalIdPeriodo || !finalIdPeriodo.includes('-') || finalIdPeriodo.length < 30) {
-      const targetCode = finalIdPeriodo || '2026-08';
-      const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${targetCode}&limit=1`);
-      if (pRes.data && pRes.data.length > 0) {
-        finalIdPeriodo = pRes.data[0].id as string;
+      const activeP = await getActivePeriod();
+      if (finalIdPeriodo) {
+        const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${finalIdPeriodo}&limit=1`);
+        finalIdPeriodo = (pRes.data?.[0]?.id as string) || (activeP?.id as string) || '';
       } else {
-        const pOpen = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `estado=eq.ABIERTO&order=fecha_inicio.desc&limit=1`);
-        if (pOpen.data && pOpen.data.length > 0) {
-          finalIdPeriodo = pOpen.data[0].id as string;
-        } else {
-          finalIdPeriodo = '33333333-0000-0000-0000-000000000001';
-        }
+        finalIdPeriodo = (activeP?.id as string) || '';
       }
     }
 
@@ -2435,13 +2553,12 @@ export const sincronizarLecturasBatch = async (req: AuthenticatedRequest, res: R
         const inputPeriodo = idPeriodo || periodo;
         let finalIdPeriodo = inputPeriodo;
         if (!finalIdPeriodo || !finalIdPeriodo.includes('-') || finalIdPeriodo.length < 30) {
-          const targetCode = finalIdPeriodo || '2026-08';
-          const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${targetCode}&limit=1`);
-          if (pRes.data && pRes.data.length > 0) {
-            finalIdPeriodo = pRes.data[0].id as string;
+          const activeP = await getActivePeriod();
+          if (finalIdPeriodo) {
+            const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${finalIdPeriodo}&limit=1`);
+            finalIdPeriodo = (pRes.data?.[0]?.id as string) || (activeP?.id as string) || '';
           } else {
-            const pOpen = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `estado=eq.ABIERTO&order=fecha_inicio.desc&limit=1`);
-            finalIdPeriodo = (pOpen.data && pOpen.data.length > 0) ? (pOpen.data[0].id as string) : '33333333-0000-0000-0000-000000000001';
+            finalIdPeriodo = (activeP?.id as string) || '';
           }
         }
 
@@ -2620,22 +2737,26 @@ export const getFacturas = async (req: AuthenticatedRequest, res: Response): Pro
     if (periodoId) query += `&id_periodo=eq.${periodoId}`;
     if (estadoPago) query += `&estado_pago=eq.${estadoPago}`;
 
-    const [resData, medRes, socRes] = await Promise.all([
+    const [resData, medRes, socRes, perRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, unknown>>('facturas', query),
       supabaseClient.fetchRecords<Record<string, unknown>>('medidores'),
-      supabaseClient.fetchRecords<Record<string, unknown>>('socios')
+      supabaseClient.fetchRecords<Record<string, unknown>>('socios'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('periodos')
     ]);
 
     const facturas = resData.data || [];
     const medMap = new Map((medRes.data || []).map((m) => [m.id as string, m]));
     const socMap = new Map((socRes.data || []).map((s) => [s.id as string, s]));
+    const perMap = new Map((perRes.data || []).map((p) => [p.id as string, p]));
 
     const enriched = facturas.map((f) => {
       const m = f.id_medidor ? medMap.get(f.id_medidor as string) : null;
       const s = f.id_socio ? socMap.get(f.id_socio as string) : null;
+      const p = f.id_periodo ? perMap.get(f.id_periodo as string) : null;
       const fNum = (f.numero_factura as string) || (f.id as string);
       const isPagado = f.estado_pago === 'PAGADO';
       const totP = Number(f.total_pagar || 0);
+      const pCod = (p?.periodo_codigo || p?.codigo || (f.periodo_codigo as string) || '') as string;
 
       return {
         ...f,
@@ -2654,7 +2775,8 @@ export const getFacturas = async (req: AuthenticatedRequest, res: Response): Pro
         socioCodigo: (s?.codigo_socio as string) || '',
         idPeriodo: f.id_periodo,
         id_periodo: f.id_periodo,
-        periodoCodigo: f.id_periodo === '33333333-0000-0000-0000-000000000001' ? '2026-08' : (f.id_periodo === '33333333-0000-0000-0000-000000000000' ? '2026-07' : '2026-08'),
+        periodoCodigo: pCod,
+        periodo_codigo: pCod,
         estadoPago: (f.estado_pago as string) || 'PENDIENTE',
         estado_pago: (f.estado_pago as string) || 'PENDIENTE',
         totalMes: Number(f.total_mes ?? totP),
@@ -2662,7 +2784,7 @@ export const getFacturas = async (req: AuthenticatedRequest, res: Response): Pro
         totalPagar: totP,
         total_pagar: totP,
         montoPagado: isPagado ? totP : Number(f.monto_pagado || 0),
-        saldoPendiente: isPagado ? 0 : totP,
+        saldoPendiente: Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (isPagado ? 0 : totP)),
         fechaPago: f.fecha_pago || f.updated_at || null,
         metodoPago: f.metodo_pago || 'EFECTIVO'
       };
@@ -2726,7 +2848,7 @@ export const liquidarFactura = async (req: AuthenticatedRequest, res: Response):
       numero_factura: p.numeroFactura || p.numero_factura || `REC-${String(Date.now()).slice(-6)}`,
       id_socio: idSocio,
       id_medidor: idMedidor,
-      id_periodo: p.idPeriodo || p.id_periodo || '33333333-0000-0000-0000-000000000001',
+      id_periodo: p.idPeriodo || p.id_periodo || (await getActivePeriod())?.id || '00000000-0000-0000-0000-000000000000',
       id_lectura: p.idLectura || p.id_lectura || null,
       es_tercera_edad: Boolean(p.esTerceraEdad ?? p.es_tercera_edad ?? false),
       valor_base: valorBase,
@@ -2759,162 +2881,188 @@ export const liquidarFactura = async (req: AuthenticatedRequest, res: Response):
   }
 };
 
+export async function ejecutarPasarLecturasACaja(idPeriodo?: string): Promise<{
+  periodo: string;
+  targetPeriodId: string;
+  facturasGeneradas: number;
+  totalM3: number;
+  totalFacturadoMes: number;
+  totalConDeudas: number;
+  facturas: any[];
+  sinLecturas: boolean;
+}> {
+  const now = new Date().toISOString();
+
+  // 1. Obtener período objetivo (por ID, código o el que esté ABIERTO)
+  const periodosRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc');
+  const periodos = periodosRes.data || [];
+  let targetPeriod: Record<string, any> | null = null;
+
+  if (idPeriodo) {
+    targetPeriod = periodos.find((p) => p.id === idPeriodo || p.periodo_codigo === idPeriodo) || null;
+  }
+  if (!targetPeriod) {
+    targetPeriod = periodos.find((p) => p.estado === 'ABIERTO') || periodos[0] || null;
+  }
+
+  if (!targetPeriod) {
+    throw new Error('No se encontró un período activo para pasar a caja.');
+  }
+
+  // 2. Obtener tarifas vigentes
+  const tarifas = getCurrentTarifas();
+  const cargoNormal = tarifas.cargoFijoNormal || 7.0;
+  const cargoTercera = tarifas.cargoFijoTerceraEdad || 5.0;
+  const recargoAlcant = tarifas.recargoAlcantarillado || 1.0;
+  const limiteBase = tarifas.limiteBaseM3 || 30;
+  const costoExc = tarifas.costoExcedenteM3 || 0.10;
+
+  // 3. Obtener socios, medidores, lecturas del periodo, facturas existentes y multas
+  const [sociosRes, medidoresRes, lecturasRes, facturasRes] = await Promise.all([
+    supabaseClient.fetchRecords<Record<string, any>>('socios'),
+    supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
+    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${targetPeriod.id}`),
+    supabaseClient.fetchRecords<Record<string, any>>('facturas')
+  ]);
+
+  const socios = sociosRes.data || [];
+  const medidores = medidoresRes.data || [];
+  const lecturas = lecturasRes.data || [];
+  const facturas = facturasRes.data || [];
+
+  const socioMap = new Map<string, Record<string, any>>(socios.map((s) => [s.id, s]));
+  const medidorMap = new Map<string, Record<string, any>>(medidores.map((m) => [m.id, m]));
+
+  // Filtrar lecturas válidas que tengan lectura_actual registrada
+  const lecturasConToma = lecturas.filter(
+    (l) => l.lectura_actual !== null && l.lectura_actual !== undefined && l.id_medidor
+  );
+
+  if (lecturasConToma.length === 0) {
+    return {
+      periodo: targetPeriod.periodo_codigo,
+      targetPeriodId: targetPeriod.id,
+      facturasGeneradas: 0,
+      totalM3: 0,
+      totalFacturadoMes: 0,
+      totalConDeudas: 0,
+      facturas: [],
+      sinLecturas: true
+    };
+  }
+
+  let facturasGeneradas = 0;
+  let totalM3 = 0;
+  let totalFacturadoMes = 0;
+  let totalConDeudas = 0;
+  const procesadas: any[] = [];
+
+  const periodCodeClean = String(targetPeriod.periodo_codigo || '2026-08').replace(/-/g, '');
+  let correlativo = 1;
+
+  for (const lec of lecturasConToma) {
+    const med = medidorMap.get(lec.id_medidor);
+    if (!med) continue;
+    const soc = socioMap.get(med.id_socio) || {};
+
+    // Cálculos de consumo y tarifas
+    const lAnt = Number(lec.lectura_anterior ?? med.lectura_anterior ?? 0);
+    const lAct = Number(lec.lectura_actual);
+    const consumoM3 = Math.max(0, Number((lAct - lAnt).toFixed(2)));
+    const excedenteM3 = Math.max(0, Number((consumoM3 - limiteBase).toFixed(2)));
+    const valorExcedente = Number((excedenteM3 * costoExc).toFixed(2));
+
+    const esTercera = ValidationRules.calcularEsTerceraEdad(soc.fecha_nacimiento as string) || Boolean(soc.es_tercera_edad);
+    const valorBase = esTercera ? cargoTercera : cargoNormal;
+    const tieneAlcant = Boolean(med.tiene_alcantarillado ?? soc.tiene_alcantarillado);
+    const valorAlcant = tieneAlcant ? recargoAlcant : 0.0;
+
+    const totalMes = Number((valorBase + valorExcedente + valorAlcant).toFixed(2));
+
+    // La factura mensual representa exclusivamente el devengo de su propio período.
+    // Las deudas anteriores se liquidan contra sus propias facturas en caja y no se clonan aquí.
+    const facturasPreviasImpagas = facturas.filter(
+      (f) => f.id_medidor === med.id && f.id_periodo !== targetPeriod.id && f.estado_pago === 'PENDIENTE'
+    );
+    const valorDeudaAnterior = facturasPreviasImpagas.reduce((acc, f) => acc + Number(f.saldo_pendiente ?? f.total_pagar ?? f.total_mes ?? 0), 0);
+
+    const totalPagar = totalMes;
+
+    // Verificar si ya existe factura para este medidor en este período
+    const facExistente = facturas.find(
+      (f) => f.id_medidor === med.id && f.id_periodo === targetPeriod.id
+    );
+
+    // Si la factura ya fue cobrada y está PAGADA, es inmutable: no recalcular ni sobreescribir
+    if (facExistente && facExistente.estado_pago === 'PAGADO') {
+      continue;
+    }
+
+    const numFactura = facExistente?.numero_factura || `FAC-${periodCodeClean}-${String(correlativo++).padStart(4, '0')}`;
+
+    const facturaRecord = {
+      id: facExistente?.id || crypto.randomUUID(),
+      numero_factura: numFactura,
+      id_socio: soc.id || med.id_socio,
+      id_medidor: med.id,
+      id_periodo: targetPeriod.id,
+      id_lectura: lec.id,
+      es_tercera_edad: esTercera,
+      valor_base: valorBase,
+      consumo_m3: consumoM3,
+      excedente_m3: excedenteM3,
+      valor_excedente: valorExcedente,
+      valor_alcantarillado: valorAlcant,
+      valor_multas: 0.0,
+      valor_deuda_anterior: 0.0,
+      total_mes: totalMes,
+      total_pagar: totalPagar,
+      monto_pagado: Number(facExistente?.monto_pagado || 0.0),
+      saldo_pendiente: Number(facExistente?.saldo_pendiente !== undefined ? facExistente.saldo_pendiente : totalMes),
+      estado_pago: facExistente?.estado_pago === 'PAGADO' ? 'PAGADO' : 'PENDIENTE',
+      fecha_vencimiento: targetPeriod.fecha_fin || `${targetPeriod.periodo_codigo}-28`,
+      version: 1,
+      created_at: facExistente?.created_at || now,
+      updated_at: now
+    };
+
+    await supabaseClient.syncRecord('facturas', facturaRecord);
+
+    facturasGeneradas++;
+    totalM3 += consumoM3;
+    totalFacturadoMes += totalMes;
+    if (valorDeudaAnterior > 0) totalConDeudas++;
+    procesadas.push(facturaRecord);
+  }
+
+  return {
+    periodo: targetPeriod.periodo_codigo,
+    targetPeriodId: targetPeriod.id,
+    facturasGeneradas,
+    totalM3: Number(totalM3.toFixed(2)),
+    totalFacturadoMes: Number(totalFacturadoMes.toFixed(2)),
+    totalConDeudas,
+    facturas: procesadas,
+    sinLecturas: false
+  };
+}
+
 export const pasarLecturasACaja = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { idPeriodo } = req.body || {};
-    const now = new Date().toISOString();
+    const result = await ejecutarPasarLecturasACaja(idPeriodo);
 
-    // 1. Obtener período objetivo (por ID, código o el que esté ABIERTO)
-    const periodosRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc');
-    const periodos = periodosRes.data || [];
-    let targetPeriod: Record<string, any> | null = null;
-
-    if (idPeriodo) {
-      targetPeriod = periodos.find((p) => p.id === idPeriodo || p.periodo_codigo === idPeriodo) || null;
-    }
-    if (!targetPeriod) {
-      targetPeriod = periodos.find((p) => p.estado === 'ABIERTO') || periodos[0] || null;
-    }
-
-    if (!targetPeriod) {
-      res.status(400).json({ error: 'No se encontró un período activo para pasar a caja.' });
-      return;
-    }
-
-    // 2. Obtener tarifas vigentes
-    const tarifas = getCurrentTarifas();
-    const cargoNormal = tarifas.cargoFijoNormal || 7.0;
-    const cargoTercera = tarifas.cargoFijoTerceraEdad || 5.0;
-    const recargoAlcant = tarifas.recargoAlcantarillado || 1.0;
-    const limiteBase = tarifas.limiteBaseM3 || 30;
-    const costoExc = tarifas.costoExcedenteM3 || 0.10;
-
-    // 3. Obtener socios, medidores, lecturas del periodo, facturas existentes y multas
-    const [sociosRes, medidoresRes, lecturasRes, facturasRes, multasRes] = await Promise.all([
-      supabaseClient.fetchRecords<Record<string, any>>('socios'),
-      supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
-      supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${targetPeriod.id}`),
-      supabaseClient.fetchRecords<Record<string, any>>('facturas'),
-      supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', 'estado=neq.PAGADO')
-    ]);
-
-    const socios = sociosRes.data || [];
-    const medidores = medidoresRes.data || [];
-    const lecturas = lecturasRes.data || [];
-    const facturas = facturasRes.data || [];
-    const multas = multasRes.data || [];
-
-    const socioMap = new Map<string, Record<string, any>>(socios.map((s) => [s.id, s]));
-    const medidorMap = new Map<string, Record<string, any>>(medidores.map((m) => [m.id, m]));
-
-    // Filtrar lecturas válidas que tengan lectura_actual registrada
-    const lecturasConToma = lecturas.filter(
-      (l) => l.lectura_actual !== null && l.lectura_actual !== undefined && l.id_medidor
-    );
-
-    if (lecturasConToma.length === 0) {
+    if (result.sinLecturas) {
       res.status(400).json({
-        error: `No hay lecturas registradas para el período ${targetPeriod.periodo_codigo}. El lector debe registrar y subir lecturas primero.`
+        error: `No hay lecturas registradas para el período ${result.periodo}. El lector debe registrar y subir lecturas primero.`
       });
       return;
     }
 
-    let facturasGeneradas = 0;
-    let totalM3 = 0;
-    let totalFacturadoMes = 0;
-    let totalConDeudas = 0;
-    const procesadas: any[] = [];
-
-    const periodCodeClean = String(targetPeriod.periodo_codigo || '2026-08').replace(/-/g, '');
-    let correlativo = 1;
-
-    for (const lec of lecturasConToma) {
-      const med = medidorMap.get(lec.id_medidor);
-      if (!med) continue;
-      const soc = socioMap.get(med.id_socio) || {};
-
-      // Cálculos de consumo y tarifas
-      const lAnt = Number(lec.lectura_anterior ?? med.lectura_anterior ?? 0);
-      const lAct = Number(lec.lectura_actual);
-      const consumoM3 = Math.max(0, Number((lAct - lAnt).toFixed(2)));
-      const excedenteM3 = Math.max(0, Number((consumoM3 - limiteBase).toFixed(2)));
-      const valorExcedente = Number((excedenteM3 * costoExc).toFixed(2));
-
-      const esTercera = ValidationRules.calcularEsTerceraEdad(soc.fecha_nacimiento as string) || Boolean(soc.es_tercera_edad);
-      const valorBase = esTercera ? cargoTercera : cargoNormal;
-      const tieneAlcant = Boolean(med.tiene_alcantarillado ?? soc.tiene_alcantarillado);
-      const valorAlcant = tieneAlcant ? recargoAlcant : 0.0;
-
-      const totalMes = Number((valorBase + valorExcedente + valorAlcant).toFixed(2));
-
-      // Deudas históricas de períodos anteriores no pagados para este medidor
-      const facturasPreviasImpagas = facturas.filter(
-        (f) => f.id_medidor === med.id && f.id_periodo !== targetPeriod.id && f.estado_pago === 'PENDIENTE'
-      );
-      const valorDeudaAnterior = facturasPreviasImpagas.reduce((acc, f) => acc + Number(f.total_mes ?? f.total_pagar ?? 0), 0);
-
-      // Multas pendientes del socio
-      const multasSocio = multas.filter((m) => m.id_socio === soc.id);
-      const valorMultas = multasSocio.reduce((acc, m) => acc + Number(m.saldo_pendiente ?? m.monto ?? 0), 0);
-
-      const totalPagar = Number((totalMes + valorDeudaAnterior + valorMultas).toFixed(2));
-
-      // Verificar si ya existe factura para este medidor en este período
-      const facExistente = facturas.find(
-        (f) => f.id_medidor === med.id && f.id_periodo === targetPeriod.id
-      );
-
-      // Si la factura ya fue cobrada y está PAGADA, es inmutable: no recalcular ni sobreescribir
-      if (facExistente && facExistente.estado_pago === 'PAGADO') {
-        continue;
-      }
-
-      const numFactura = facExistente?.numero_factura || `FAC-${periodCodeClean}-${String(correlativo++).padStart(4, '0')}`;
-
-      const facturaRecord = {
-        id: facExistente?.id || crypto.randomUUID(),
-        numero_factura: numFactura,
-        id_socio: soc.id || med.id_socio,
-        id_medidor: med.id,
-        id_periodo: targetPeriod.id,
-        id_lectura: lec.id,
-        es_tercera_edad: esTercera,
-        valor_base: valorBase,
-        consumo_m3: consumoM3,
-        excedente_m3: excedenteM3,
-        valor_excedente: valorExcedente,
-        valor_alcantarillado: valorAlcant,
-        valor_multas: valorMultas,
-        valor_deuda_anterior: valorDeudaAnterior,
-        total_mes: totalMes,
-        total_pagar: totalPagar,
-        estado_pago: facExistente?.estado_pago === 'PAGADO' ? 'PAGADO' : 'PENDIENTE',
-        fecha_vencimiento: targetPeriod.fecha_fin || '2026-09-30',
-        version: 1,
-        created_at: facExistente?.created_at || now,
-        updated_at: now
-      };
-
-      await supabaseClient.syncRecord('facturas', facturaRecord);
-
-      facturasGeneradas++;
-      totalM3 += consumoM3;
-      totalFacturadoMes += totalMes;
-      if (valorDeudaAnterior > 0) totalConDeudas++;
-      procesadas.push(facturaRecord);
-    }
-
     res.json({
       success: true,
-      message: `¡Éxito! Se pasaron ${facturasGeneradas} facturas al Módulo de Caja para el período ${targetPeriod.periodo_codigo}.`,
-      data: {
-        periodo: targetPeriod.periodo_codigo,
-        facturasGeneradas,
-        totalM3: Number(totalM3.toFixed(2)),
-        totalFacturadoMes: Number(totalFacturadoMes.toFixed(2)),
-        totalConDeudas,
-        facturas: procesadas
-      }
+      message: `¡Éxito! Se pasaron ${result.facturasGeneradas} facturas al Módulo de Caja para el período ${result.periodo}.`,
+      data: result
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error pasando lecturas a caja.';
@@ -2929,11 +3077,19 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
   try {
     const { id } = req.params;
     const body = req.body || {};
-    const { metodoPago, fechaPago, abonos, multasCobradasIds } = body;
+    const {
+      metodoPago = 'EFECTIVO',
+      fechaPago,
+      abonos,
+      multasCobradasIds,
+      abonosFacturasAnteriores,
+      montoRecibido,
+      montoAbonado
+    } = body;
     const now = new Date().toISOString();
     const idCajero = req.user?.id || body.idCajero || '00000000-0000-0000-0000-000000000002';
 
-    // 1. Localizar la factura en Supabase por ID o número de factura
+    // 1. Localizar la factura principal
     let factura: Record<string, any> | null = null;
     const byId = await supabaseClient.fetchRecords<Record<string, any>>('facturas', `id=eq.${encodeURIComponent(id)}&limit=1`);
     if (byId.data && byId.data.length > 0) {
@@ -2950,46 +3106,72 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    // Sincronizar valores reales facturados (excedentes, base, multas, deudas) antes del cobro y distribución contable
-    if (body.valorExcedente !== undefined || body.consumoM3 !== undefined || body.totalPagar !== undefined) {
-      const patchFactura: Record<string, any> = {};
-      if (body.consumoM3 !== undefined) patchFactura.consumo_m3 = Number(body.consumoM3);
-      if (body.excedenteM3 !== undefined) patchFactura.excedente_m3 = Number(body.excedenteM3);
-      if (body.valorBase !== undefined) patchFactura.valor_base = Number(body.valorBase);
-      if (body.valorExcedente !== undefined) patchFactura.valor_excedente = Number(body.valorExcedente);
-      if (body.valorAlcantarillado !== undefined) patchFactura.valor_alcantarillado = Number(body.valorAlcantarillado);
-      if (body.valorMultas !== undefined) patchFactura.valor_multas = Number(body.valorMultas);
-      if (body.valorDeudaAnterior !== undefined) patchFactura.valor_deuda_anterior = Number(body.valorDeudaAnterior);
-      if (body.totalMes !== undefined) patchFactura.total_mes = Number(body.totalMes);
-      if (body.totalPagar !== undefined) patchFactura.total_pagar = Number(body.totalPagar);
+    const periodosMap = await getPeriodosMap();
 
-      Object.assign(factura, patchFactura);
-      await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
-        method: 'PATCH',
-        body: patchFactura
-      });
+    // Obtener nombre del socio para asientos contables
+    let nombreSocio = 'Socio';
+    if (factura.id_socio) {
+      const soc = await supabaseClient.fetchRecords<Record<string, any>>('socios', `id=eq.${factura.id_socio}&limit=1`);
+      if (soc.data && soc.data.length > 0) {
+        nombreSocio = `${soc.data[0].nombres || ''} ${soc.data[0].apellidos || ''}`.trim() || soc.data[0].codigo_socio;
+      }
     }
 
-    // 2. Procesar abonos parciales o pagos completos por rubro vinculados a esta factura
+    const asientosGenerados: any[] = [];
     const abonosProcesados: any[] = [];
+    const facturasActualizadas: any[] = [];
 
+    // Helper interno para asentar en fondos_movimientos
+    const asentarFondos = async (dist: Record<string, number>, numComprobante: string, conceptoPrefix: string, idFac: string) => {
+      const items = [
+        { idFondo: FONDO_IDS.OPERACION_MANT, monto: dist.OPERACION_MANT || 0, concepto: `${conceptoPrefix} - Operación y Mantenimiento ($${(dist.OPERACION_MANT || 0).toFixed(2)}) - ${nombreSocio}` },
+        { idFondo: FONDO_IDS.PADRE_PARROQUIA, monto: dist.PADRE_PARROQUIA || 0, concepto: `${conceptoPrefix} - Aporte Parroquial ($${(dist.PADRE_PARROQUIA || 0).toFixed(2)}) - ${nombreSocio}` },
+        { idFondo: FONDO_IDS.PAGO_LECTOR, monto: dist.PAGO_LECTOR || 0, concepto: `${conceptoPrefix} - Toma Lectura ($${(dist.PAGO_LECTOR || 0).toFixed(2)}) - ${nombreSocio}` },
+        { idFondo: FONDO_IDS.MORTUORIO, monto: dist.MORTUORIO || 0, concepto: `${conceptoPrefix} - Fondo Mortuorio ($${(dist.MORTUORIO || 0).toFixed(2)}) - ${nombreSocio}` },
+        { idFondo: FONDO_IDS.PRO_MEJORAS, monto: dist.PRO_MEJORAS || 0, concepto: `${conceptoPrefix} - Excedente Consumo ($${(dist.PRO_MEJORAS || 0).toFixed(2)}) - ${nombreSocio}` },
+        { idFondo: FONDO_IDS.ALCANTARILLADO, monto: dist.ALCANTARILLADO || 0, concepto: `${conceptoPrefix} - Servicio Alcantarillado ($${(dist.ALCANTARILLADO || 0).toFixed(2)}) - ${nombreSocio}` },
+        { idFondo: FONDO_IDS.MULTAS_EXTRAS, monto: dist.MULTAS_EXTRAS || 0, concepto: `${conceptoPrefix} - Multas y Extras ($${(dist.MULTAS_EXTRAS || 0).toFixed(2)}) - ${nombreSocio}` }
+      ];
+
+      for (const it of items) {
+        if (it.monto > 0) {
+          const asiento = {
+            id: crypto.randomUUID(),
+            id_fondo: it.idFondo,
+            fecha: fechaPago || now,
+            concepto: it.concepto,
+            tipo: 'INGRESO',
+            ingreso: it.monto,
+            egreso: 0,
+            saldo: it.monto,
+            id_factura: idFac,
+            numero_comprobante: numComprobante,
+            id_responsable: idCajero,
+            beneficiario: nombreSocio,
+            created_at: now
+          };
+          await supabaseClient.syncRecord('fondos_movimientos', asiento);
+          asientosGenerados.push(asiento);
+        }
+      }
+    };
+
+    // 2. Procesar abonos a Multas/Rubros
     if (Array.isArray(abonos) && abonos.length > 0) {
       for (const ab of abonos) {
         const idRubro = ab.idRubro || ab.id_rubro || ab.id;
-        const montoAbonado = Number(ab.montoAbonado ?? ab.montoAbono ?? ab.monto ?? 0);
-        if (!idRubro || montoAbonado <= 0) continue;
+        const montoAbonadoRubro = Number(ab.montoAbonado ?? ab.montoAbono ?? ab.monto ?? 0);
+        if (!idRubro || montoAbonadoRubro <= 0) continue;
 
         const rubRes = await supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', `id=eq.${idRubro}&limit=1`);
         if (rubRes.data && rubRes.data.length > 0) {
           const rubro = rubRes.data[0];
           const saldoAnterior = Number(rubro.saldo_pendiente ?? rubro.monto ?? 0);
-          const montoAbonarReal = Math.min(montoAbonado, saldoAnterior);
+          const montoAbonarReal = Math.min(montoAbonadoRubro, saldoAnterior);
           const saldoRestante = Number(Math.max(0, saldoAnterior - montoAbonarReal).toFixed(2));
           const montoPagadoNuevo = Number(((rubro.monto_pagado || 0) + montoAbonarReal).toFixed(2));
           const nuevoEstado = saldoRestante === 0 ? 'PAGADO' : 'PARCIAL';
-          const esPagado = saldoRestante === 0;
 
-          // Registrar en rubros_abonos con vínculo estricto a la factura
           const abonoRecord = {
             id: crypto.randomUUID(),
             id_rubro: idRubro,
@@ -3004,33 +3186,23 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
           await supabaseClient.syncRecord('rubros_abonos', abonoRecord);
           abonosProcesados.push(abonoRecord);
 
-          // Actualizar saldo y estado del rubro padre
           await supabaseClient.request(`multas_rubros?id=eq.${idRubro}`, {
             method: 'PATCH',
             body: {
               monto_pagado: montoPagadoNuevo,
               saldo_pendiente: saldoRestante,
               estado: nuevoEstado,
-              pagado: esPagado,
+              pagado: saldoRestante === 0,
               id_factura: factura.id
             }
           });
 
-          // Si es alcantarillado, sincronizar la columna transicional del socio
-          if (rubro.tipo_rubro === 'ALCANTARILLADO' && rubro.id_socio) {
-            const todosAlcant = await supabaseClient.fetchRecords<Record<string, any>>(
-              'multas_rubros',
-              `id_socio=eq.${rubro.id_socio}&tipo_rubro=eq.ALCANTARILLADO`
-            );
-            const deudaAlcantTotal = (todosAlcant.data || []).reduce(
-              (acc, r) => acc + (r.id === idRubro ? saldoRestante : Number(r.saldo_pendiente || 0)),
-              0
-            );
-            await supabaseClient.request(`socios?id=eq.${rubro.id_socio}`, {
-              method: 'PATCH',
-              body: { deuda_alcantarillado: deudaAlcantTotal }
-            });
-          }
+          await asentarFondos(
+            { MULTAS_EXTRAS: montoAbonarReal },
+            factura.numero_factura || factura.id,
+            `Cobro Multa (${rubro.motivo || rubro.tipo_rubro})`,
+            factura.id
+          );
         }
       }
     } else if (Array.isArray(multasCobradasIds) && multasCobradasIds.length > 0) {
@@ -3057,88 +3229,116 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
             await supabaseClient.request(`multas_rubros?id=eq.${mId}`, {
               method: 'PATCH',
               body: {
-                monto_pagado: rubro.monto,
+                monto_pagado: Number((rubro.monto || saldoAnterior).toFixed(2)),
                 saldo_pendiente: 0.00,
                 estado: 'PAGADO',
                 pagado: true,
                 id_factura: factura.id
               }
             });
+
+            await asentarFondos(
+              { MULTAS_EXTRAS: saldoAnterior },
+              factura.numero_factura || factura.id,
+              `Cobro Multa (${rubro.motivo || rubro.tipo_rubro})`,
+              factura.id
+            );
           }
         }
       }
     }
 
-    // 3. Actualizar estado de la factura a PAGADO en Supabase
-    const updatePayload = {
-      estado_pago: 'PAGADO',
-      fecha_pago: fechaPago || now,
-      metodo_pago: metodoPago || 'EFECTIVO',
-      id_cajero: idCajero,
-      updated_at: now
-    };
+    // 3. Procesar abonos a Facturas Anteriores (Históricas / Corte)
+    if (Array.isArray(abonosFacturasAnteriores) && abonosFacturasAnteriores.length > 0) {
+      for (const prevItem of abonosFacturasAnteriores) {
+        const prevId = prevItem.idFactura || prevItem.id;
+        const prevMonto = Number(prevItem.montoAbonado ?? prevItem.monto ?? 0);
+        if (!prevId || prevMonto <= 0) continue;
 
-    await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
-      method: 'PATCH',
-      body: updatePayload
-    });
+        const prevRes = await supabaseClient.fetchRecords<Record<string, any>>('facturas', `id=eq.${prevId}&limit=1`);
+        if (prevRes.data && prevRes.data.length > 0) {
+          const prevFac = prevRes.data[0];
+          const pObj = periodosMap.get(prevFac.id_periodo);
+          const pCod = pObj?.periodo_codigo || pObj?.codigo || '';
+          const saldoPrevio = Number(prevFac.saldo_pendiente ?? prevFac.total_pagar ?? prevFac.total_mes ?? 0);
+          const abonoRealPrev = Math.min(prevMonto, saldoPrevio);
+          const saldoRestantePrev = Number(Math.max(0, saldoPrevio - abonoRealPrev).toFixed(2));
+          const montoPagadoNuevoPrev = Number(((prevFac.monto_pagado || 0) + abonoRealPrev).toFixed(2));
+          const estadoNuevoPrev = saldoRestantePrev <= 0.001 ? 'PAGADO' : 'PARCIAL';
 
-    // 4. Asentar automáticamente el INGRESO en fondos_movimientos (Libro Mayor)
-    let nombreSocio = 'Socio';
-    if (factura.id_socio) {
-      const soc = await supabaseClient.fetchRecords<Record<string, any>>('socios', `id=eq.${factura.id_socio}&limit=1`);
-      if (soc.data && soc.data.length > 0) {
-        nombreSocio = `${soc.data[0].nombres || ''} ${soc.data[0].apellidos || ''}`.trim() || soc.data[0].codigo_socio;
+          // Actualizar la factura anterior SIN BORRAR total_mes ni consumo
+          const patchPrev: Record<string, any> = {
+            monto_pagado: montoPagadoNuevoPrev,
+            saldo_pendiente: saldoRestantePrev,
+            estado_pago: estadoNuevoPrev,
+            fecha_pago: fechaPago || now,
+            metodo_pago: metodoPago,
+            id_cajero: idCajero,
+            updated_at: now
+          };
+          await supabaseClient.request(`facturas?id=eq.${prevFac.id}`, {
+            method: 'PATCH',
+            body: patchPrev
+          });
+          facturasActualizadas.push({ id: prevFac.id, numeroFactura: prevFac.numero_factura, ...patchPrev });
+
+          // Distribuir a fondos según periodo (si <= 2026-07 -> 100% Operación; si > 2026-07 -> desglose exacto)
+          const distPrev = calculateAbonoFundDistribution(prevFac, abonoRealPrev, pCod);
+          const numCompPrev = prevFac.numero_factura || prevFac.id;
+          await asentarFondos(distPrev, numCompPrev, `Abono Deuda Período ${pCod || 'Histórico'} (#${numCompPrev})`, prevFac.id);
+        }
       }
     }
 
-    const totalCobrado = Number(factura.total_pagar || 0);
-    const d = calculateFacturaFundDistribution(factura);
-    const numFac = factura.numero_factura || factura.id;
-    const items = [
-      { idFondo: FONDO_IDS.OPERACION_MANT, monto: d.OPERACION_MANT, concepto: `Cobro Factura #${numFac} - Cuota Operación ($${d.OPERACION_MANT.toFixed(2)}) - ${nombreSocio}` },
-      { idFondo: FONDO_IDS.PADRE_PARROQUIA, monto: d.PADRE_PARROQUIA, concepto: `Cobro Factura #${numFac} - Aporte Parroquial ($2.00) - ${nombreSocio}` },
-      { idFondo: FONDO_IDS.PAGO_LECTOR, monto: d.PAGO_LECTOR, concepto: `Cobro Factura #${numFac} - Toma Lectura ($0.50) - ${nombreSocio}` },
-      { idFondo: FONDO_IDS.MORTUORIO, monto: d.MORTUORIO, concepto: `Cobro Factura #${numFac} - Fondo Mortuorio ($0.50) - ${nombreSocio}` },
-      { idFondo: FONDO_IDS.PRO_MEJORAS, monto: d.PRO_MEJORAS, concepto: `Cobro Factura #${numFac} - Excedente Consumo - ${nombreSocio}` },
-      { idFondo: FONDO_IDS.ALCANTARILLADO, monto: d.ALCANTARILLADO, concepto: `Cobro Factura #${numFac} - Servicio Alcantarillado - ${nombreSocio}` },
-      { idFondo: FONDO_IDS.MULTAS_EXTRAS, monto: d.MULTAS_EXTRAS, concepto: `Cobro Factura #${numFac} - Multas y Mingas - ${nombreSocio}` }
-    ];
+    // 4. Procesar la factura principal actual
+    const totalMesActual = Number(factura.total_mes ?? factura.total_pagar ?? 0);
+    const saldoActual = Number(factura.saldo_pendiente !== undefined && factura.saldo_pendiente !== null ? factura.saldo_pendiente : totalMesActual);
+    const pagoFacturaActual = body.montoFacturaActual !== undefined 
+      ? Number(body.montoFacturaActual)
+      : (montoAbonado !== undefined ? Number(montoAbonado) : (body.montoRecibido !== undefined && (!abonosFacturasAnteriores || abonosFacturasAnteriores.length === 0) ? Number(body.montoRecibido) : saldoActual));
 
-    const asientosGenerados = [];
-    for (const item of items) {
-      if (item.monto > 0) {
-        const asiento = {
-          id: crypto.randomUUID(),
-          id_fondo: item.idFondo,
-          fecha: fechaPago || now,
-          concepto: item.concepto,
-          tipo: 'INGRESO',
-          ingreso: item.monto,
-          egreso: 0,
-          saldo: item.monto,
-          id_factura: factura.id,
-          numero_comprobante: numFac,
-          id_responsable: idCajero,
-          beneficiario: nombreSocio,
-          created_at: now
-        };
-        await supabaseClient.syncRecord('fondos_movimientos', asiento);
-        asientosGenerados.push(asiento);
-      }
+    if (pagoFacturaActual > 0) {
+      const pObj = periodosMap.get(factura.id_periodo);
+      const pCod = pObj?.periodo_codigo || pObj?.codigo || '';
+      const abonoRealActual = Math.min(pagoFacturaActual, saldoActual);
+      const saldoRestanteActual = Number(Math.max(0, saldoActual - abonoRealActual).toFixed(2));
+      const montoPagadoNuevoActual = Number(((factura.monto_pagado || 0) + abonoRealActual).toFixed(2));
+      const estadoNuevoActual = saldoRestanteActual <= 0.001 ? 'PAGADO' : 'PARCIAL';
+
+      const updatePayload: Record<string, any> = {
+        monto_pagado: montoPagadoNuevoActual,
+        saldo_pendiente: saldoRestanteActual,
+        estado_pago: estadoNuevoActual,
+        fecha_pago: fechaPago || now,
+        metodo_pago: metodoPago,
+        id_cajero: idCajero,
+        updated_at: now
+      };
+
+      await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
+        method: 'PATCH',
+        body: updatePayload
+      });
+      facturasActualizadas.push({ id: factura.id, numeroFactura: factura.numero_factura, ...updatePayload });
+
+      const distActual = calculateAbonoFundDistribution(factura, abonoRealActual, pCod);
+      const numFac = factura.numero_factura || factura.id;
+      await asentarFondos(distActual, numFac, `Cobro Factura #${numFac}`, factura.id);
     }
 
     res.json({
       success: true,
-      message: `Factura #${factura.numero_factura} cobrada exitosamente.`,
+      message: `Cobro procesado exitosamente.`,
       data: {
-        factura: { ...factura, ...updatePayload },
+        facturaPrincipal: factura.numero_factura,
+        facturasActualizadas,
         abonos: abonosProcesados,
         movimientosFondos: asientosGenerados
       }
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error cobrando factura.';
+    console.error('[WaterController Cobrar Error]:', error);
     res.status(400).json({ error: message });
   }
 };
@@ -3376,7 +3576,8 @@ export const sincronizarFacturas = async (req: AuthenticatedRequest, res: Respon
       if (s.cedula_ruc) socByCed.set(String(s.cedula_ruc).trim(), s);
     });
 
-    const PERIODO_AGOSTO_ID = '33333333-0000-0000-0000-000000000001';
+    const activePeriod = await getActivePeriod();
+    const targetPeriodId = (activePeriod?.id as string) || '';
     const ahora = new Date().toISOString();
     const sincronizados: any[] = [];
 
@@ -3415,39 +3616,15 @@ export const sincronizarFacturas = async (req: AuthenticatedRequest, res: Respon
         med = socMeds[0] || null;
       }
 
-      // Comprobar si ya existe factura de Agosto para este socio/medidor en Supabase
+      // Comprobar si ya existe factura de período para este socio/medidor en Supabase
       const existingFac = facturas.find((f) => {
-        const isAgo = f.id_periodo === PERIODO_AGOSTO_ID || String(f.numero_factura || '').includes('202608');
+        const isTarget = targetPeriodId ? f.id_periodo === targetPeriodId : String(f.numero_factura || '').includes('202608');
         const isSoc = f.id_socio === soc.id;
         const isMed = med ? f.id_medidor === med.id : true;
-        return isAgo && isSoc && isMed;
+        return isTarget && isSoc && isMed;
       });
 
-      // Garantizar que la factura de deuda anterior (Julio) no duplique el consumo de agosto
-      const julFac = facturas.find(
-        (f) =>
-          f.id_socio === soc.id &&
-          (f.id_periodo === '33333333-0000-0000-0000-000000000000' || String(f.numero_factura || '').includes('FAC-JUL-'))
-      );
-      if (julFac) {
-        const trueDeudaAnt = Number(julFac.valor_deuda_anterior || 0) + Number(julFac.valor_multas || 0);
-        if (Math.abs(Number(julFac.total_pagar || 0) - trueDeudaAnt) > 0.01) {
-          await supabaseClient.request(`facturas?id=eq.${julFac.id}`, {
-            method: 'PATCH',
-            body: {
-              valor_base: 0.0,
-              consumo_m3: 0.0,
-              excedente_m3: 0.0,
-              valor_excedente: 0.0,
-              valor_alcantarillado: 0.0,
-              total_mes: 0.0,
-              total_pagar: trueDeudaAnt,
-              updated_at: ahora
-            }
-          });
-          julFac.total_pagar = trueDeudaAnt;
-        }
-      }
+      // Factura de deuda anterior (Julio): se conserva inmutable sin sobreescribir ni poner a cero su histórico
 
       if (existingFac) {
         if (existingFac.estado_pago === 'PAGADO') {
@@ -3795,12 +3972,15 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
     };
     await supabaseClient.syncRecord('medidores', medRecord);
 
+    const activePeriod = await getActivePeriod();
+    const initPeriod = (await getInitialPeriod()) || activePeriod;
+
     if (lecIni > 0) {
       await supabaseClient.syncRecord('lecturas', {
         id: crypto.randomUUID(),
         id_medidor: medId,
         id_socio: socioId,
-        id_periodo: '33333333-0000-0000-0000-000000000000',
+        id_periodo: initPeriod?.id || activePeriod?.id || '00000000-0000-0000-0000-000000000000',
         lectura_anterior: lecIni,
         lectura_actual: lecIni,
         consumo_total: 0,
@@ -3815,8 +3995,7 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
     }
 
     // 4. Obtener período activo para asociar el comprobante
-    const perRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'estado=eq.ABIERTO&limit=1');
-    const periodoId = perRes.data?.[0]?.id || '33333333-0000-0000-0000-000000000001';
+    const periodoId = activePeriod?.id || '00000000-0000-0000-0000-000000000000';
 
     // 5. Emitir Comprobante / Factura Oficial de Inscripción (PAGADO)
     const numRecibo = `REC-INS-${String(Date.now()).slice(-6)}`;
@@ -3939,11 +4118,11 @@ export const reconectarSocio = async (req: AuthenticatedRequest, res: Response):
     });
 
     // 5. Obtener período activo y medidor para el recibo
-    const [perRes, medRes] = await Promise.all([
-      supabaseClient.fetchRecords<Record<string, any>>('periodos', 'estado=eq.ABIERTO&limit=1'),
+    const [activeP, medRes] = await Promise.all([
+      getActivePeriod(),
       supabaseClient.fetchRecords<Record<string, any>>('medidores', `id_socio=eq.${encodeURIComponent(id)}&limit=1`)
     ]);
-    const periodoId = perRes.data?.[0]?.id || '33333333-0000-0000-0000-000000000001';
+    const periodoId = (activeP?.id as string) || '00000000-0000-0000-0000-000000000000';
     const medId = medRes.data?.[0]?.id || null;
 
     // 6. Emitir Comprobante Oficial de Reconexión
