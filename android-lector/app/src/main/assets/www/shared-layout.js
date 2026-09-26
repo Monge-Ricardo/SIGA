@@ -177,6 +177,7 @@ export function injectAppLayout(activePageId) {
           <span class="user-chip-role">${roleInfo.label}</span>
         </div>
       </div>
+
     </div>
   `;
 

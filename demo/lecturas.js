@@ -213,45 +213,72 @@ function populatePeriodosSelect(periodos, preferredPeriodo = null) {
   }
 }
 
+function mapLecturasList(rawList, periodo) {
+  return rawList.map((l) => ({
+    id: l.id,
+    idMedidor: l.idMedidor || l.id_medidor,
+    numeroMedidor: l.numeroMedidor || l.numero_medidor || l.medidorNumero,
+    aliasMedidor: l.aliasMedidor || l.alias_medidor || l.alias || 'Casa principal',
+    clienteId: l.idSocio || l.id_socio || l.clienteId,
+    idSocio: l.idSocio || l.id_socio || l.clienteId,
+    periodo: l.periodo || l.periodo_codigo || l.periodoCodigo || periodo,
+    lecturaAnterior: Number(l.lecturaAnterior ?? l.lectura_anterior ?? 0),
+    lecturaActual: (l.lecturaActual !== undefined && l.lecturaActual !== null)
+      ? Number(l.lecturaActual)
+      : ((l.lectura_actual !== undefined && l.lectura_actual !== null) ? Number(l.lectura_actual) : undefined),
+    consumoM3: Number(l.consumoM3 ?? l.consumoTotal ?? l.consumo_total ?? 0),
+    excedenteM3: Number(l.excedenteM3 ?? l.excedente_m3 ?? 0),
+    observaciones: l.observaciones || '',
+    origen: l.origen || 'LECTOR',
+    updatedAt: l.updatedAt || l.updated_at
+  }));
+}
+
 async function getLecturasPeriodo(periodo) {
   // 1. Consultar IndexedDB local (Offline-first inmediato)
   if (db) {
     const localLecturas = await new Promise((resolve) => {
-      const tx = db.transaction(['lecturas'], 'readonly');
-      const store = tx.objectStore('lecturas');
-      const req = store.getAll();
-      req.onsuccess = () => {
-        const all = req.result || [];
-        resolve(all.filter((l) =>
-          l.periodo === periodo ||
-          l.periodo_codigo === periodo ||
-          l.periodoCodigo === periodo ||
-          l.id_periodo === periodo ||
-          l.idPeriodo === periodo
-        ));
-      };
-      req.onerror = () => resolve([]);
+      try {
+        const tx = db.transaction(['lecturas'], 'readonly');
+        const store = tx.objectStore('lecturas');
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const all = req.result || [];
+          resolve(all.filter((l) =>
+            l.periodo === periodo ||
+            l.periodo_codigo === periodo ||
+            l.periodoCodigo === periodo ||
+            l.id_periodo === periodo ||
+            l.idPeriodo === periodo
+          ));
+        };
+        req.onerror = () => resolve([]);
+      } catch (e) {
+        resolve([]);
+      }
     });
 
     if (localLecturas.length > 0) {
-      return localLecturas.map((l) => ({
-        id: l.id,
-        idMedidor: l.idMedidor || l.id_medidor,
-        numeroMedidor: l.numeroMedidor || l.numero_medidor || l.medidorNumero,
-        aliasMedidor: l.aliasMedidor || l.alias_medidor || l.alias || 'Casa principal',
-        clienteId: l.idSocio || l.id_socio || l.clienteId,
-        idSocio: l.idSocio || l.id_socio || l.clienteId,
-        periodo: l.periodo || l.periodo_codigo || l.periodoCodigo || periodo,
-        lecturaAnterior: Number(l.lecturaAnterior ?? l.lectura_anterior ?? 0),
-        lecturaActual: (l.lecturaActual !== undefined && l.lecturaActual !== null)
-          ? Number(l.lecturaActual)
-          : ((l.lectura_actual !== undefined && l.lectura_actual !== null) ? Number(l.lectura_actual) : undefined),
-        consumoM3: Number(l.consumoM3 ?? l.consumoTotal ?? l.consumo_total ?? 0),
-        excedenteM3: Number(l.excedenteM3 ?? l.excedente_m3 ?? 0),
-        observaciones: l.observaciones || '',
-        origen: l.origen || 'LECTOR',
-        updatedAt: l.updatedAt || l.updated_at
-      }));
+      return mapLecturasList(localLecturas, periodo);
+    }
+  }
+
+  // 2. Si no hay lecturas en IndexedDB para este período y hay conexión, consultar API REST
+  if (navigator.onLine) {
+    try {
+      const res = await apiFetch(`/api/v1/lecturas?periodo=${encodeURIComponent(periodo)}`);
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        if (db) {
+          try {
+            const tx = db.transaction(['lecturas'], 'readwrite');
+            const store = tx.objectStore('lecturas');
+            res.data.forEach((l) => store.put(l));
+          } catch (_e) {}
+        }
+        return mapLecturasList(res.data, periodo);
+      }
+    } catch (_err) {
+      console.warn('[Lecturas] Aviso consultando lecturas de API:', _err);
     }
   }
 
@@ -565,22 +592,7 @@ function renderTableAndMetrics() {
 
     if (isSinMedidor) {
       lant = 0;
-    } else if (item.medidorNumero === '8896620') {
-      // Regla específica: Delia Moreta medidor 8896620 lectura anterior 1891
-      lant = 1891;
-    } else if (item.medidorNumero === '1211034231') {
-      // Regla específica: Delia Moreta medidor 1211034231 lectura anterior 7036
-      lant = 7036;
-    } else if (periodo === '2026-09' && (item.medidorNumero === '1208020366' || item.codigoSocio === 'SOC-0024')) {
-      // Regla específica: Juan Guerrero comienza con 2397 en período 09
-      lant = 2397;
-    } else if (item.medidorNumero === '21052411' && (lant === 0 || isNaN(lant))) {
-      // Regla específica: Moreta Oswaldo segundo medidor 21052411 base 7442.111
-      lant = 7442.111;
-    } else if (item.medidorNumero === '1211034233' && (lant === 0 || isNaN(lant))) {
-      // Regla específica: Moreta Oswaldo primer medidor 1211034233 base 4144
-      lant = 4144;
-    } else if (lant === 0) {
+    } else if (lant === 0 || isNaN(lant)) {
       const hist = cachedLecturas.find((l) =>
         ((l.idMedidor && (l.idMedidor === item.medidorId || l.id_medidor === item.medidorId)) ||
          (l.numeroMedidor && l.numeroMedidor === item.medidorNumero)) &&
@@ -657,6 +669,7 @@ function renderTableAndMetrics() {
     const lactRaw = lecturaExistente?.lecturaActual;
     const isBaseline = Boolean(
       lecturaExistente?.observaciones?.startsWith('Punto de partida') ||
+      lecturaExistente?.observaciones?.startsWith('Apertura automática') ||
       lecturaExistente?.observaciones === 'Alta inicial de socio'
     );
     const esModificadoPorCajero = Boolean(lecturaExistente?.observaciones?.includes('Cajero'));
@@ -672,9 +685,7 @@ function renderTableAndMetrics() {
       (
         lactRaw > lant ||
         esModificadoPorCajero ||
-        esDigitadoEnCampo ||
-        Boolean(lecturaExistente?.observaciones) ||
-        Boolean(lecturaExistente?.id && /^[0-9a-f-]{36}$/i.test(lecturaExistente.id))
+        esDigitadoEnCampo
       )
     );
     const lact = hasLectorReading ? Number(lactRaw) : undefined;

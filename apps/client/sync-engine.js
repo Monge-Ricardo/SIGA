@@ -1740,18 +1740,14 @@ class GitSyncEngine {
     const lecturasMovilizadas = [];
     for (const m of medidores) {
       const isSN = Boolean((m.numero_medidor || '').toUpperCase().includes('SN'));
-      const isJuanGuerrero = Boolean(m.numero_medidor === '1208020366' || m.id_socio === '414e4833-a1f6-5207-b882-9a425d2301b3');
 
       // Buscar lectura correspondiente al medidor individual (sin cruce de multi-medidor)
       const lecAnterior = lecturasPorMedidor.get(m.id) || (medidores.filter((x) => x.id_socio === m.id_socio).length === 1 ? lecturasPorSocio.get(m.id_socio) : null);
 
-      let nuevaLant = lecAnterior ? Number(lecAnterior.lectura_actual || 0) : 0;
+      let nuevaLant = lecAnterior ? Number(lecAnterior.lectura_actual || 0) : Number(m.lectura_anterior ?? m.lectura_inicial ?? 0);
 
       if (isSN) {
         nuevaLant = 0;
-      } else if (isJuanGuerrero && nextPeriodoCodigo === '2026-09') {
-        // Juan Guerrero comenzará el período 2026-09 con lectura anterior 2397
-        nuevaLant = 2397;
       }
 
       lecturasMovilizadas.push({

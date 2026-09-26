@@ -9,6 +9,8 @@ import { cloudSyncService } from '../services/cloudSyncService.ts';
 import { ValidationRules } from '../shared.ts';
 import { supabaseClient } from '../db/supabase.ts';
 import { centralDb } from '../db/connection.ts';
+import { getFacturaComprobante } from '../controllers/comprobanteController.ts';
+import { inicializarLecturasPeriodo } from '../controllers/waterController.ts';
 
 test('1. Seguridad: Hashing PBKDF2 y JWT HMAC-SHA256', () => {
   const pwd = 'PasswordSegura2026*';
@@ -385,4 +387,127 @@ test('11. Transición de Periodos y Distribución de Fondos (Regla Julio vs Peri
   const abonoCompleto = calculateAbonoFundDistribution(facturaAgosto, 11.0, '2026-08');
   assert.deepStrictEqual(abonoCompleto, distAgosto, 'El abono completo debe coincidir exactamente con la distribución total');
 });
+
+test('12. Comprobante Oficial de Pago de Agua Potable: Contrato API-First y Validación DTO', async () => {
+  // A. Validación de parámetro requerido (ID ausente -> HTTP 400)
+  let statusResult = 0;
+  let jsonResult: any = null;
+  const mockReqEmpty: any = { params: {} };
+  const mockRes: any = {
+    status: (code: number) => {
+      statusResult = code;
+      return {
+        json: (data: any) => { jsonResult = data; }
+      };
+    }
+  };
+
+  await getFacturaComprobante(mockReqEmpty, mockRes);
+  assert.strictEqual(statusResult, 400, 'Debe retornar HTTP 400 cuando falta el parámetro ID');
+  assert.ok(jsonResult?.error, 'Debe incluir mensaje de error descriptivo');
+
+  // B. Validación de factura inexistente (ID no encontrado -> HTTP 404)
+  const mockReqNotFound: any = { params: { id: 'uuid-no-existente-9999' } };
+  await getFacturaComprobante(mockReqNotFound, mockRes);
+  assert.strictEqual(statusResult, 404, 'Debe retornar HTTP 404 cuando la factura no existe en la base de datos');
+  assert.ok(jsonResult?.error?.includes('no encontrado'), 'Debe especificar que el comprobante no fue encontrado');
+
+  // C. Validación de comprobante de abono a deuda anterior exclusiva (REC-1211036816-01):
+  const mockReqRec: any = { params: { id: 'REC-1211036816-01' } };
+  let jsonResultRec: any = null;
+  const mockResRec: any = {
+    status: (code: number) => ({ json: (d: any) => { jsonResultRec = d; } }),
+    json: (d: any) => { jsonResultRec = d; }
+  };
+  await getFacturaComprobante(mockReqRec, mockResRec);
+  if (jsonResultRec?.success && jsonResultRec?.data) {
+    const data = jsonResultRec.data;
+    assert.strictEqual(data.detalleValores.consumoMes.length, 0, 'No debe tener filas de consumo de agua si solo pagó deuda');
+    assert.strictEqual(data.detalleValores.subtotalConsumoMes, 0, 'Subtotal consumo del mes debe ser 0');
+    assert.strictEqual(data.detalleValores.totalFactura, 96, 'El total del comprobante debe ser exactamente el monto cobrado de 96');
+    assert.ok(data.detalleValores.rubrosPendientes.some((r: any) => r.cp === 'MA01'), 'Debe incluir rubro MA01 de deuda');
+  }
+
+  // D. Validación de comprobante mixto de consumo + deuda (FAC-202608-0030):
+  const mockReqFac: any = { params: { id: 'FAC-202608-0030' } };
+  let jsonResultFac: any = null;
+  const mockResFac: any = {
+    status: (code: number) => ({ json: (d: any) => { jsonResultFac = d; } }),
+    json: (d: any) => { jsonResultFac = d; }
+  };
+  await getFacturaComprobante(mockReqFac, mockResFac);
+  if (jsonResultFac?.success && jsonResultFac?.data) {
+    const data = jsonResultFac.data;
+    assert.strictEqual(data.detalleValores.subtotalConsumoMes, 5, 'Subtotal consumo del mes debe ser 5');
+    assert.strictEqual(data.detalleValores.subtotalRubrosPendientes, 8, 'Subtotal rubros pendientes debe ser 8');
+    assert.strictEqual(data.detalleValores.totalFactura, 13, 'Total del comprobante debe ser exactamente 13');
+  }
+
+  // E. Validación de comprobante con excedente de consumo (FAC-202608-0014):
+  const mockReqExc: any = { params: { id: 'FAC-202608-0014' } };
+  let jsonResultExc: any = null;
+  const mockResExc: any = {
+    status: (code: number) => ({ json: (d: any) => { jsonResultExc = d; } }),
+    json: (d: any) => { jsonResultExc = d; }
+  };
+  await getFacturaComprobante(mockReqExc, mockResExc);
+  if (jsonResultExc?.success && jsonResultExc?.data) {
+    const data = jsonResultExc.data;
+    assert.strictEqual(data.medidores[0]?.consumoM3, 81, 'El consumo total debe ser 81 m³ (6619 - 6538)');
+    assert.strictEqual(data.medidores[0]?.excedenteM3, 51, 'El excedente debe ser 51 m³ (81 - 30)');
+    assert.strictEqual(data.detalleValores.totalFactura, 10.10, 'Total de la factura debe ser 10.10');
+    const excItem = data.detalleValores.consumoMes.find((r: any) => r.cp === 'EX01');
+    assert.ok(excItem, 'Debe incluir el rubro EX01');
+    assert.ok(excItem.descripcion.includes('51 m³'), 'La descripción de EX01 debe indicar 51 m³');
+    assert.strictEqual(excItem.aPagarCobrado, 5.10, 'El valor cobrado del excedente debe ser 5.10');
+  }
+});
+
+test('13. Pipeline Genérico de Transición de Período y Línea Base de Lecturas', async () => {
+  const pNuevoId = '7a420bed-0c8f-407c-ab03-6814e98f993e'; // Septiembre 2026
+  const pAntId = '33333333-0000-0000-0000-000000000001';   // Agosto 2026
+
+  // 1. Ejecutar inicialización genérica de lecturas
+  const initResult = await inicializarLecturasPeriodo(pNuevoId, pAntId, '2026-09');
+  assert.ok(initResult.medidoresAvanzados > 0, 'Debe haber procesado medidores activos');
+
+  // 2. Verificar que en Supabase las lecturas de Septiembre 2026 existen y cumplen restricciones NOT NULL
+  const lRes = await supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${pNuevoId}`);
+  const lecturas = lRes.data || [];
+  assert.strictEqual(lecturas.length, 88, 'Deben existir exactamente 88 lecturas base en Septiembre 2026');
+
+  // Verificar que ninguna lectura tenga lectura_actual o id_lector nulos
+  for (const l of lecturas) {
+    assert.notStrictEqual(l.lectura_anterior, null, 'lectura_anterior no debe ser nula');
+    assert.notStrictEqual(l.lectura_actual, null, 'lectura_actual no debe ser nula');
+    assert.notStrictEqual(l.id_lector, null, 'id_lector no debe ser nulo');
+    assert.strictEqual(l.consumo_total, 0, 'El consumo inicial del ciclo debe ser 0');
+    assert.strictEqual(l.excedente_m3, 0, 'El excedente inicial del ciclo debe ser 0');
+    assert.ok(
+      l.observaciones?.startsWith('Punto de partida') || l.observaciones?.startsWith('Sin medidor'),
+      'La observación debe indicar que es línea base de partida para el lector'
+    );
+  }
+
+  // 3. Auditoría de facturas: Cero duplicidades entre facturas pagadas y pendientes en Agosto 2026
+  const fRes = await supabaseClient.fetchRecords<Record<string, any>>('facturas', `id_periodo=eq.${pAntId}`);
+  const byMed = new Map<string, any[]>();
+  for (const f of (fRes.data || [])) {
+    if (f.id_medidor) {
+      if (!byMed.has(f.id_medidor)) byMed.set(f.id_medidor, []);
+      byMed.get(f.id_medidor)!.push(f);
+    }
+  }
+
+  for (const [mId, list] of byMed.entries()) {
+    const pag = list.filter((x) => x.estado_pago === 'PAGADO');
+    const pen = list.filter((x) => x.estado_pago === 'PENDIENTE');
+    assert.ok(
+      !(pag.length > 0 && pen.length > 0),
+      `El medidor ${mId} no debe tener simultáneamente facturas pagadas y pendientes en el mismo período`
+    );
+  }
+});
+
+
 

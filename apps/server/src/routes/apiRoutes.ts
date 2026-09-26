@@ -36,6 +36,7 @@ import {
   createPeriodo,
   cerrarPeriodo,
   avanzarPeriodo,
+  inicializarLecturasController,
   getLecturas,
   getLecturaById,
   registrarLectura,
@@ -60,6 +61,7 @@ import {
   inscribirSocio,
   reconectarSocio
 } from '../controllers/waterController.ts';
+import { getFacturaComprobante } from '../controllers/comprobanteController.ts';
 import {
   getFondosCatalogo,
   getFondoById,
@@ -161,6 +163,7 @@ apiRouter.post('/periodos/avanzar', authenticateJWT, requireRoles('CAJERO', 'ADM
 apiRouter.post('/periodos/:id/avanzar', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), avanzarPeriodo);
 apiRouter.post('/periodos/:id/cerrar', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), cerrarPeriodo);
 apiRouter.post('/periodos/:id/cerrar-ciclo', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), cerrarPeriodo);
+apiRouter.post('/periodos/:id/inicializar-lecturas', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'LECTOR'), inicializarLecturasController);
 
 // ==========================================
 // 7. MICROMEDICIÓN Y LECTURAS
@@ -176,6 +179,7 @@ apiRouter.delete('/lecturas/:id', authenticateJWT, requireRoles('ADMIN'), delete
 // 8. FACTURACIÓN Y COBROS EN CAJA
 // ==========================================
 apiRouter.get('/facturas', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), getFacturas);
+apiRouter.get('/facturas/:id/comprobante', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'LECTOR', 'AUDITOR'), getFacturaComprobante);
 apiRouter.get('/facturas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), getFacturaById);
 apiRouter.post('/facturas/liquidar', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), liquidarFactura);
 apiRouter.post('/facturas/liquidar-periodo', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), liquidarPeriodo);

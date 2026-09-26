@@ -2,6 +2,7 @@ import { requireAuth, getCurrentUser, apiFetch, normalizeSearchText, matchesSear
 import { injectAppLayout } from './shared-layout.js';
 import { Swal } from './sweetalert.js';
 import { syncEngine } from './sync-engine.js';
+import { cargarYMostrarComprobante, renderComprobanteEnDOM } from './comprobante.js';
 
 // Guard de autenticación (Accesible por ADMIN y CAJERO)
 const currentUser = requireAuth(['ADMIN', 'CAJERO']);
@@ -185,6 +186,11 @@ async function renderCajaUI() {
       montoTotalAdeudado: Number(s.montoTotalAdeudado || 0)
     };
   });
+
+  if (typeof window !== 'undefined') {
+    window.cachedSocios = cachedSocios;
+    window.cachedLecturas = cachedLecturas;
+  }
 
   populateSocioSelect(cachedSocios);
   setupSocioSearch();
@@ -625,6 +631,63 @@ async function updateMetricsAndHistory() {
         const esAbono = esDeudaAntAbonada || (multasCob > 0 && saldoMultasPendiente > 0) || (isRec && totalSaldoRestante > 0) || Boolean(f.esAbono) || Number(f.saldoPendiente ?? f.saldo_pendiente ?? 0) > 0;
         const saldoFinalPendiente = esAbono ? (totalSaldoRestante > 0 ? totalSaldoRestante : Number(f.saldoPendiente ?? f.saldo_pendiente ?? 0)) : 0;
 
+        const fIdMedidor = f.idMedidor || f.id_medidor || null;
+        let fNumMedidor = f.medidorNumero || f.medidor_numero || f.numeroMedidor || f.numero_medidor || null;
+        const fCargoBase = Number(f.valorBase ?? f.valor_base ?? 0);
+        const fTotalMes = Number(f.totalMes ?? f.total_mes ?? 0);
+        let fConsumoM3 = Number(f.consumoM3 ?? f.consumo_m3 ?? 0);
+        let fExcedenteM3 = Number(f.excedenteM3 ?? f.excedente_m3 ?? 0);
+        const fValorExcUSD = Number(f.valorExcedenteUSD ?? f.valor_excedente ?? f.valor_excedente_usd ?? 0);
+        const fAlcantUSD = Number(f.alcantarilladoUSD ?? f.alcantarillado ?? f.alcantarillado_usd ?? 0);
+        let fLecAnt = Number(f.lecturaAnterior ?? f.lectura_anterior ?? 0);
+        let fLecAct = Number(f.lecturaActual ?? f.lectura_actual ?? 0);
+        const fIdLectura = f.idLectura || f.id_lectura || null;
+
+        if (fExcedenteM3 === 0 && fValorExcUSD > 0) {
+          fExcedenteM3 = Math.round(fValorExcUSD / 0.10);
+        }
+
+        // Recuperar lecturas reales desde la caché si la factura no las incluye
+        if ((fLecAnt === 0 && fLecAct === 0) || fConsumoM3 > 0) {
+          const matchedLec = (cachedLecturas || []).find((l) =>
+            (fIdLectura && l.id === fIdLectura) ||
+            (fIdMedidor && l.id_medidor === fIdMedidor && (l.id_periodo === f.id_periodo || l.id_periodo === f.idPeriodo)) ||
+            (sId && l.id_socio === sId && (l.id_periodo === f.id_periodo || l.id_periodo === f.idPeriodo))
+          ) || (cachedLecturas || []).find((l) => fIdMedidor && l.id_medidor === fIdMedidor);
+          if (matchedLec) {
+            fLecAnt = Number(matchedLec.lectura_anterior ?? 0);
+            fLecAct = Number(matchedLec.lectura_actual ?? (fLecAnt + fConsumoM3));
+            if (matchedLec.consumo_total && Number(matchedLec.consumo_total) > fConsumoM3) {
+              fConsumoM3 = Number(matchedLec.consumo_total);
+            }
+            if (matchedLec.excedente_m3 && Number(matchedLec.excedente_m3) > fExcedenteM3) {
+              fExcedenteM3 = Number(matchedLec.excedente_m3);
+            }
+          }
+        }
+
+        // Consistencia matemática: si fLecAct > fLecAnt
+        const consPorLectura = (fLecAct > fLecAnt) ? (fLecAct - fLecAnt) : 0;
+        const consCalculado = (fConsumoM3 <= 30 && fExcedenteM3 > 0) ? (fConsumoM3 + fExcedenteM3) : fConsumoM3;
+        fConsumoM3 = Math.max(consPorLectura, consCalculado);
+        if (fExcedenteM3 === 0 && fConsumoM3 > 30) {
+          fExcedenteM3 = fConsumoM3 - 30;
+        }
+        if (fLecAct <= fLecAnt && fConsumoM3 > 0) {
+          fLecAct = fLecAnt + fConsumoM3;
+        }
+
+        // Recuperar número de medidor si no viene
+        if (!fNumMedidor && fIdMedidor) {
+          for (const s of (cachedSocios || localSocios || [])) {
+            const m = (s.medidores || []).find((med) => med.id === fIdMedidor || med.idMedidor === fIdMedidor);
+            if (m) {
+              fNumMedidor = m.numeroMedidor || m.numero_medidor || m.medidorNumero;
+              break;
+            }
+          }
+        }
+
         cobros.push({
           id: f.id,
           numeroRecibo: f.numeroFactura || f.numero_factura || f.id,
@@ -634,6 +697,18 @@ async function updateMetricsAndHistory() {
           socioNombre: f.socioNombre || 'Abonado',
           socioCedula: f.socioCedula || '',
           socioSector: f.nombreSector || 'Sector Centro',
+          idMedidor: fIdMedidor,
+          medidorNumero: fNumMedidor,
+          numeroMedidor: fNumMedidor,
+          cargoBase: fCargoBase,
+          valorBase: fCargoBase,
+          totalMes: fTotalMes,
+          consumoM3: fConsumoM3,
+          excedenteM3: fExcedenteM3,
+          valorExcedenteUSD: fValorExcUSD,
+          alcantarilladoUSD: fAlcantUSD,
+          lecturaAnterior: fLecAnt,
+          lecturaActual: fLecAct,
           periodo: perCod,
           periodoCodigo: perCod,
           deudaAnteriorCobrada: deudaAntCob,
@@ -644,9 +719,10 @@ async function updateMetricsAndHistory() {
           saldoDeudaAntPendiente,
           esAbono,
           saldoPendiente: saldoFinalPendiente,
-          montoTotal: (esAbono && saldoFinalPendiente > 0) ? Number((montoP + saldoFinalPendiente).toFixed(2)) : totalP,
-          montoPagado: montoP,
-          montoAbonado: montoP,
+          montoTotal: montoP || totalP,
+          montoPagado: montoP || totalP,
+          montoAbonado: montoP || totalP,
+          deudaTotalOriginal: (esAbono && saldoFinalPendiente > 0) ? Number((montoP + saldoFinalPendiente).toFixed(2)) : totalP,
           estadoPago: 'PAGADO',
           metodoPago: f.metodoPago || f.metodo_pago || 'EFECTIVO',
           fechaPago: f.fechaPago || f.fecha_pago || f.updatedAt || f.updated_at
@@ -1472,15 +1548,25 @@ async function displaySocioPlanilla(socio) {
       const cobroConsumo = Number(f.totalMes || f.total_mes || 0) > 0 || Number(f.valorBase || f.valor_base || 0) > 0;
       return isPer && cobroConsumo;
     });
+    const tieneCobroPagadoEnMemoria = (allLoadedCobros || []).some((c) => {
+      const matchSocio = (c.socioId === socio.id || c.idSocio === socio.id);
+      if (!matchSocio) return false;
+      const matchMedidor = (c.idMedidor && c.idMedidor === m.id) || (c.medidorNumero && numMedStr && String(c.medidorNumero).trim() === numMedStr) || (!c.idMedidor && medidoresList.length === 1);
+      if (!matchMedidor) return false;
+      const pCod = String(c.periodo || c.periodoCodigo || '');
+      const numFac = String(c.numeroFactura || c.numeroRecibo || '');
+      const isPer = pCod.includes(codPeriodoActual) || (codClean && numFac.includes(codClean));
+      const cobroConsumo = Number(c.totalMes || c.cargoBase || c.valorBase || 0) > 0 || (Number(c.montoPagado || c.montoTotal || 0) > (Number(c.deudaAnteriorCobrada || 0) + Number(c.multaExtra || 0)));
+      return isPer && cobroConsumo;
+    });
     const tieneFacAguaPendienteMes = facturasPendientes.some((f) => {
       const pCod = String(f.periodoCodigo || f.periodo_codigo || f.id_periodo || f.idPeriodo || '');
       const numFac = String(f.numeroFactura || f.numero_factura || '');
       const isPer = pCod.includes(codPeriodoActual) || (codClean && numFac.includes(codClean));
-      return isPer && Number(f.valorBase || f.valor_base || 0) > 0;
+      const esConsumoAgua = Number(f.valorBase || f.valor_base || 0) > 0 || Number(f.totalMes || f.total_mes || 0) > 0;
+      return isPer && esConsumoAgua;
     });
-    const yaPagadoMed = m.yaPagadoMes !== undefined
-      ? Boolean(m.yaPagadoMes)
-      : (Boolean(m.ya_pagado_mes || tieneFacPagadaMes) && !tieneFacAguaPendienteMes);
+    const yaPagadoMed = Boolean(m.yaPagadoMes || m.ya_pagado_mes || tieneFacPagadaMes || tieneCobroPagadoEnMemoria);
 
     const facMes = facturasPendientes[0] || null;
 
@@ -1494,11 +1580,11 @@ async function displaySocioPlanilla(socio) {
       valorExcedenteUSD = 0.0;
     }
 
-    const facValorBase = facMes?.valorBase !== undefined && Number(facMes.valorBase) > 0 ? Number(facMes.valorBase) : cargoBase;
+    const facValorBase = yaPagadoMed ? 0.0 : (facMes?.valorBase !== undefined && Number(facMes.valorBase) > 0 ? Number(facMes.valorBase) : cargoBase);
     
     // Sincronización fidedigna con base de datos:
-    let facValorExc = valorExcedenteUSD;
-    if (facMes && facMes.valorExcedente !== undefined) {
+    let facValorExc = yaPagadoMed ? 0.0 : valorExcedenteUSD;
+    if (facMes && facMes.valorExcedente !== undefined && !yaPagadoMed) {
       facValorExc = Number(facMes.valorExcedente || 0);
     }
     if (lact <= lant || consumoM3 === 0) {
@@ -1510,10 +1596,10 @@ async function displaySocioPlanilla(socio) {
     const facExcedenteM3 = excedenteM3;
 
     // Aislamiento estricto: El cobro del mes actual es única y exclusivamente el recargo mensual de $1.00 si tiene alcantarillado
-    const facValorAlcant = tieneAlcantMed ? recargoAlcant : 0.0;
+    const facValorAlcant = (tieneAlcantMed && !yaPagadoMed) ? recargoAlcant : 0.0;
 
     // Aspecto 1: Subtotal mes actual = Base + Excedente + Serv. Alcantarillado mensual
-    const subtotalMes = Number((facValorBase + facValorExc + facValorAlcant).toFixed(2));
+    const subtotalMes = yaPagadoMed ? 0.0 : Number((facValorBase + facValorExc + facValorAlcant).toFixed(2));
 
     const calcMed = {
       id: m.id || numMedStr,
@@ -1531,9 +1617,9 @@ async function displaySocioPlanilla(socio) {
       tieneAlcantarillado: tieneAlcantMed,
       recargoAlcant: facValorAlcant,
       subtotalMes: subtotalMes,
-      totalDeuda: Math.max(Number(m.totalDeuda || 0), subtotalMes),
-      mesesAdeudados: Number(m.mesesAdeudados || (facMes?.mesesCalculados ?? (yaPagadoMed ? 0 : 1))),
-      requiereCorte: Boolean(m.requiereCorte),
+      totalDeuda: yaPagadoMed ? 0.0 : Math.max(Number(m.totalDeuda || 0), subtotalMes),
+      mesesAdeudados: yaPagadoMed ? 0 : Number(m.mesesAdeudados || (facMes?.mesesCalculados ?? 1)),
+      requiereCorte: yaPagadoMed ? false : Boolean(m.requiereCorte),
       yaPagadoMes: yaPagadoMed,
       reciboPago: facturasPagadas[0]?.numeroFactura || null,
       fechaPagoMes: facturasPagadas[0]?.fechaPago || null,
@@ -2611,343 +2697,10 @@ function getPeriodoInfoCobro(cobro) {
   };
 }
 
-// Modal Recibo Formato Físico Pishilata - Tungurahua
-function showReceiptModal(cobro) {
+// Modal Recibo Oficial Pishilata - Tungurahua (API-First & SRP)
+async function showReceiptModal(cobro) {
   const modal = document.getElementById('modalReciboPrint');
   if (!modal) return;
-
-  const fechaCobro = new Date(cobro.fechaPago || cobro.fecha_pago || cobro.createdAt || Date.now());
-  const nombresMeses = [
-    'Enero',
-    'Febrero',
-    'Marzo',
-    'Abril',
-    'Mayo',
-    'Junio',
-    'Julio',
-    'Agosto',
-    'Septiembre',
-    'Octubre',
-    'Noviembre',
-    'Diciembre'
-  ];
-
-  // 1. Fecha de Cancelación en Caja (Fecha real del sistema / momento del pago)
-  const diaPago = !isNaN(fechaCobro.getTime()) ? fechaCobro.getDate() : new Date().getDate();
-  const mesPagoIndex = !isNaN(fechaCobro.getTime()) ? fechaCobro.getMonth() : new Date().getMonth();
-  const mesPagoNombre = nombresMeses[mesPagoIndex];
-  const anioPagoStr = String(!isNaN(fechaCobro.getTime()) ? fechaCobro.getFullYear() : new Date().getFullYear());
-
-  // 2. Período que se está cancelando en el sistema (ej: Cuenta correspondiente al mes de Agosto del 2026)
-  const infoPeriodo = getPeriodoInfoCobro(cobro);
-  const mesPeriodoNombre = infoPeriodo.mesNombre; // ej: 'Agosto'
-  const anioPeriodoStr = infoPeriodo.anioStr;     // ej: '2026'
-  const anioPeriodoDigito = infoPeriodo.anioDigito; // ej: '6'
-
-  // Cuenta No y Número correlativo
-  const cuentaNoEl = document.getElementById('reciboCuentaNo');
-  if (cuentaNoEl) {
-    cuentaNoEl.textContent =
-      cobro.codigoSocio || (cobro.socioCedula ? `SOC-${cobro.socioCedula.slice(-5)}` : 'SOC-00102');
-  }
-
-  const rawNumero = cobro.numeroRecibo || cobro.numeroFactura || cobro.id || '';
-  const numEl = document.getElementById('reciboNumero');
-  const codigoEl = document.getElementById('reciboCodigoTxt');
-
-  // Obtener código completo con prefijo (ej: REC-045194)
-  let codigoCompleto = String(rawNumero).trim();
-  if (!codigoCompleto) {
-    codigoCompleto = `REC-${String(Date.now()).slice(-6)}`;
-  } else if (!codigoCompleto.startsWith('REC-') && !codigoCompleto.startsWith('FAC-')) {
-    codigoCompleto = `REC-${codigoCompleto}`;
-  }
-
-  // Extraer número correlativo para la casilla oficial (ej: 045194)
-  let numCorrelativo = codigoCompleto.replace(/^(?:REC|FAC)-/i, '');
-  if (/^\d{4}-/.test(numCorrelativo)) {
-    numCorrelativo = numCorrelativo.replace(/^\d{4}-/, '');
-  }
-  if (/^\d+$/.test(numCorrelativo)) {
-    numCorrelativo = numCorrelativo.padStart(6, '0');
-  }
-
-  if (numEl) numEl.textContent = numCorrelativo;
-  if (codigoEl) codigoEl.textContent = codigoCompleto;
-
-  // Datos del Abonado
-  const socioEl = document.getElementById('reciboSocio');
-  if (socioEl) socioEl.textContent = (cobro.socioNombre || '').toUpperCase();
-
-  const medidorEl = document.getElementById('reciboMedidor');
-  if (medidorEl) {
-    if (cobro.medidoresCobrados && cobro.medidoresCobrados.length > 1) {
-      medidorEl.textContent = cobro.medidoresCobrados.map((m) => `${m.numeroMedidor} (${m.alias || 'Acometida'})`).join(' • ');
-    } else {
-      medidorEl.textContent = cobro.medidorNumero || 'MED-10492';
-    }
-  }
-
-  const sectorEl = document.getElementById('reciboSector');
-  if (sectorEl) sectorEl.textContent = cobro.socioSector || 'Sector Centro';
-
-  // Fecha en que se canceló en caja (ej: 20 de Septiembre del 2026)
-  const fechaCanceladoEl = document.getElementById('reciboFechaCancelado');
-  if (fechaCanceladoEl) {
-    fechaCanceladoEl.textContent = `${diaPago} de ${mesPagoNombre} del ${anioPagoStr}`;
-  }
-
-  // Mes y año del período al que corresponde la cuenta cancelada (ej: Agosto del 2026)
-  const mesCorrEl = document.getElementById('reciboMesCorrespondiente');
-  if (mesCorrEl) mesCorrEl.textContent = mesPeriodoNombre;
-
-  const anioDigitoEl = document.getElementById('reciboAnioDigito');
-  if (anioDigitoEl) anioDigitoEl.textContent = anioPeriodoDigito;
-
-  // Fechas de consumo y vencimiento del período facturado
-  const diaDesdeEl = document.getElementById('reciboDiaDesde');
-  if (diaDesdeEl) diaDesdeEl.textContent = '01';
-  const mesDesdeEl = document.getElementById('reciboMesDesde');
-  if (mesDesdeEl) mesDesdeEl.textContent = mesPeriodoNombre;
-  
-  const ultimoDiaMesPeriodo = new Date(infoPeriodo.anio, infoPeriodo.mesNumero, 0).getDate();
-  const diaHastaEl = document.getElementById('reciboDiaHasta');
-  if (diaHastaEl) diaHastaEl.textContent = String(ultimoDiaMesPeriodo).padStart(2, '0');
-  const mesHastaEl = document.getElementById('reciboMesHasta');
-  if (mesHastaEl) mesHastaEl.textContent = mesPeriodoNombre;
-
-  const vencimientoEl = document.getElementById('reciboVencimiento');
-  if (vencimientoEl) {
-    const mesVencIndex = infoPeriodo.mesNumero % 12;
-    const anioVenc = infoPeriodo.mesNumero === 12 ? infoPeriodo.anio + 1 : infoPeriodo.anio;
-    const mesVencNombre = nombresMeses[mesVencIndex];
-    vencimientoEl.textContent = `15 de ${mesVencNombre} del ${anioVenc}`;
-  }
-
-  // Tabla Cuadriculada (Soporta 1 o Múltiples Medidores Dinámicamente)
-  const tbody = document.getElementById('reciboTableBody');
-  const meds = cobro.medidoresCobrados;
-  let totalFinal = Number(cobro.montoTotal ?? (cobro.montoPagado || 0));
-
-  if (tbody && meds && meds.length > 1) {
-    tbody.innerHTML = '';
-    let sumConsumo = 0;
-    let sumBasico = 0;
-    let sumExcM3 = 0;
-    let sumCargoFijo = 0;
-    let sumValorExc = 0;
-    let sumTotalTarifa = 0;
-    let sumOtros = 0;
-    let sumTotalMes = 0;
-    let sumDeudaAnt = 0;
-    let sumTotal = 0;
-
-    meds.forEach((m) => {
-      const mConsumo = Number(m.consumoM3 || 0);
-      const mBasico = 30;
-      const mExcM3 = Number(m.excedenteM3 || 0);
-      const mCargoFijo = Number(m.cargoBase || 0);
-      const mValorExc = Number(m.valorExcedenteUSD || 0);
-      const mTotalTarifa = mCargoFijo + mValorExc;
-      const mOtros = Number(m.alcantarilladoUSD || 0);
-      const mTotalMes = mTotalTarifa + mOtros;
-      const mDeudaAnt = Number(m.deudaMedidorCobrada || 0);
-      const mTotalFinal = mTotalMes + mDeudaAnt;
-
-      sumConsumo += mConsumo;
-      sumBasico += mBasico;
-      sumExcM3 += mExcM3;
-      sumCargoFijo += mCargoFijo;
-      sumValorExc += mValorExc;
-      sumTotalTarifa += mTotalTarifa;
-      sumOtros += mOtros;
-      sumTotalMes += mTotalMes;
-      sumDeudaAnt += mDeudaAnt;
-      sumTotal += mTotalFinal;
-
-      // Encabezado del medidor dentro de la tabla
-      const trHeader = document.createElement('tr');
-      trHeader.className = 'data-row';
-      trHeader.innerHTML = `
-        <td colspan="12" style="text-align: left; font-size: 0.72rem; font-weight: 800; color: #0369a1; background: #e0f2fe; padding: 3px 6px; border-top: 1px solid #334155; border-bottom: 1px solid #cbd5e1;">
-          💧 Medidor: <strong>${m.numeroMedidor}</strong> (${m.alias || 'Acometida'})
-        </td>
-      `;
-      tbody.appendChild(trHeader);
-
-      // Fila de datos del medidor
-      const trData = document.createElement('tr');
-      trData.className = 'data-row';
-      trData.innerHTML = `
-        <td>${Number(m.lecturaActual || 0).toFixed(2)}</td>
-        <td>${Number(m.lecturaAnterior || 0).toFixed(2)}</td>
-        <td>${mConsumo.toFixed(2)}</td>
-        <td>${mBasico.toFixed(2)}</td>
-        <td>${mExcM3.toFixed(2)}</td>
-        <td>$${mCargoFijo.toFixed(2)}</td>
-        <td>$${mValorExc.toFixed(2)}</td>
-        <td>$${mTotalTarifa.toFixed(2)}</td>
-        <td>$${mOtros.toFixed(2)}</td>
-        <td>$${mTotalMes.toFixed(2)}</td>
-        <td>$${mDeudaAnt.toFixed(2)}</td>
-        <td><strong>$${mTotalFinal.toFixed(2)}</strong></td>
-      `;
-      tbody.appendChild(trData);
-    });
-
-    // Rubros extraordinarios / Deuda general de alcantarillado
-    const multasExtra = Number(cobro.multaExtra || 0);
-    const deudaAlcantGen = Number(cobro.deudaAlcantarilladoCobrada || 0);
-    const generalOtros = multasExtra + deudaAlcantGen;
-    if (generalOtros > 0) {
-      sumOtros += generalOtros;
-      sumTotalMes += generalOtros;
-      sumTotal += generalOtros;
-
-      const trExtra = document.createElement('tr');
-      trExtra.className = 'data-row';
-      trExtra.innerHTML = `
-        <td colspan="8" style="text-align: right; font-size: 0.72rem; font-weight: 700; background: #fef3c7; color: #92400e; padding: 3px 6px;">
-          ⚖️ Multas Extraordinarias / Deuda Alcantarillado General:
-        </td>
-        <td style="background: #fef3c7; font-weight: 700;">$${generalOtros.toFixed(2)}</td>
-        <td style="background: #fef3c7; font-weight: 700;">$${generalOtros.toFixed(2)}</td>
-        <td style="background: #fef3c7;">$0.00</td>
-        <td style="background: #fef3c7; font-weight: 800;">$${generalOtros.toFixed(2)}</td>
-      `;
-      tbody.appendChild(trExtra);
-    }
-
-    // Fila de TOTALES
-    const trTotal = document.createElement('tr');
-    trTotal.className = 'data-row';
-    trTotal.style.cssText = 'background: #f1f5f9; font-weight: 800; border-top: 2px solid #0f172a;';
-    trTotal.innerHTML = `
-      <td colspan="2" style="text-align: right; font-weight: 800; font-size: 0.78rem;">TOTALES:</td>
-      <td>${sumConsumo.toFixed(2)}</td>
-      <td>-</td>
-      <td>${sumExcM3.toFixed(2)}</td>
-      <td>$${sumCargoFijo.toFixed(2)}</td>
-      <td>$${sumValorExc.toFixed(2)}</td>
-      <td>$${sumTotalTarifa.toFixed(2)}</td>
-      <td>$${sumOtros.toFixed(2)}</td>
-      <td>$${sumTotalMes.toFixed(2)}</td>
-      <td>$${sumDeudaAnt.toFixed(2)}</td>
-      <td style="color: #0284c7; font-size: 0.88rem;">$${sumTotal.toFixed(2)}</td>
-    `;
-    tbody.appendChild(trTotal);
-    totalFinal = cobro.montoTotal !== undefined ? Number(cobro.montoTotal) : sumTotal;
-
-  } else if (tbody) {
-    // 1 solo medidor (formato clásico directo)
-    const lact = cobro.lecturaActual ?? (cobro.consumoM3 ? 150 + cobro.consumoM3 : 185);
-    const lant = cobro.lecturaAnterior ?? 150;
-    const consumo = cobro.consumoM3 ?? Math.max(0, lact - lant);
-    const basico = 30;
-    const excedenteM3 = Math.max(0, consumo - basico);
-
-    const cargoFijo = cobro.cargoBase ?? 7.0;
-    const valorExcedente = cobro.valorExcedenteUSD ?? Number((excedenteM3 * 0.1).toFixed(2));
-    const totalTarifa = cargoFijo + valorExcedente;
-    const otros = (cobro.alcantarilladoUSD || 0) + (cobro.multaExtra || 0);
-    const totalMes = totalTarifa + otros;
-    const deudaAnterior = cobro.deudaAnteriorCobrada || 0;
-    totalFinal = cobro.montoTotal !== undefined ? Number(cobro.montoTotal) : (totalMes + deudaAnterior);
-
-    tbody.innerHTML = `
-      <tr class="data-row">
-        <td>${Number(lact).toFixed(2)}</td>
-        <td>${Number(lant).toFixed(2)}</td>
-        <td>${Number(consumo).toFixed(2)}</td>
-        <td>${Number(basico).toFixed(2)}</td>
-        <td>${Number(excedenteM3).toFixed(2)}</td>
-        <td>$${cargoFijo.toFixed(2)}</td>
-        <td>$${valorExcedente.toFixed(2)}</td>
-        <td>$${totalTarifa.toFixed(2)}</td>
-        <td>$${otros.toFixed(2)}</td>
-        <td>$${totalMes.toFixed(2)}</td>
-        <td>$${deudaAnterior.toFixed(2)}</td>
-        <td>$${totalFinal.toFixed(2)}</td>
-      </tr>
-      <tr class="empty-row">
-        <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>
-        <td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td>
-        <td>&nbsp;</td><td>&nbsp;</td>
-      </tr>
-    `;
-  }
-
-  // Total e info cajero
-  const totalFinalEl = document.getElementById('reciboTotalFinal');
-  if (totalFinalEl) totalFinalEl.textContent = `$${Number(totalFinal || 0).toFixed(2)}`;
-
-  // Mostrar detalle de abono si aplica
-  const totalLabelEl = document.getElementById('reciboTotalLabel');
-  const abonoInfoEl = document.getElementById('reciboAbonoInfo');
-  const abonoMontoEl = document.getElementById('reciboMontoAbonado');
-  const saldoPendEl = document.getElementById('reciboSaldoPendiente');
-  const stampTextEl = document.getElementById('reciboStampText');
-
-  const esAbono = Boolean(cobro.esAbono || (cobro.saldoPendiente !== undefined && Number(cobro.saldoPendiente) > 0));
-  const montoCobrado = Number(cobro.montoAbonado ?? cobro.montoPagado ?? cobro.montoRecibido ?? totalFinal);
-  const saldoR = Number(cobro.saldoPendiente ?? cobro.saldoDeudaAntPendiente ?? 0);
-
-  if (esAbono) {
-    if (totalLabelEl) totalLabelEl.textContent = 'TOTAL ABONADO';
-    if (stampTextEl) stampTextEl.textContent = 'ABONO REGISTRADO';
-    if (abonoInfoEl) abonoInfoEl.style.display = 'block';
-    if (abonoMontoEl) abonoMontoEl.textContent = `$${montoCobrado.toFixed(2)}`;
-    if (saldoPendEl) saldoPendEl.textContent = `$${saldoR.toFixed(2)}`;
-  } else {
-    if (totalLabelEl) totalLabelEl.textContent = 'TOTAL A PAGAR';
-    if (stampTextEl) stampTextEl.textContent = 'CANCELADO';
-    if (abonoInfoEl) abonoInfoEl.style.display = 'none';
-  }
-
-  const cajeroEl = document.getElementById('reciboCajeroTxt');
-  if (cajeroEl) {
-    const cajeroNom = currentUser?.nombreCompleto || currentUser?.nombre_completo || currentUser?.nombre || currentUser?.username || 'Cajero Responsable';
-    cajeroEl.textContent = cajeroNom;
-  }
-
-  const metodoEl = document.getElementById('reciboMetodoTxt');
-  if (metodoEl) metodoEl.textContent = cobro.metodoPago || 'EFECTIVO';
-
-  const stampFechaEl = document.getElementById('reciboStampFecha');
-  if (stampFechaEl) {
-    stampFechaEl.textContent = `${diaPago}-${mesPagoNombre.slice(0, 3).toUpperCase()}-${anioPagoStr}`;
-  }
-
-  const disclaimerEl = document.querySelector('.pishilata-disclaimer');
-  if (disclaimerEl) {
-    const notas = [];
-    if (cobro.observaciones || cobro.observacion || cobro.nota) {
-      notas.push(String(cobro.observaciones || cobro.observacion || cobro.nota));
-    }
-    const dCobrada = Number(cobro.deudaAnteriorCobrada || 0);
-    if (dCobrada > 0) {
-      if (cobro.esDeudaAntAbonada || (esAbono && saldoR > 0)) {
-        notas.push(`📌 Deuda anterior abonada: $${dCobrada.toFixed(2)} USD (Saldo restante: $${saldoR.toFixed(2)} USD).`);
-      } else {
-        notas.push(`✓ Deuda anterior liquidada: $${dCobrada.toFixed(2)} USD (Saldo pendiente: $0.00 USD).`);
-      }
-    }
-    if (cobro.multaExtra && Number(cobro.multaExtra) > 0) {
-      notas.push(`Multas: $${Number(cobro.multaExtra).toFixed(2)} USD.`);
-    }
-    if (cobro.deudaAlcantarilladoCobrada && Number(cobro.deudaAlcantarilladoCobrada) > 0) {
-      notas.push(`Alcantarillado: $${Number(cobro.deudaAlcantarilladoCobrada).toFixed(2)} USD.`);
-    }
-    if (esAbono && saldoR > 0 && dCobrada === 0) {
-      notas.push(`⚠️ Abono registrado. Saldo pendiente: $${saldoR.toFixed(2)} USD.`);
-    }
-
-    if (notas.length > 0) {
-      disclaimerEl.innerHTML = `Válido como comprobante de pago si tiene sello de cancelación.<br><span style="color: #0284c7; font-size: 0.74rem; font-weight: 700;">${notas.join(' ')}</span>`;
-    } else {
-      disclaimerEl.textContent = 'Válido como comprobante de pago si tiene sello de cancelación.';
-    }
-  }
 
   // Botón de eliminación en el modal (EXCLUSIVO ADMIN)
   const btnDelModal = document.getElementById('btnDeleteFacturaModal');
@@ -2961,7 +2714,17 @@ function showReceiptModal(cobro) {
     }
   }
 
-  modal.style.display = 'flex';
+  // Identificador de factura autoritativo
+  const facturaId = cobro?.id || cobro?.numeroFactura || cobro?.numeroRecibo;
+
+  // Inyectar nombre de cajero si viene de la sesión activa
+  const cobroConCajero = {
+    ...cobro,
+    cajeroNombre: cobro?.cajeroNombre || currentUser?.nombreCompleto || currentUser?.nombre_completo || currentUser?.username || 'Cajero Responsable'
+  };
+
+  // Cargar comprobante oficial consumiendo endpoint con fallback seguro
+  await cargarYMostrarComprobante(facturaId, cobroConCajero);
 }
 
 async function confirmDeleteFactura(cobro) {

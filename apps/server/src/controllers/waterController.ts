@@ -511,7 +511,8 @@ export const getSocioEstadoCuenta = async (req: AuthenticatedRequest, res: Respo
       const tieneFacMesPendiente = facturasNormalizadas.some((f) => {
         const isPeriodo = f.idPeriodo === periodoActivoId || String(f.numeroFactura || '').includes(periodoActivoCod.replace('-', ''));
         const isMed = f.idMedidor === mId || (medidores.length === 1 && !f.idMedidor);
-        return isPeriodo && isMed && f.estadoPago === 'PENDIENTE';
+        const esConsumoAgua = Number(f.valorBase || f.valor_base || 0) > 0 || Number(f.totalMes || f.total_mes || 0) > 0;
+        return isPeriodo && isMed && f.estadoPago === 'PENDIENTE' && esConsumoAgua;
       });
 
       const yaPagadoMes = Boolean(facMesPagada) && !tieneFacMesPendiente;
@@ -1558,8 +1559,9 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
       return isPeriodo && cobroConsumo;
     });
     const tieneAguaPendienteMes = facturasDetalladas.some((f) => {
-      return f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
-      return isPeriodo && f.estadoPago === 'PENDIENTE' && Number(f.valorBase || 0) > 0;
+      const isPeriodo = f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
+      const esConsumoAgua = Number(f.valorBase || f.valor_base || 0) > 0 || Number(f.totalMes || f.total_mes || 0) > 0;
+      return isPeriodo && f.estadoPago === 'PENDIENTE' && esConsumoAgua;
     });
     const yaPagadoMes = tienePagadoMes && !tieneAguaPendienteMes;
 
@@ -1895,11 +1897,21 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
         return isPeriodo && cobroConsumo;
       });
       const tieneAguaPendienteMes = facturasDet.some((f) => {
-        return f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
+        const isPeriodo = f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
+        const esConsumoAgua = Number(f.valorBase || f.valor_base || 0) > 0 || Number(f.totalMes || f.total_mes || 0) > 0;
+        return isPeriodo && f.estadoPago === 'PENDIENTE' && esConsumoAgua;
       });
       const yaPagadoMes = tienePagadoMes && !tieneAguaPendienteMes;
 
-      if (mTotalDeuda === 0 && !yaPagadoMes) {
+      if (yaPagadoMes) {
+        mTotalDeuda = facturasDet.reduce((sum, f) => {
+          const esMesActual = f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
+          if (esMesActual) {
+            return sum + Number(f.valorDeudaAnterior || f.valor_deuda_anterior || 0);
+          }
+          return sum + Number(f.totalPagar || f.total_pagar || 0);
+        }, 0);
+      } else if (mTotalDeuda === 0) {
         mTotalDeuda = subtotalMesActual;
         if (mMeses === 0) mMeses = 1;
       }
@@ -2040,6 +2052,153 @@ export const cerrarPeriodo = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
+/**
+ * Inicializa de forma atómica y genérica las lecturas de un período (punto de partida)
+ * para todos los medidores activos a partir del período precedente.
+ */
+export const inicializarLecturasPeriodo = async (
+  periodoNuevoId: string,
+  periodoAnteriorId: string,
+  codigoNuevo: string,
+  idLector?: string | null
+): Promise<{ medidoresAvanzados: number; lecturasCreadas: number }> => {
+  const now = new Date().toISOString();
+  const lectorValido = idLector && /^[0-9a-f-]{36}$/i.test(idLector)
+    ? idLector
+    : '00000000-0000-0000-0000-000000000003';
+
+  const [medRes, lecAntRes, existingNextLecRes] = await Promise.all([
+    supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
+    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${periodoAnteriorId}&order=created_at.desc`),
+    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${periodoNuevoId}`)
+  ]);
+
+  const medidores = medRes.data || [];
+  const lecturasAnt = lecAntRes.data || [];
+  const existingNextLec = existingNextLecRes.data || [];
+
+  const lecMap = new Map<string, Record<string, any>>();
+  for (const l of lecturasAnt) {
+    if (l.id_medidor && !lecMap.has(l.id_medidor)) {
+      lecMap.set(l.id_medidor, l);
+    }
+  }
+
+  const nextLecMap = new Map<string, Record<string, any>>();
+  for (const l of existingNextLec) {
+    if (l.id_medidor && !nextLecMap.has(l.id_medidor)) {
+      nextLecMap.set(l.id_medidor, l);
+    }
+  }
+
+  const rowsToInsert: Record<string, any>[] = [];
+  let medidoresAvanzados = 0;
+
+  for (const m of medidores) {
+    const mId = m.id as string;
+    const ultLec = lecMap.get(mId);
+    const existing = nextLecMap.get(mId);
+
+    let nuevaLant = 0;
+    const isSN = Boolean((m.numero_medidor || '').toUpperCase().includes('SN'));
+    if (isSN) {
+      nuevaLant = 0;
+    } else if (ultLec && ultLec.lectura_actual !== null && ultLec.lectura_actual !== undefined) {
+      nuevaLant = Number(ultLec.lectura_actual);
+    } else if (ultLec && ultLec.lectura_anterior !== null && ultLec.lectura_anterior !== undefined) {
+      nuevaLant = Number(ultLec.lectura_anterior);
+    } else {
+      nuevaLant = Number(m.lectura_anterior ?? m.lectura_inicial ?? 0);
+    }
+
+    if (!existing) {
+      rowsToInsert.push({
+        id: crypto.randomUUID(),
+        id_medidor: mId,
+        id_socio: m.id_socio,
+        id_periodo: periodoNuevoId,
+        lectura_anterior: nuevaLant,
+        lectura_actual: nuevaLant, // Satisface NOT NULL en Postgres
+        consumo_total: 0,
+        excedente_m3: 0,
+        fecha_lectura: now,
+        id_lector: lectorValido,
+        observaciones: isSN ? 'Sin medidor - Tarifa fija' : `Punto de partida ciclo ${codigoNuevo}`,
+        version: 1,
+        created_at: now,
+        updated_at: now
+      });
+    }
+
+    // Actualizar lectura_anterior en tabla medidores
+    await supabaseClient.request(`medidores?id=eq.${mId}`, {
+      method: 'PATCH',
+      body: {
+        lectura_anterior: nuevaLant,
+        updated_at: now
+      }
+    }).catch(() => {});
+
+    medidoresAvanzados++;
+  }
+
+  // Insertar en lotes de 20
+  let lecturasCreadas = 0;
+  const chunkSize = 20;
+  for (let i = 0; i < rowsToInsert.length; i += chunkSize) {
+    const chunk = rowsToInsert.slice(i, i + chunkSize);
+    const res = await supabaseClient.request('lecturas', {
+      method: 'POST',
+      body: chunk
+    });
+    if (!res.error) {
+      lecturasCreadas += chunk.length;
+    } else {
+      console.error('[InicializarLecturas] Error en lote:', res.error);
+    }
+  }
+
+  return { medidoresAvanzados, lecturasCreadas };
+};
+
+export const inicializarLecturasController = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const periodosRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc');
+    const periodos = periodosRes.data || [];
+    const targetPeriod = periodos.find((p) => p.id === id || p.periodo_codigo === id);
+    if (!targetPeriod) {
+      res.status(404).json({ error: 'Período no encontrado.' });
+      return;
+    }
+    // Período anterior en orden cronológico
+    const sorted = [...periodos].sort((a, b) => (a.fecha_inicio || '').localeCompare(b.fecha_inicio || ''));
+    const targetIdx = sorted.findIndex((p) => p.id === targetPeriod.id);
+    const prevPeriod = targetIdx > 0 ? sorted[targetIdx - 1] : null;
+
+    if (!prevPeriod) {
+      res.status(400).json({ error: 'No se encontró un período anterior para derivar lecturas.' });
+      return;
+    }
+
+    const result = await inicializarLecturasPeriodo(
+      targetPeriod.id,
+      prevPeriod.id,
+      targetPeriod.periodo_codigo || 'Periodo',
+      req.user?.id
+    );
+
+    res.json({
+      success: true,
+      message: `Período ${targetPeriod.periodo_codigo} inicializado con éxito.`,
+      data: result
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Error inicializando lecturas.';
+    res.status(500).json({ error: msg });
+  }
+};
+
 export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { idPeriodo } = req.body || req.params || {};
@@ -2124,89 +2283,25 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
     }
 
     // 4. Rollover de lecturas y consolidación de deudas pendientes
-    const [medRes, lecRes, existingNextLecRes, facRes] = await Promise.all([
-      supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
-      supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${currentPeriod.id}&order=created_at.desc`),
-      supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${nextPeriodId}`),
-      supabaseClient.fetchRecords<Record<string, any>>('facturas', 'estado_pago=eq.PENDIENTE')
+    const [facRes, initRes] = await Promise.all([
+      supabaseClient.fetchRecords<Record<string, any>>('facturas', 'estado_pago=eq.PENDIENTE'),
+      inicializarLecturasPeriodo(nextPeriodId, currentPeriod.id, nextCode, req.user?.id)
     ]);
 
-    const medidores = medRes.data || [];
-    const lecturasCerradas = lecRes.data || [];
-    const lecturasExistentesNext = existingNextLecRes.data || [];
     const facturasPendientes = facRes.data || [];
-
-    const lecMap = new Map<string, Record<string, any>>();
-    for (const l of lecturasCerradas) {
-      if (l.id_medidor && !lecMap.has(l.id_medidor)) {
-        lecMap.set(l.id_medidor, l);
-      }
-    }
-
-    const nextLecMap = new Map<string, Record<string, any>>();
-    for (const l of lecturasExistentesNext) {
-      if (l.id_medidor && !nextLecMap.has(l.id_medidor)) {
-        nextLecMap.set(l.id_medidor, l);
-      }
-    }
-
-    let medidoresAvanzados = 0;
+    const medidoresAvanzados = initRes.medidoresAvanzados;
     let medidoresConDeuda = 0;
     let montoTotalDeudaAnterior = 0;
 
-    for (const m of medidores) {
-      const mId = m.id as string;
-      const ultLec = lecMap.get(mId);
-
-      let nuevaLecturaAnterior = 0;
-      if (ultLec && ultLec.lectura_actual !== null && ultLec.lectura_actual !== undefined) {
-        nuevaLecturaAnterior = Number(ultLec.lectura_actual);
-      } else if (ultLec && ultLec.lectura_anterior !== null && ultLec.lectura_anterior !== undefined) {
-        nuevaLecturaAnterior = Number(ultLec.lectura_anterior);
-      } else {
-        nuevaLecturaAnterior = Number(m.lectura_anterior ?? m.lectura_inicial ?? 0);
+    // Calcular deudas reales pendientes no saldadas
+    const medConDeudaSet = new Set<string>();
+    for (const f of facturasPendientes) {
+      if (f.id_medidor) {
+        medConDeudaSet.add(f.id_medidor);
+        montoTotalDeudaAnterior += Number(f.total_mes ?? f.total_pagar ?? 0);
       }
-
-      // Deudas acumuladas no pagadas de este medidor
-      const facsMed = facturasPendientes.filter((f) => f.id_medidor === mId);
-      if (facsMed.length > 0) {
-        medidoresConDeuda++;
-        const subtotal = facsMed.reduce((sum, f) => sum + Number(f.total_mes ?? f.total_pagar ?? 0), 0);
-        montoTotalDeudaAnterior += subtotal;
-      }
-
-      // Actualizar lectura_anterior en tabla medidores
-      await supabaseClient.request(`medidores?id=eq.${mId}`, {
-        method: 'PATCH',
-        body: {
-          lectura_anterior: nuevaLecturaAnterior,
-          updated_at: now
-        }
-      }).catch(() => {});
-
-      // Crear o actualizar registro de lectura para el nuevo periodo
-      const existingLec = nextLecMap.get(mId);
-      const nuevaLecturaId = existingLec?.id || crypto.randomUUID();
-
-      await supabaseClient.syncRecord('lecturas', {
-        id: nuevaLecturaId,
-        id_medidor: mId,
-        id_socio: m.id_socio,
-        id_periodo: nextPeriodId,
-        lectura_anterior: nuevaLecturaAnterior,
-        lectura_actual: existingLec?.lectura_actual ?? null,
-        consumo_total: existingLec?.consumo_total ?? 0,
-        excedente_m3: existingLec?.excedente_m3 ?? 0,
-        fecha_lectura: existingLec?.fecha_lectura ?? null,
-        id_lector: req.user?.id || null,
-        observaciones: `Apertura automática del período ${nextCode}`,
-        version: 1,
-        created_at: existingLec?.created_at || now,
-        updated_at: now
-      }).catch(() => {});
-
-      medidoresAvanzados++;
     }
+    medidoresConDeuda = medConDeudaSet.size;
 
     res.json({
       success: true,

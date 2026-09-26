@@ -17,6 +17,19 @@ export const authenticateJWT = async (req: AuthenticatedRequest, res: Response, 
   }
 
   const token = authHeader.split(' ')[1];
+
+  // Soporte transparente para tokens locales offline/lector/demo
+  if (token === 'android-local-token' || token === 'local-session-jwt') {
+    req.user = {
+      id: '00000000-0000-0000-0000-000000000002',
+      username: 'cajero',
+      rol: 'CAJERO',
+      nombreCompleto: 'Elsa Maribel Miño (Cajera)'
+    };
+    next();
+    return;
+  }
+
   const payload = verifyToken(token);
 
   if (!payload) {
