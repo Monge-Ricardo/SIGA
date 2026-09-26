@@ -27,6 +27,15 @@ async function seedLecturasIfEmpty() {
   await syncEngine.ensureDataSeeded();
 }
 
+function getSelectedPeriodo() {
+  const sel = document.getElementById('selectPeriodo');
+  if (sel && sel.value) return sel.value;
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+}
+
 async function getAllSocios() {
   // 1. Consultar IndexedDB local (Offline-first inmediato)
   if (db) {
@@ -214,24 +223,33 @@ function populatePeriodosSelect(periodos, preferredPeriodo = null) {
 }
 
 function mapLecturasList(rawList, periodo) {
-  return rawList.map((l) => ({
-    id: l.id,
-    idMedidor: l.idMedidor || l.id_medidor,
-    numeroMedidor: l.numeroMedidor || l.numero_medidor || l.medidorNumero,
-    aliasMedidor: l.aliasMedidor || l.alias_medidor || l.alias || 'Casa principal',
-    clienteId: l.idSocio || l.id_socio || l.clienteId,
-    idSocio: l.idSocio || l.id_socio || l.clienteId,
-    periodo: l.periodo || l.periodo_codigo || l.periodoCodigo || periodo,
-    lecturaAnterior: Number(l.lecturaAnterior ?? l.lectura_anterior ?? 0),
-    lecturaActual: (l.lecturaActual !== undefined && l.lecturaActual !== null)
+  return rawList.map((l) => {
+    const isBaseline = Boolean(
+      String(l.observaciones || '').startsWith('Punto de partida') ||
+      String(l.observaciones || '').startsWith('Apertura automática') ||
+      l.observaciones === 'Alta inicial de socio'
+    );
+    const lactVal = (l.lecturaActual !== undefined && l.lecturaActual !== null)
       ? Number(l.lecturaActual)
-      : ((l.lectura_actual !== undefined && l.lectura_actual !== null) ? Number(l.lectura_actual) : undefined),
-    consumoM3: Number(l.consumoM3 ?? l.consumoTotal ?? l.consumo_total ?? 0),
-    excedenteM3: Number(l.excedenteM3 ?? l.excedente_m3 ?? 0),
-    observaciones: l.observaciones || '',
-    origen: l.origen || 'LECTOR',
-    updatedAt: l.updatedAt || l.updated_at
-  }));
+      : ((l.lectura_actual !== undefined && l.lectura_actual !== null) ? Number(l.lectura_actual) : undefined);
+
+    return {
+      id: l.id,
+      idMedidor: l.idMedidor || l.id_medidor,
+      numeroMedidor: l.numeroMedidor || l.numero_medidor || l.medidorNumero,
+      aliasMedidor: l.aliasMedidor || l.alias_medidor || l.alias || 'Casa principal',
+      clienteId: l.idSocio || l.id_socio || l.clienteId,
+      idSocio: l.idSocio || l.id_socio || l.clienteId,
+      periodo: l.periodo || l.periodo_codigo || l.periodoCodigo || periodo,
+      lecturaAnterior: Number(l.lecturaAnterior ?? l.lectura_anterior ?? 0),
+      lecturaActual: isBaseline ? undefined : lactVal,
+      consumoM3: isBaseline ? 0 : Number(l.consumoM3 ?? l.consumoTotal ?? l.consumo_total ?? 0),
+      excedenteM3: isBaseline ? 0 : Number(l.excedenteM3 ?? l.excedente_m3 ?? 0),
+      observaciones: l.observaciones || '',
+      origen: l.origen || 'LECTOR',
+      updatedAt: l.updatedAt || l.updated_at
+    };
+  });
 }
 
 async function getLecturasPeriodo(periodo) {
@@ -385,7 +403,7 @@ async function renderLecturasUI() {
     selectPeriodoEl.dataset.dynamicLoaded = 'true';
   }
 
-  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+  const periodo = getSelectedPeriodo();
 
   // Si hay conexión, sincronizar padrón y deltas con Supabase Cloud para incorporar nuevos socios
   if (navigator.onLine && !syncEngine.isSyncing) {
@@ -493,7 +511,7 @@ function renderTableAndMetrics() {
   const isCajeroOAdmin = currentUser?.rol === 'CAJERO' || currentUser?.rol === 'ADMIN';
   const sectorFilter = document.getElementById('selectSectorRuta')?.value || 'TODOS';
   const searchFilter = document.getElementById('searchSocioLectura')?.value || '';
-  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+  const periodo = getSelectedPeriodo();
 
   let filtrados = cachedSocios.filter((s) => s.estadoServicio !== 'CORTADO');
 
@@ -938,7 +956,7 @@ function updateMetrics(totalSocios, tomadas, consumo, excedente) {
 }
 
 async function recalcOverallMetrics(sociosRuta) {
-  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+  const periodo = getSelectedPeriodo();
   const lecturas = await getLecturasPeriodo(periodo);
 
   let tomadas = 0, consumo = 0, excedente = 0;
@@ -972,7 +990,7 @@ async function recalcOverallMetrics(sociosRuta) {
 
 // Guardar Todo el Lote
 async function guardarTodoElLote() {
-  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+  const periodo = getSelectedPeriodo();
   const rows = document.querySelectorAll('#lecturasTableBody tr');
   if (!rows || rows.length === 0) return;
 
@@ -1101,7 +1119,7 @@ async function guardarTodoElLote() {
 
 // Cierre de Ciclo
 document.getElementById('btnCierreCiclo')?.addEventListener('click', async () => {
-  const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+  const periodo = getSelectedPeriodo();
   const lecturas = await getLecturasPeriodo(periodo);
 
   let totalMedidores = 0;
@@ -1159,7 +1177,13 @@ document.getElementById('btnCierreCiclo')?.addEventListener('click', async () =>
 
   try {
     const data = await syncEngine.cerrarCicloSupabase(periodo);
-    const nuevoPeriodoCodigo = data?.nuevoPeriodo || '2026-09';
+    let fallbackNext = '';
+    if (periodo && /^\d{4}-\d{2}$/.test(periodo)) {
+      const [y, m] = periodo.split('-').map(Number);
+      const nextDate = new Date(y, m, 1);
+      fallbackNext = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}`;
+    }
+    const nuevoPeriodoCodigo = data?.nuevoPeriodo || fallbackNext || 'Siguiente';
 
     await Swal.fire({
       icon: 'success',
@@ -1211,7 +1235,7 @@ async function actualizarDatosDesdeNube() {
     if (res.success) {
       cachedSocios = await getAllSocios();
       cachedSectores = await getAllSectores();
-      const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+      const periodo = getSelectedPeriodo();
       cachedLecturas = await getLecturasPeriodo(periodo);
 
       renderTableAndMetrics();
@@ -1293,7 +1317,7 @@ async function subirLecturasALaNube() {
       });
     }
 
-    const periodo = document.getElementById('selectPeriodo')?.value || '2026-08';
+    const periodo = getSelectedPeriodo();
     cachedLecturas = await getLecturasPeriodo(periodo);
     renderTableAndMetrics();
   } catch (err) {
@@ -1342,8 +1366,7 @@ async function exportLecturasCSV(periodo) {
 }
 
 async function avanzarSiguientePeriodo() {
-  const selectPeriodoEl = document.getElementById('selectPeriodo');
-  const currentPeriodoCodigo = selectPeriodoEl?.value || '2026-08';
+  const currentPeriodoCodigo = getSelectedPeriodo();
 
   const confirmResult = await Swal.fire({
     title: '⏩ ¿Pasar al Siguiente Período?',
@@ -1470,8 +1493,7 @@ async function avanzarSiguientePeriodo() {
 }
 
 async function pasarLecturasACajaUI() {
-  const selectPeriodoEl = document.getElementById('selectPeriodo');
-  const periodoActual = selectPeriodoEl?.value || '2026-08';
+  const periodoActual = getSelectedPeriodo();
 
   // Contar lecturas tomadas
   const tomadas = (cachedLecturas || []).filter((l) => l.lecturaActual !== null && l.lecturaActual !== undefined);

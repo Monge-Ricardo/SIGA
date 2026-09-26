@@ -38,19 +38,61 @@ let allLoadedMultas = [];
 let selectedMultasAbonosMap = new Map(); // id -> montoAbonado
 let selectedDeudasAnterioresAbonosMap = new Map(); // id -> montoAbonado
 
-let PERIODO_ACTUAL = '2026-08';
+let PERIODO_ACTUAL = null;
+const cachedPeriodosMap = new Map();
+
+function resolvePeriodoCodigo(idOrCode) {
+  if (!idOrCode) return PERIODO_ACTUAL;
+  if (cachedPeriodosMap.has(idOrCode)) return cachedPeriodosMap.get(idOrCode);
+  if (/^\d{4}-\d{2}$/.test(idOrCode)) return idOrCode;
+  return PERIODO_ACTUAL;
+}
 
 async function getActivePeriodo() {
   try {
     const res = await apiFetch('/api/v1/periodos');
     if (res && Array.isArray(res.data) && res.data.length > 0) {
+      res.data.forEach((p) => {
+        const cod = p.periodoCodigo || p.periodo_codigo;
+        if (cod) {
+          cachedPeriodosMap.set(p.id, cod);
+          cachedPeriodosMap.set(cod, cod);
+        }
+      });
       const abierto = res.data.find((p) => p.estado === 'ABIERTO');
       if (abierto) return abierto.periodoCodigo || abierto.periodo_codigo || abierto.id;
+      return res.data[0].periodoCodigo || res.data[0].periodo_codigo || res.data[0].id;
     }
   } catch (e) {
-    console.warn('[Caja] Error obteniendo período activo:', e);
+    console.warn('[Caja] Error obteniendo período activo de API:', e);
   }
-  return '2026-08';
+
+  // Fallback desde base de datos local IndexedDB
+  if (db) {
+    try {
+      const local = await new Promise((resolve) => {
+        const tx = db.transaction(['periodos'], 'readonly');
+        const req = tx.objectStore('periodos').getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+      local.forEach((p) => {
+        const cod = p.periodoCodigo || p.periodo_codigo;
+        if (cod) {
+          cachedPeriodosMap.set(p.id, cod);
+          cachedPeriodosMap.set(cod, cod);
+        }
+      });
+      const abiertoLocal = local.find((p) => p.estado === 'ABIERTO');
+      if (abiertoLocal) return abiertoLocal.periodoCodigo || abiertoLocal.periodo_codigo || abiertoLocal.id;
+      if (local.length > 0) return local[0].periodoCodigo || local[0].periodo_codigo || local[0].id;
+    } catch (_err) {}
+  }
+
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
 }
 
 // Variables del Módulo
@@ -79,6 +121,10 @@ async function renderCajaUI() {
 
   // Resolver período activo dinámicamente
   PERIODO_ACTUAL = await getActivePeriodo();
+  const periodoTag = document.getElementById('periodoActualTag');
+  if (periodoTag) {
+    periodoTag.textContent = `Período: ${PERIODO_ACTUAL}`;
+  }
 
   // 1. Cargar Socios, Medidores y Lecturas directamente desde el Backend REST API (Supabase Cloud en tiempo real)
   let localSocios = [];
@@ -277,12 +323,13 @@ function actualizarCuentasCorrientesSocios() {
   });
 
   cachedSocios.forEach((s) => {
-    // 1. Aspecto: Pago de Agua Actual (Agosto 2026)
-    const pagoAgosto = allLoadedCobros.some((c) => {
+    // 1. Aspecto: Pago de Agua del Período Actual
+    const pagoPeriodoActual = allLoadedCobros.some((c) => {
       const isSocio = c.socioId === s.id || c.idSocio === s.id || c.codigoSocio === s.codigoSocio || (s.cedulaRuc && c.socioCedula === s.cedulaRuc);
-      const isAgosto = c.periodo === '2026-08' || c.periodoCodigo === '2026-08' || c.idPeriodo === '33333333-0000-0000-0000-000000000001' || String(c.numeroRecibo || c.numeroFactura || '').includes('202608');
+      const pCod = resolvePeriodoCodigo(c.periodo || c.periodoCodigo || c.idPeriodo || c.id_periodo);
+      const isPeriodo = pCod === PERIODO_ACTUAL || (PERIODO_ACTUAL && String(c.numeroRecibo || c.numeroFactura || '').includes(PERIODO_ACTUAL.replace('-', '')));
       const isPagado = c.estadoPago === 'PAGADO' || (c.saldoPendiente !== undefined ? Number(c.saldoPendiente) === 0 : true);
-      return isSocio && isAgosto && isPagado;
+      return isSocio && isPeriodo && isPagado;
     });
 
     // 2. Aspecto: Deuda Anterior de Alcantarillado (Red Matriz)
@@ -309,7 +356,7 @@ function actualizarCuentasCorrientesSocios() {
     const multasPend = multasBase.filter((m) => !idsMultasCobradas.has(m.id) && !m.pagado);
     const totalMultas = multasPend.reduce((sum, m) => sum + Number(m.monto || 0), 0);
 
-    // 4. Aspecto: Deudas de Meses Anteriores (Julio 2026 o previos)
+    // 4. Aspecto: Deudas de Meses Anteriores (Corte anterior o previos)
     const deudaHistMed = Array.isArray(s.medidores)
       ? s.medidores.reduce((acc, m) => acc + Number(m.deudaPendiente || m.deuda_pendiente || 0), 0)
       : Number(s.deudaPendiente || s.deuda_pendiente || s.montoTotalAdeudado || 0);
@@ -326,15 +373,15 @@ function actualizarCuentasCorrientesSocios() {
 
     const totalDeudaReal = Number((deudaAnteriorRestante + deudaAlcantRestante + totalMultas).toFixed(2));
 
-    if (pagoAgosto && totalDeudaReal <= 0.001) {
+    if (pagoPeriodoActual && totalDeudaReal <= 0.001) {
       s.estadoCuenta = 'AL_DIA';
       s.montoTotalAdeudado = 0;
       s.mesesAdeudados = 0;
-    } else if (pagoAgosto && totalDeudaReal > 0) {
+    } else if (pagoPeriodoActual && totalDeudaReal > 0) {
       s.estadoCuenta = 'EN_MORA';
       s.montoTotalAdeudado = totalDeudaReal;
       s.mesesAdeudados = mesesAdeudados;
-    } else if (!pagoAgosto && totalDeudaReal <= 0.001) {
+    } else if (!pagoPeriodoActual && totalDeudaReal <= 0.001) {
       s.estadoCuenta = 'AL_DIA';
       s.montoTotalAdeudado = 0;
       s.mesesAdeudados = 0;
@@ -487,7 +534,7 @@ async function updateMetricsAndHistory() {
     // EN PWA OFICINA: El backend (Supabase) es la ÚNICA fuente de verdad. Cero cobros fantasma de IndexedDB.
     cobros = facturasPagadas
       .map((f) => {
-        const perCod = f.periodoCodigo || (f.idPeriodo === '33333333-0000-0000-0000-000000000001' || f.id_periodo === '33333333-0000-0000-0000-000000000001' ? '2026-08' : (f.idPeriodo === '33333333-0000-0000-0000-000000000000' || f.id_periodo === '33333333-0000-0000-0000-000000000000' ? '2026-07' : PERIODO_ACTUAL));
+        const perCod = resolvePeriodoCodigo(f.periodoCodigo || f.idPeriodo || f.id_periodo);
         const sId = f.idSocio || f.id_socio;
         let sNom = f.socioNombre;
         let sCed = f.socioCedula;
@@ -605,7 +652,7 @@ async function updateMetricsAndHistory() {
         const fId = String(f.id || '').toLowerCase();
         if ((fNum && knownKeys.has(fNum)) || (fId && knownKeys.has(fId))) return;
 
-        const perCod = f.periodoCodigo || (f.idPeriodo === '33333333-0000-0000-0000-000000000001' ? '2026-08' : PERIODO_ACTUAL);
+        const perCod = resolvePeriodoCodigo(f.periodoCodigo || f.idPeriodo || f.id_periodo);
         const sId = f.idSocio || f.id_socio;
         const totalP = Number(f.totalPagar ?? f.total_pagar ?? 0);
         const montoP = Number(f.montoPagado ?? f.monto_pagado ?? totalP);
@@ -616,8 +663,9 @@ async function updateMetricsAndHistory() {
         const deudasAntPend = facturasPendientes.filter((p) => {
           const pSoc = p.idSocio || p.id_socio;
           if (pSoc !== sId) return false;
-          const isAug = p.idPeriodo === '33333333-0000-0000-0000-000000000001' || p.id_periodo === '33333333-0000-0000-0000-000000000001' || String(p.numeroFactura || p.numero_factura || '').includes('202608');
-          return !isAug;
+          const pPerCod = resolvePeriodoCodigo(p.idPeriodo || p.id_periodo || p.periodoCodigo);
+          const isCurrent = pPerCod === PERIODO_ACTUAL || (PERIODO_ACTUAL && String(p.numeroFactura || p.numero_factura || '').includes(PERIODO_ACTUAL.replace('-', '')));
+          return !isCurrent;
         });
         const saldoDeudaAntPendiente = Number(deudasAntPend.reduce((sum, p) => sum + Number(p.totalPagar ?? p.total_pagar ?? p.totalMes ?? p.total_mes ?? 0), 0).toFixed(2));
         const multasPend = allLoadedMultas.filter((m) => (m.id_socio === sId || m.idSocio === sId) && m.estado !== 'PAGADO');
@@ -1539,7 +1587,7 @@ async function displaySocioPlanilla(socio) {
     const facturasPagadas = m.facturasPagadas || [];
 
     // Un medidor solo está al día en el mes si existe una factura pagada explícitamente para el período activo
-    const codPeriodoActual = String(PERIODO_ACTUAL || '2026-08').trim();
+    const codPeriodoActual = String(PERIODO_ACTUAL || (new Date().toISOString().slice(0, 7))).trim();
     const codClean = codPeriodoActual.replace('-', '');
     const tieneFacPagadaMes = facturasPagadas.some((f) => {
       const pCod = String(f.periodoCodigo || f.periodo_codigo || f.id_periodo || f.idPeriodo || '');
@@ -1651,30 +1699,33 @@ async function displaySocioPlanilla(socio) {
   selectedDeudaAlcantarilladoActiva = deudaAlcantSocioMed > 0;
   selectedDeudaAlcantarilladoMontoAbonar = deudaAlcantSocioMed;
 
-  // 3. Aspecto 3: Deuda historia (Corte Julio 2026 o facturas de períodos anteriores pendientes)
+  // 3. Aspecto 3: Deudas anteriores (Facturas de períodos anteriores pendientes)
   medidoresList.forEach((m) => {
     const fPendientes = m.facturasPendientes || [];
     fPendientes.forEach((f) => {
-      const isJuly = f.id_periodo === '33333333-0000-0000-0000-000000000000' || String(f.numeroFactura || f.numero_factura || '').includes('JUL') || f.periodoCodigo === '2026-07';
-      const isAugust = f.id_periodo === '33333333-0000-0000-0000-000000000001' || String(f.numeroFactura || f.numero_factura || '').includes('202608') || f.periodoCodigo === '2026-08';
+      const fPeriodo = resolvePeriodoCodigo(f.periodoCodigo || f.id_periodo || f.idPeriodo);
+      const isCurrent = (fPeriodo === PERIODO_ACTUAL) || (PERIODO_ACTUAL && String(f.numeroFactura || f.numero_factura || '').includes(PERIODO_ACTUAL.replace('-', '')));
       
-      if (!isAugust || isJuly) {
+      if (!isCurrent) {
         const totP = Number(f.totalPagar || f.total_pagar || f.valorDeudaAnterior || f.valor_deuda_anterior || f.totalMes || f.total_mes || 0);
         if (totP > 0 && !socioDeudasAnteriores.some((d) => d.id === f.id)) {
           socioDeudasAnteriores.push({
             id: f.id,
             idMedidor: m.id,
             numeroFactura: f.numeroFactura || f.numero_factura || f.id,
-            periodoCodigo: isJuly ? 'Corte Julio 2026' : (f.periodoCodigo || 'Mes Anterior'),
+            periodoCodigo: fPeriodo || 'Mes Anterior',
             totalPagar: totP,
             consumoM3: Number(f.consumoM3 || 0),
-            descripcion: `Factura ${f.numeroFactura || f.numero_factura || f.id} (Corte Julio)`
+            descripcion: `Factura ${f.numeroFactura || f.numero_factura || f.id} (${fPeriodo || 'Anterior'})`
           });
         }
       }
     });
 
-    const facMes = fPendientes.find(f => String(f.periodoCodigo || '').includes('2026-08') || String(f.numeroFactura || '').includes('202608'));
+    const facMes = fPendientes.find(f => {
+      const pCod = resolvePeriodoCodigo(f.periodoCodigo || f.id_periodo || f.idPeriodo);
+      return (pCod === PERIODO_ACTUAL) || (PERIODO_ACTUAL && String(f.numeroFactura || '').includes(PERIODO_ACTUAL.replace('-', '')));
+    });
     const facValorDeudaAnt = Number(facMes?.valorDeudaAnterior ?? facMes?.valor_deuda_anterior ?? 0);
     if (facValorDeudaAnt > 0 && socioDeudasAnteriores.length === 0) {
       const idDeuda = `deuda_hist_${m.id || m.numeroMedidor || m.medidorNumero}`;
@@ -1682,7 +1733,7 @@ async function displaySocioPlanilla(socio) {
         socioDeudasAnteriores.push({
           id: idDeuda,
           idMedidor: m.id,
-          periodoCodigo: 'Corte Julio 2026',
+          periodoCodigo: 'Saldo Anterior',
           totalPagar: facValorDeudaAnt,
           consumoM3: 0,
           descripcion: `Deuda anterior medidor ${m.numeroMedidor || m.medidorNumero}`
@@ -1693,16 +1744,17 @@ async function displaySocioPlanilla(socio) {
 
   if (Array.isArray(dataDeudas?.facturasPendientes)) {
     dataDeudas.facturasPendientes.forEach((fac) => {
-      const isJuly = fac.id_periodo === '33333333-0000-0000-0000-000000000000' || String(fac.numeroFactura || fac.numero_factura || '').includes('JUL') || fac.periodoCodigo === '2026-07';
+      const fPeriodo = resolvePeriodoCodigo(fac.periodoCodigo || fac.id_periodo || fac.idPeriodo);
+      const isCurrent = (fPeriodo === PERIODO_ACTUAL) || (PERIODO_ACTUAL && String(fac.numeroFactura || fac.numero_factura || '').includes(PERIODO_ACTUAL.replace('-', '')));
       const totP = Number(fac.totalPagar || fac.total_pagar || fac.saldoPendiente || fac.saldo_pendiente || 0);
-      if (isJuly && totP > 0 && !socioDeudasAnteriores.some((d) => d.id === fac.id)) {
+      if (!isCurrent && totP > 0 && !socioDeudasAnteriores.some((d) => d.id === fac.id)) {
         socioDeudasAnteriores.push({
           id: fac.id,
           numeroFactura: fac.numeroFactura || fac.numero_factura || fac.id,
-          periodoCodigo: 'Corte Julio 2026',
+          periodoCodigo: fPeriodo || 'Mes Anterior',
           totalPagar: totP,
           consumoM3: Number(fac.consumoM3 || 0),
-          descripcion: `Factura ${fac.numeroFactura || fac.id} (Corte Julio)`
+          descripcion: `Factura ${fac.numeroFactura || fac.id} (${fPeriodo || 'Anterior'})`
         });
       }
     });
@@ -1713,7 +1765,7 @@ async function displaySocioPlanilla(socio) {
   if (deudaSocioGen > sumDeudasAnt) {
     socioDeudasAnteriores.push({
       id: `deuda_socio_${socio.id}`,
-      periodoCodigo: 'Corte Julio 2026',
+      periodoCodigo: 'Saldo Anterior',
       totalPagar: Number((deudaSocioGen - sumDeudasAnt).toFixed(2)),
       consumoM3: 0,
       descripcion: 'Saldo pendiente arrastrado general'
@@ -2500,7 +2552,7 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
     let periodoCobro = PERIODO_ACTUAL;
     if (selectedMeters.length === 0 && selectedDeudasAnterioresIds.size > 0) {
       const firstDeuda = socioDeudasAnteriores.find((d) => selectedDeudasAnterioresIds.has(d.id));
-      periodoCobro = firstDeuda?.periodoCodigo || firstDeuda?.periodoNombre || '2026-07';
+      periodoCobro = firstDeuda?.periodoCodigo || firstDeuda?.periodoNombre || 'Anterior';
     }
 
     const medidorNumeroStr = medidoresCobrados.map((m) => m.numeroMedidor).join(' / ') || currentCalculation.medidorNumero;
@@ -2638,9 +2690,8 @@ function getPeriodoInfoCobro(cobro) {
 
   let raw = String(cobro?.periodo || cobro?.periodoCodigo || cobro?.periodoNombre || cobro?.idPeriodo || cobro?.id_periodo || '').trim();
 
-  // Mapeo de UUIDs conocidos de períodos
-  if (raw === '33333333-0000-0000-0000-000000000001') raw = '2026-08';
-  if (raw === '33333333-0000-0000-0000-000000000000') raw = '2026-07';
+  // Mapeo dinámico de UUIDs de períodos a su código
+  raw = resolvePeriodoCodigo(raw);
 
   // Si no viene o es un UUID desconocido, deducir por el número de factura/recibo (ej: FAC-202608-0022)
   if (!raw || raw.length < 4 || /^[0-9a-f-]{36}$/i.test(raw)) {
@@ -2653,7 +2704,7 @@ function getPeriodoInfoCobro(cobro) {
 
   // Si sigue sin definirse, tomar el período activo del sistema (PERIODO_ACTUAL)
   if (!raw || /^[0-9a-f-]{36}$/i.test(raw)) {
-    raw = String(typeof PERIODO_ACTUAL !== 'undefined' && PERIODO_ACTUAL ? PERIODO_ACTUAL : '2026-08').trim();
+    raw = String(typeof PERIODO_ACTUAL !== 'undefined' && PERIODO_ACTUAL ? PERIODO_ACTUAL : (new Date().toISOString().slice(0, 7))).trim();
   }
 
   // Formato ISO 'YYYY-MM' (ej: '2026-08' -> Agosto del 2026)

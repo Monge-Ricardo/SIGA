@@ -2222,7 +2222,7 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
       return;
     }
 
-    const currentCode = String(currentPeriod.periodo_codigo || '2026-08').trim();
+    const currentCode = String(currentPeriod.periodo_codigo || new Date().toISOString().slice(0, 7)).trim();
 
     // Emitir facturas a Caja de las lecturas registradas en el período que se cierra (si existen)
     let facturasGeneradasPeriodoAnterior = 0;
@@ -2956,7 +2956,7 @@ export const liquidarFactura = async (req: AuthenticatedRequest, res: Response):
       total_mes: totalMes,
       total_pagar: totalPagar,
       estado_pago: 'PENDIENTE',
-      fecha_vencimiento: p.fechaVencimiento || p.fecha_vencimiento || '2026-09-30',
+      fecha_vencimiento: p.fechaVencimiento || p.fecha_vencimiento || new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().slice(0, 10),
       version: 1,
       created_at: now,
       updated_at: now
@@ -3028,9 +3028,14 @@ export async function ejecutarPasarLecturasACaja(idPeriodo?: string): Promise<{
   const socioMap = new Map<string, Record<string, any>>(socios.map((s) => [s.id, s]));
   const medidorMap = new Map<string, Record<string, any>>(medidores.map((m) => [m.id, m]));
 
-  // Filtrar lecturas válidas que tengan lectura_actual registrada
+  // Filtrar lecturas válidas que tengan lectura_actual registrada y que NO sean solo línea base sin leer
   const lecturasConToma = lecturas.filter(
-    (l) => l.lectura_actual !== null && l.lectura_actual !== undefined && l.id_medidor
+    (l) =>
+      l.lectura_actual !== null &&
+      l.lectura_actual !== undefined &&
+      l.id_medidor &&
+      !String(l.observaciones || '').startsWith('Punto de partida') &&
+      !String(l.observaciones || '').startsWith('Apertura automática')
   );
 
   if (lecturasConToma.length === 0) {
@@ -3052,7 +3057,7 @@ export async function ejecutarPasarLecturasACaja(idPeriodo?: string): Promise<{
   let totalConDeudas = 0;
   const procesadas: any[] = [];
 
-  const periodCodeClean = String(targetPeriod.periodo_codigo || '2026-08').replace(/-/g, '');
+  const periodCodeClean = String(targetPeriod.periodo_codigo || new Date().toISOString().slice(0, 7)).replace(/-/g, '');
   let correlativo = 1;
 
   for (const lec of lecturasConToma) {

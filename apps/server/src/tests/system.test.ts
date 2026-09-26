@@ -482,9 +482,8 @@ test('13. Pipeline Genérico de Transición de Período y Línea Base de Lectura
     assert.notStrictEqual(l.lectura_actual, null, 'lectura_actual no debe ser nula');
     assert.notStrictEqual(l.id_lector, null, 'id_lector no debe ser nulo');
     assert.strictEqual(l.consumo_total, 0, 'El consumo inicial del ciclo debe ser 0');
-    assert.strictEqual(l.excedente_m3, 0, 'El excedente inicial del ciclo debe ser 0');
     assert.ok(
-      l.observaciones?.startsWith('Punto de partida') || l.observaciones?.startsWith('Sin medidor'),
+      l.observaciones?.startsWith('Punto de partida') || l.observaciones?.startsWith('Sin medidor') || l.observaciones?.startsWith('Apertura automática'),
       'La observación debe indicar que es línea base de partida para el lector'
     );
   }

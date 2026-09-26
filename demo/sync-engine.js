@@ -281,9 +281,15 @@ class GitSyncEngine {
           if (Array.isArray(seedData.periodos)) {
             seedData.periodos.forEach((p) => pStore.put(p));
           } else {
-            // Períodos predeterminados
-            pStore.put({ id: '33333333-0000-0000-0000-000000000000', periodoCodigo: '2026-07', nombre: 'Período Julio 2026', estado: 'CERRADO' });
-            pStore.put({ id: '33333333-0000-0000-0000-000000000001', periodoCodigo: '2026-08', nombre: 'Período Agosto 2026', estado: 'ABIERTO' });
+            // Períodos predeterminados dinámicos
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const prevD = new Date(y, now.getMonth() - 1, 1);
+            const prevY = prevD.getFullYear();
+            const prevM = String(prevD.getMonth() + 1).padStart(2, '0');
+            pStore.put({ id: `per-${prevY}-${prevM}`, periodoCodigo: `${prevY}-${prevM}`, nombre: `Período ${prevY}-${prevM}`, estado: 'CERRADO' });
+            pStore.put({ id: `per-${y}-${m}`, periodoCodigo: `${y}-${m}`, nombre: `Período ${y}-${m}`, estado: 'ABIERTO' });
           }
 
           tx.oncomplete = () => {
@@ -924,7 +930,7 @@ class GitSyncEngine {
             total_mes: totalMes,
             total_pagar: totalPagar,
             estado_pago: estadoPago,
-            fecha_vencimiento: c.fechaVencimiento || '2026-09-30',
+            fecha_vencimiento: c.fechaVencimiento || new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().slice(0, 10),
             fecha_pago: c.fechaPago || new Date().toISOString(),
             metodo_pago: metodoPago,
             updated_at: new Date().toISOString()
@@ -1568,7 +1574,11 @@ class GitSyncEngine {
    * 4. Moviliza las lecturas: L_act de Agosto pasa a L_ant de Septiembre con consumo 0.
    * 5. Refresca automáticamente IndexedDB local.
    */
-  async cerrarCicloSupabase(periodoCodigo = '2026-08') {
+  async cerrarCicloSupabase(periodoCodigo = null) {
+    if (!periodoCodigo) {
+      const now = new Date();
+      periodoCodigo = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
     const headers = {
       apikey: SYNC_CONFIG.SUPABASE_KEY,
       Authorization: `Bearer ${SYNC_CONFIG.SUPABASE_KEY}`,
