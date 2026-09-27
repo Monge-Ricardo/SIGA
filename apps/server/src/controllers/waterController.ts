@@ -42,13 +42,172 @@ export async function getInitialPeriod(): Promise<Record<string, any> | null> {
 }
 
 /**
- * Obtiene el ID del período base para lecturas iniciales de acometidas.
+ * Resuelve dinámicamente el ID del período para lecturas iniciales/aperturas:
+ * 1. Prioridad: ID explícito proporcionado.
+ * 2. Período inicial histórico del sistema (order=fecha_inicio.asc).
+ * 3. Período actualmente activo (estado=ABIERTO).
+ * 4. Si la tabla 'periodos' estuviera completamente vacía, crea dinámicamente el período corriente en Supabase.
+ */
+export async function resolveReadingPeriodId(explicitPeriodId?: string | null): Promise<string> {
+  if (explicitPeriodId && isValidUUID(explicitPeriodId)) {
+    return explicitPeriodId;
+  }
+
+  const init = await getInitialPeriod();
+  if (init?.id && isValidUUID(init.id as string)) {
+    return init.id as string;
+  }
+
+  const act = await getActivePeriod();
+  if (act?.id && isValidUUID(act.id as string)) {
+    return act.id as string;
+  }
+
+  // Fallback dinámico auto-creando el período del mes corriente si no existe ninguno
+  try {
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const newId = crypto.randomUUID();
+    const firstDay = `${yearMonth}-01`;
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+
+    const periodRecord = {
+      id: newId,
+      periodo_codigo: yearMonth,
+      nombre: `Período ${yearMonth}`,
+      fecha_inicio: firstDay,
+      fecha_fin: lastDay,
+      estado: 'ABIERTO',
+      created_at: now.toISOString(),
+      updated_at: now.toISOString()
+    };
+    await supabaseClient.syncRecord('periodos', periodRecord);
+    return newId;
+  } catch (err) {
+    console.warn('[WaterController] Error aprovisionando período dinámico:', err);
+  }
+
+  return '';
+}
+
+/**
+ * Obtiene el ID del período base para lecturas iniciales de acometidas sin quemar UUIDs ficticios.
  */
 export async function getBaselinePeriodId(): Promise<string> {
-  const init = await getInitialPeriod();
-  if (init?.id) return init.id;
+  return await resolveReadingPeriodId();
+}
+
+/**
+ * Resuelve dinámicamente el ID del lector o usuario responsable de la lectura:
+ * 1. Prioridad: ID explícito proporcionado en el payload (customLectorId, id_lector, idLector).
+ * 2. Si el usuario de la sesión autenticada existe (reqUser?.id con UUID válido), se le acredita la lectura.
+ * 3. Consulta dinámica en la tabla 'usuarios' buscando usuarios con rol 'LECTOR' activo.
+ * 4. Si no hay usuarios con rol 'LECTOR', consulta usuarios con rol 'ADMIN' activo.
+ * 5. Cualquier usuario activo registrado en el sistema.
+ */
+export async function resolveLectorId(
+  reqUser?: { id?: string; rol?: string } | null,
+  explicitLectorId?: string | null
+): Promise<string> {
+  if (explicitLectorId && isValidUUID(explicitLectorId)) {
+    return explicitLectorId;
+  }
+
+  if (reqUser?.id && isValidUUID(reqUser.id)) {
+    return reqUser.id;
+  }
+
+  try {
+    const lectorRes = await supabaseClient.fetchRecords<Record<string, unknown>>(
+      'usuarios',
+      'rol=eq.LECTOR&activo=eq.true&order=created_at.asc&limit=1'
+    );
+    if (lectorRes.data && lectorRes.data.length > 0 && lectorRes.data[0].id) {
+      return lectorRes.data[0].id as string;
+    }
+
+    const adminRes = await supabaseClient.fetchRecords<Record<string, unknown>>(
+      'usuarios',
+      'rol=eq.ADMIN&activo=eq.true&order=created_at.asc&limit=1'
+    );
+    if (adminRes.data && adminRes.data.length > 0 && adminRes.data[0].id) {
+      return adminRes.data[0].id as string;
+    }
+
+    const anyUser = await supabaseClient.fetchRecords<Record<string, unknown>>(
+      'usuarios',
+      'activo=eq.true&order=created_at.asc&limit=1'
+    );
+    if (anyUser.data && anyUser.data.length > 0 && anyUser.data[0].id) {
+      return anyUser.data[0].id as string;
+    }
+  } catch (err) {
+    console.warn('[WaterController] Error resolviendo id_lector dinámicamente:', err);
+  }
+
+  return reqUser?.id || '';
+}
+
+/**
+ * Resuelve dinámicamente el ID del cajero o responsable de cobros/transacciones:
+ * 1. Prioridad: ID explícito proporcionado (customCajeroId).
+ * 2. Si el usuario de la sesión autenticada existe (reqUser?.id con UUID válido).
+ * 3. Consulta dinámica en 'usuarios' buscando usuarios con rol 'CAJERO' activo.
+ * 4. Si no hay usuarios con rol 'CAJERO', busca usuarios con rol 'ADMIN' activo.
+ * 5. Cualquier usuario activo registrado en el sistema.
+ */
+export async function resolveCajeroId(
+  reqUser?: { id?: string; rol?: string } | null,
+  explicitCajeroId?: string | null
+): Promise<string> {
+  if (explicitCajeroId && isValidUUID(explicitCajeroId)) {
+    return explicitCajeroId;
+  }
+
+  if (reqUser?.id && isValidUUID(reqUser.id)) {
+    return reqUser.id;
+  }
+
+  try {
+    const cajeroRes = await supabaseClient.fetchRecords<Record<string, unknown>>(
+      'usuarios',
+      'rol=eq.CAJERO&activo=eq.true&order=created_at.asc&limit=1'
+    );
+    if (cajeroRes.data && cajeroRes.data.length > 0 && cajeroRes.data[0].id) {
+      return cajeroRes.data[0].id as string;
+    }
+
+    const adminRes = await supabaseClient.fetchRecords<Record<string, unknown>>(
+      'usuarios',
+      'rol=eq.ADMIN&activo=eq.true&order=created_at.asc&limit=1'
+    );
+    if (adminRes.data && adminRes.data.length > 0 && adminRes.data[0].id) {
+      return adminRes.data[0].id as string;
+    }
+
+    const anyUser = await supabaseClient.fetchRecords<Record<string, unknown>>(
+      'usuarios',
+      'activo=eq.true&order=created_at.asc&limit=1'
+    );
+    if (anyUser.data && anyUser.data.length > 0 && anyUser.data[0].id) {
+      return anyUser.data[0].id as string;
+    }
+  } catch (err) {
+    console.warn('[WaterController] Error resolviendo id_cajero dinámicamente:', err);
+  }
+
+  return reqUser?.id || '';
+}
+
+/**
+ * Resuelve dinámicamente el ID del período activo en el sistema sin quemar UUIDs ficticios.
+ */
+export async function resolveActivePeriodId(): Promise<string> {
   const act = await getActivePeriod();
-  return (act?.id as string) || '00000000-0000-0000-0000-000000000000';
+  if (act?.id && isValidUUID(act.id as string)) {
+    return act.id as string;
+  }
+  return await resolveReadingPeriodId();
 }
 
 /**
@@ -693,6 +852,7 @@ export const createSocio = async (req: AuthenticatedRequest, res: Response): Pro
 
       if (lecIni > 0) {
         const basePeriodId = await getBaselinePeriodId();
+        const finalLector = await resolveLectorId(req.user, m.idLector || m.id_lector || p.idLector || p.id_lector);
         await supabaseClient.syncRecord('lecturas', {
           id: crypto.randomUUID(),
           id_medidor: medId,
@@ -703,7 +863,7 @@ export const createSocio = async (req: AuthenticatedRequest, res: Response): Pro
           consumo_total: 0,
           excedente_m3: 0,
           fecha_lectura: now,
-          id_lector: '00000000-0000-0000-0000-000000000003',
+          id_lector: finalLector,
           observaciones: 'Lectura inicial de apertura/instalación de acometida',
           version: 1,
           created_at: now,
@@ -801,35 +961,26 @@ export const updateSocio = async (req: AuthenticatedRequest, res: Response): Pro
 
         await supabaseClient.syncRecord('medidores', medRecord);
 
-        if (lecIni > 0) {
+        // Solo registrar lectura inicial si es una acometida NUEVA agregada al socio
+        if (!isRealId && lecIni > 0) {
           const basePeriodId = await getBaselinePeriodId();
-          const lecFetch = await supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_medidor=eq.${medId}&order=fecha_lectura.asc&limit=1`);
-          if (lecFetch.data && lecFetch.data.length > 0) {
-            const baseLec = lecFetch.data[0];
-            if (baseLec.id_periodo === basePeriodId || (Number(baseLec.consumo_total || 0) === 0 && Number(baseLec.lectura_anterior) === Number(baseLec.lectura_actual))) {
-              await supabaseClient.request(`lecturas?id=eq.${baseLec.id}`, {
-                method: 'PATCH',
-                body: { lectura_anterior: lecIni, lectura_actual: lecIni, updated_at: now }
-              }).catch(() => {});
-            }
-          } else {
-            await supabaseClient.syncRecord('lecturas', {
-              id: crypto.randomUUID(),
-              id_medidor: medId,
-              id_socio: id,
-              id_periodo: basePeriodId,
-              lectura_anterior: lecIni,
-              lectura_actual: lecIni,
-              consumo_total: 0,
-              excedente_m3: 0,
-              fecha_lectura: now,
-              id_lector: '00000000-0000-0000-0000-000000000003',
-              observaciones: 'Lectura inicial de apertura/instalación de acometida',
-              version: 1,
-              created_at: now,
-              updated_at: now
-            }).catch(() => {});
-          }
+          const finalLector = await resolveLectorId(req.user, m.idLector || m.id_lector || p.idLector || p.id_lector);
+          await supabaseClient.syncRecord('lecturas', {
+            id: crypto.randomUUID(),
+            id_medidor: medId,
+            id_socio: id,
+            id_periodo: basePeriodId,
+            lectura_anterior: lecIni,
+            lectura_actual: lecIni,
+            consumo_total: 0,
+            excedente_m3: 0,
+            fecha_lectura: now,
+            id_lector: finalLector,
+            observaciones: 'Lectura inicial de apertura/instalación de acometida',
+            version: 1,
+            created_at: now,
+            updated_at: now
+          }).catch(() => {});
         }
 
         savedMedidores.push({
@@ -1189,6 +1340,7 @@ export const createMedidor = async (req: AuthenticatedRequest, res: Response): P
 
     if (lecIni > 0) {
       const basePeriodId = await getBaselinePeriodId();
+      const finalLector = await resolveLectorId(req.user, p.idLector || p.id_lector);
       await supabaseClient.syncRecord('lecturas', {
         id: crypto.randomUUID(),
         id_medidor: medId,
@@ -1199,7 +1351,7 @@ export const createMedidor = async (req: AuthenticatedRequest, res: Response): P
         consumo_total: 0,
         excedente_m3: 0,
         fecha_lectura: now,
-        id_lector: '00000000-0000-0000-0000-000000000003',
+        id_lector: finalLector,
         observaciones: 'Lectura inicial de apertura/instalación de medidor',
         version: 1,
         created_at: now,
@@ -1259,6 +1411,7 @@ export const addMedidorToSocio = async (req: AuthenticatedRequest, res: Response
 
     if (lecIni > 0) {
       const basePeriodId = await getBaselinePeriodId();
+      const finalLector = await resolveLectorId(req.user, p.idLector || p.id_lector);
       await supabaseClient.syncRecord('lecturas', {
         id: crypto.randomUUID(),
         id_medidor: medId,
@@ -1269,7 +1422,7 @@ export const addMedidorToSocio = async (req: AuthenticatedRequest, res: Response
         consumo_total: 0,
         excedente_m3: 0,
         fecha_lectura: now,
-        id_lector: '00000000-0000-0000-0000-000000000003',
+        id_lector: finalLector,
         observaciones: 'Lectura inicial de apertura/instalación de acometida',
         version: 1,
         created_at: now,
@@ -1338,7 +1491,8 @@ export const updateMedidor = async (req: AuthenticatedRequest, res: Response): P
         }
       } else if (finalLecIni > 0) {
         const medRes = await supabaseClient.fetchRecords<Record<string, unknown>>('medidores', `id=eq.${id}&limit=1`);
-        const socioId = (medRes.data?.[0]?.id_socio as string) || '00000000-0000-0000-0000-000000000001';
+        const socioId = (medRes.data?.[0]?.id_socio as string) || '';
+        const finalLector = await resolveLectorId(req.user, p.idLector || p.id_lector);
         await supabaseClient.syncRecord('lecturas', {
           id: crypto.randomUUID(),
           id_medidor: id,
@@ -1349,7 +1503,7 @@ export const updateMedidor = async (req: AuthenticatedRequest, res: Response): P
           consumo_total: 0,
           excedente_m3: 0,
           fecha_lectura: now,
-          id_lector: '00000000-0000-0000-0000-000000000003',
+          id_lector: finalLector,
           observaciones: 'Lectura inicial de apertura/instalación de acometida',
           version: 1,
           created_at: now,
@@ -2085,9 +2239,7 @@ export const inicializarLecturasPeriodo = async (
   idLector?: string | null
 ): Promise<{ medidoresAvanzados: number; lecturasCreadas: number }> => {
   const now = new Date().toISOString();
-  const lectorValido = idLector && /^[0-9a-f-]{36}$/i.test(idLector)
-    ? idLector
-    : '00000000-0000-0000-0000-000000000003';
+  const lectorValido = await resolveLectorId(null, idLector);
 
   const [medRes, lecAntRes, existingNextLecRes] = await Promise.all([
     supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
@@ -2555,10 +2707,7 @@ export const registrarLectura = async (req: AuthenticatedRequest, res: Response)
     const existRes = await supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_medidor=eq.${finalIdMedidor}&id_periodo=eq.${finalIdPeriodo}&limit=1`);
     const recordId = (existRes.data && existRes.data.length > 0) ? (existRes.data[0].id as string) : crypto.randomUUID();
 
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const finalLectorId = (req.user?.id && uuidRegex.test(req.user.id))
-      ? req.user.id
-      : '00000000-0000-0000-0000-000000000003';
+    const finalLectorId = await resolveLectorId(req.user, idLector || req.body?.id_lector);
 
     const record = {
       id: recordId,
@@ -2707,10 +2856,7 @@ export const sincronizarLecturasBatch = async (req: AuthenticatedRequest, res: R
         const existRes = await supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_medidor=eq.${finalIdMedidor}&id_periodo=eq.${finalIdPeriodo}&limit=1`);
         const recordId = (existRes.data && existRes.data.length > 0) ? (existRes.data[0].id as string) : crypto.randomUUID();
 
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        const finalLectorId = (req.user?.id && uuidRegex.test(req.user.id))
-          ? req.user.id
-          : '00000000-0000-0000-0000-000000000003';
+        const finalLectorId = await resolveLectorId(req.user, item.idLector || item.id_lector);
 
         const record = {
           id: recordId,
@@ -2975,7 +3121,7 @@ export const liquidarFactura = async (req: AuthenticatedRequest, res: Response):
       numero_factura: p.numeroFactura || p.numero_factura || `REC-${String(Date.now()).slice(-6)}`,
       id_socio: idSocio,
       id_medidor: idMedidor,
-      id_periodo: p.idPeriodo || p.id_periodo || (await getActivePeriod())?.id || '00000000-0000-0000-0000-000000000000',
+      id_periodo: p.idPeriodo || p.id_periodo || (await resolveActivePeriodId()),
       id_lectura: p.idLectura || p.id_lectura || null,
       es_tercera_edad: Boolean(p.esTerceraEdad ?? p.es_tercera_edad ?? false),
       valor_base: valorBase,
@@ -3219,7 +3365,7 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
       montoAbonado
     } = body;
     const now = new Date().toISOString();
-    const idCajero = req.user?.id || body.idCajero || '00000000-0000-0000-0000-000000000002';
+    const idCajero = await resolveCajeroId(req.user, body.idCajero);
 
     // 1. Localizar la factura principal
     let factura: Record<string, any> | null = null;
@@ -3811,7 +3957,7 @@ export const sincronizarFacturas = async (req: AuthenticatedRequest, res: Respon
           fecha_vencimiento: '2026-09-30',
           fecha_pago: '2026-08-31T18:00:00.000Z',
           metodo_pago: 'EFECTIVO',
-          id_cajero: '00000000-0000-0000-0000-000000000002',
+          id_cajero: await resolveCajeroId(req.user),
           version: 1,
           created_at: '2026-08-31T18:00:00.000Z',
           updated_at: ahora
@@ -4047,7 +4193,7 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
   try {
     const p = req.body || {};
     const now = new Date().toISOString();
-    const idCajero = (req as any).user?.id || '00000000-0000-0000-0000-000000000002';
+    const idCajero = await resolveCajeroId(req.user, p.idCajero || p.id_cajero);
 
     // 1. Valores a cobrar
     const costoAcometida = Number(p.costoAcometida !== undefined ? p.costoAcometida : 260.00);
@@ -4058,8 +4204,21 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
 
     // 2. Crear Socio
     const socioId = (p.id && isValidUUID(p.id)) ? p.id : crypto.randomUUID();
-    const primaryNumMed = String(p.medidorNumero || p.numeroMedidor || 'S/N').trim();
-    const hasAlcant = Boolean(p.tieneAlcantarillado ?? p.tiene_alcantarillado);
+    const medidoresInput = Array.isArray(p.medidores) && p.medidores.length > 0
+      ? p.medidores
+      : [{
+          numeroMedidor: p.medidorNumero || p.numeroMedidor || 'S/N',
+          idSector: p.idSector || p.id_sector || p.sectorId || '11111111-0000-0000-0000-000000000001',
+          alias: 'Casa principal',
+          direccion: p.direccion || 'Comunidad',
+          tieneAlcantarillado: Boolean(p.tieneAlcantarillado ?? p.tiene_alcantarillado),
+          estado: 'ACTIVO',
+          lecturaInicial: Number(p.lecturaInicial ?? p.lectura_inicial ?? 0)
+        }];
+
+    const primaryMed = medidoresInput[0] || {};
+    const primaryNumMed = String(primaryMed.numeroMedidor || primaryMed.numero_medidor || p.medidorNumero || p.numeroMedidor || 'S/N').trim();
+    const hasAlcant = medidoresInput.some((m: any) => Boolean(m.tieneAlcantarillado ?? m.tiene_alcantarillado)) || Boolean(p.tieneAlcantarillado ?? p.tiene_alcantarillado);
 
     const socioRecord = {
       id: socioId,
@@ -4069,7 +4228,6 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
       cedula_ruc: String(p.cedulaRuc || p.cedula_ruc || '').trim(),
       fecha_nacimiento: p.fechaNacimiento || p.fecha_nacimiento || '1985-01-01',
       fecha_union: p.fechaUnion || p.fechaAfiliacion || p.fecha_union || now.split('T')[0],
-      id_sector: p.idSector || p.id_sector || p.sectorId || '11111111-0000-0000-0000-000000000001',
       medidor_numero: primaryNumMed,
       tiene_alcantarillado: hasAlcant,
       telefono: p.telefono || null,
@@ -4086,48 +4244,78 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
       return;
     }
 
-    // 3. Crear Medidor Inicial
-    const medId = crypto.randomUUID();
-    const lecIni = Number(p.lecturaInicial ?? p.lectura_inicial ?? 0);
-    const medRecord = {
-      id: medId,
-      id_socio: socioId,
-      id_sector: socioRecord.id_sector,
-      numero_medidor: primaryNumMed,
-      alias: 'Casa principal',
-      direccion: socioRecord.direccion,
-      tiene_alcantarillado: hasAlcant,
-      estado: 'ACTIVO',
-      version: 1,
-      created_at: now,
-      updated_at: now
-    };
-    await supabaseClient.syncRecord('medidores', medRecord);
+    // 3. Crear Medidores (1 o varios) con resolución dinámica de período y lector
+    const readingPeriodId = await resolveReadingPeriodId(p.idPeriodo || p.id_periodo);
+    const finalLectorId = await resolveLectorId(req.user, p.idLector || p.id_lector);
+    const createdMedidores: Record<string, unknown>[] = [];
+    let primaryMedId = '';
 
-    const activePeriod = await getActivePeriod();
-    const initPeriod = (await getInitialPeriod()) || activePeriod;
+    for (let idx = 0; idx < medidoresInput.length; idx++) {
+      const m = medidoresInput[idx];
+      const numMed = String(m.numeroMedidor || m.numero_medidor || '').trim();
+      if (!numMed) continue;
+      const medId = (m.id && isValidUUID(m.id)) ? m.id : crypto.randomUUID();
+      if (idx === 0) primaryMedId = medId;
+      const mSector = m.idSector || m.id_sector || p.idSector || p.id_sector || '11111111-0000-0000-0000-000000000001';
+      const mAlcant = Boolean(m.tieneAlcantarillado ?? m.tiene_alcantarillado ?? hasAlcant);
+      const mAlias = m.alias || (idx === 0 ? 'Casa principal' : `Acometida #${idx + 1}`);
+      const mDir = m.direccion || socioRecord.direccion;
+      const mEstado = m.estado || 'ACTIVO';
+      const lecIni = Number(m.lecturaInicial ?? m.lectura_inicial ?? (idx === 0 ? p.lecturaInicial ?? p.lectura_inicial ?? 0 : 0));
 
-    if (lecIni > 0) {
-      await supabaseClient.syncRecord('lecturas', {
-        id: crypto.randomUUID(),
-        id_medidor: medId,
+      const medRecord = {
+        id: medId,
         id_socio: socioId,
-        id_periodo: initPeriod?.id || activePeriod?.id || '00000000-0000-0000-0000-000000000000',
-        lectura_anterior: lecIni,
-        lectura_actual: lecIni,
-        consumo_total: 0,
-        excedente_m3: 0,
-        fecha_lectura: now,
-        id_lector: '00000000-0000-0000-0000-000000000003',
-        observaciones: 'Lectura inicial de apertura/instalación de acometida',
+        id_sector: mSector,
+        numero_medidor: numMed,
+        alias: mAlias,
+        direccion: mDir,
+        tiene_alcantarillado: mAlcant,
+        estado: mEstado,
         version: 1,
         created_at: now,
         updated_at: now
-      }).catch(() => {});
+      };
+      await supabaseClient.syncRecord('medidores', medRecord);
+
+      if (lecIni > 0) {
+        const medLector = await resolveLectorId(req.user, m.idLector || m.id_lector || finalLectorId);
+        await supabaseClient.syncRecord('lecturas', {
+          id: crypto.randomUUID(),
+          id_medidor: medId,
+          id_socio: socioId,
+          id_periodo: readingPeriodId,
+          lectura_anterior: lecIni,
+          lectura_actual: lecIni,
+          consumo_total: 0,
+          excedente_m3: 0,
+          fecha_lectura: now,
+          id_lector: medLector,
+          observaciones: 'Lectura inicial de apertura/instalación de acometida',
+          version: 1,
+          created_at: now,
+          updated_at: now
+        }).catch(() => {});
+      }
+
+      createdMedidores.push({
+        ...medRecord,
+        idSocio: medRecord.id_socio,
+        idSector: medRecord.id_sector,
+        numeroMedidor: medRecord.numero_medidor,
+        tieneAlcantarillado: medRecord.tiene_alcantarillado,
+        lecturaInicial: lecIni,
+        lectura_inicial: lecIni
+      });
     }
 
-    // 4. Obtener período activo para asociar el comprobante
-    const periodoId = activePeriod?.id || '00000000-0000-0000-0000-000000000000';
+    if (!primaryMedId && createdMedidores.length > 0) {
+      primaryMedId = createdMedidores[0].id as string;
+    }
+
+    // 4. Período oficial para asociar el comprobante
+    const activePeriod = await getActivePeriod();
+    const periodoId = activePeriod?.id || readingPeriodId;
 
     // 5. Emitir Comprobante / Factura Oficial de Inscripción (PAGADO)
     const numRecibo = `REC-INS-${String(Date.now()).slice(-6)}`;
@@ -4135,7 +4323,7 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
       id: crypto.randomUUID(),
       numero_factura: numRecibo,
       id_socio: socioId,
-      id_medidor: medId,
+      id_medidor: primaryMedId || crypto.randomUUID(),
       id_periodo: periodoId,
       es_tercera_edad: false,
       valor_base: costoAcometida,
@@ -4190,7 +4378,7 @@ export const inscribirSocio = async (req: AuthenticatedRequest, res: Response): 
           cedulaRuc: socioRecord.cedula_ruc,
           tieneAlcantarillado: socioRecord.tiene_alcantarillado,
           medidorNumero: primaryNumMed,
-          medidores: [{ ...medRecord, numeroMedidor: primaryNumMed }]
+          medidores: createdMedidores
         },
         recibo: facturaInscripcion,
         movimientoFondo: asientoFondo,
@@ -4220,7 +4408,7 @@ export const reconectarSocio = async (req: AuthenticatedRequest, res: Response):
     const { id } = req.params;
     const p = req.body || {};
     const now = new Date().toISOString();
-    const idCajero = (req as any).user?.id || '00000000-0000-0000-0000-000000000002';
+    const idCajero = await resolveCajeroId(req.user, p.idCajero || p.id_cajero);
 
     // 1. Obtener socio existente
     const socRes = await supabaseClient.fetchRecords<Record<string, any>>('socios', `id=eq.${encodeURIComponent(id)}&limit=1`);
@@ -4254,7 +4442,7 @@ export const reconectarSocio = async (req: AuthenticatedRequest, res: Response):
       getActivePeriod(),
       supabaseClient.fetchRecords<Record<string, any>>('medidores', `id_socio=eq.${encodeURIComponent(id)}&limit=1`)
     ]);
-    const periodoId = (activeP?.id as string) || '00000000-0000-0000-0000-000000000000';
+    const periodoId = (activeP?.id as string) || (await resolveReadingPeriodId());
     const medId = medRes.data?.[0]?.id || null;
 
     // 6. Emitir Comprobante Oficial de Reconexión

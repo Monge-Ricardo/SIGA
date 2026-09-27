@@ -175,6 +175,7 @@ async function getAllSocios() {
       const latency = (performance.now() - start).toFixed(1);
       const el = document.querySelector('#perfMeter span');
       if (el) el.textContent = `${latency} ms`;
+      cachedSocios = list;
       return list;
     }
   } catch (apiErr) {
@@ -204,12 +205,17 @@ async function getAllSocios() {
             tarifaBaseMensual: tarifa
           };
         });
+        cachedSocios = list;
         resolve(list);
       };
-      req.onerror = () => resolve([]);
+      req.onerror = () => {
+        cachedSocios = [];
+        resolve([]);
+      };
     });
   }
 
+  cachedSocios = [];
   return [];
 }
 
@@ -396,6 +402,7 @@ async function getSocioById(id) {
   });
 }
 
+let cachedSocios = [];
 let cachedSectores = [];
 let activeSocioDetail = null;
 
@@ -404,6 +411,7 @@ async function renderUI() {
   populateSectoresDropdowns(cachedSectores);
 
   const socios = await getAllSocios();
+  cachedSocios = socios;
   renderMetrics(socios);
   renderSociosTable(socios);
 }
@@ -638,7 +646,7 @@ inputCedula.addEventListener('input', () => {
   }
 });
 
-function createMedidorCardElement(m, index, total) {
+function createMedidorCardElement(m, index, total, isExisting = false) {
   const isPrincipal = index === 0;
   const card = document.createElement('div');
   card.className = 'form-medidor-card';
@@ -653,6 +661,39 @@ function createMedidorCardElement(m, index, total) {
   const estado = m.estado || 'ACTIVO';
   const estadoBadgeBg = estado === 'ACTIVO' ? '#dcfce7' : estado === 'SUSPENDIDO' ? '#fef3c7' : '#fee2e2';
   const estadoBadgeColor = estado === 'ACTIVO' ? '#166534' : estado === 'SUSPENDIDO' ? '#92400e' : '#991b1b';
+
+  const isExistingMed = (isExisting !== undefined && isExisting !== null)
+    ? Boolean(isExisting)
+    : Boolean(m.isExisting ?? (m.id && !String(m.id).startsWith('temp-')));
+  const medSectorId = m.idSector || m.id_sector || m.sectorId || cachedSectores[0]?.id || '';
+  const lecturaIniVal = Number(m.lecturaInicial ?? m.lectura_inicial ?? 0);
+
+  const lecturaInputHtml = isExistingMed
+    ? `
+      <div class="form-group" style="margin-bottom: 0;">
+        <label style="font-size: 0.78rem; font-weight: 600; color: #64748b; display: flex; align-items: center; justify-content: space-between;">
+          <span>Lectura Inicial (m³)</span>
+          <span style="font-size: 0.68rem; color: #b45309; font-weight: 700; background: #fef3c7; padding: 1px 6px; border-radius: 4px;">🔒 Bloqueada</span>
+        </label>
+        <input type="number" step="0.01" class="card-med-lectura-inicial" value="${lecturaIniVal}" readonly disabled style="width: 100%; padding: 6px 10px; border: 1.5px solid #e2e8f0; border-radius: 6px; font-size: 0.85rem; font-weight: 700; color: #64748b; background: #f1f5f9; cursor: not-allowed;" />
+        <span style="font-size: 0.7rem; color: #b45309; font-weight: 600;">🔒 Solo modificable en "Revisión de Lecturas"</span>
+      </div>
+    `
+    : `
+      <div class="form-group" style="margin-bottom: 0;">
+        <label style="font-size: 0.78rem; font-weight: 600; color: #334155;">Lectura Inicial (m³) *</label>
+        <input type="number" step="0.01" min="0" class="card-med-lectura-inicial" value="${lecturaIniVal}" placeholder="0.00" required style="width: 100%; padding: 6px 10px; border: 1.5px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; font-weight: 700; color: #0284c7;" />
+        <span style="font-size: 0.7rem; color: #64748b;">Lectura física al afiliar / instalar</span>
+      </div>
+    `;
+
+  const sectoresOptionsHtml = (cachedSectores && cachedSectores.length > 0)
+    ? cachedSectores.map((sec) => `
+        <option value="${sec.id}" ${(medSectorId === sec.id) ? 'selected' : ''}>
+          ${sec.codigo || sec.codigoSector || ''} - ${sec.nombre || sec.nombreSector || ''}
+        </option>
+      `).join('')
+    : '<option value="">Cargando sectores...</option>';
 
   card.innerHTML = `
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px dashed #e2e8f0; padding-bottom: 6px;">
@@ -676,10 +717,13 @@ function createMedidorCardElement(m, index, total) {
       </div>
 
       <div class="form-group" style="margin-bottom: 0;">
-        <label style="font-size: 0.78rem; font-weight: 600; color: #334155;">Lectura Inicial (m³) *</label>
-        <input type="number" step="0.01" min="0" class="card-med-lectura-inicial" value="${m.lecturaInicial ?? m.lectura_inicial ?? 0}" placeholder="0.00" required style="width: 100%; padding: 6px 10px; border: 1.5px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; font-weight: 700; color: #0284c7;" />
-        <span style="font-size: 0.7rem; color: #64748b;">Lectura física al afiliar / instalar</span>
+        <label style="font-size: 0.78rem; font-weight: 600; color: #334155;">Sector Comunitario *</label>
+        <select class="card-med-sector" required style="width: 100%; padding: 6px 10px; border: 1.5px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; font-weight: 600; background: white; color: #0f172a;">
+          ${sectoresOptionsHtml}
+        </select>
       </div>
+
+      ${lecturaInputHtml}
 
       <div class="form-group" style="margin-bottom: 0;">
         <label style="font-size: 0.78rem; font-weight: 600; color: #334155;">Alias / Identificador</label>
@@ -776,20 +820,24 @@ document.getElementById('btnAddMedidorCard')?.addEventListener('click', () => {
   const newIdx = curCards.length;
   const defaultDir = document.getElementById('inputDireccion')?.value.trim() || '';
   const defaultTel = document.getElementById('inputTelefono')?.value.trim() || '';
+  const defaultSec = cachedSectores[0]?.id || '11111111-0000-0000-0000-000000000001';
 
   const newCard = createMedidorCardElement(
     {
       id: `temp-${Date.now()}`,
       numeroMedidor: '',
+      idSector: defaultSec,
       alias: `Acometida #${newIdx + 1}`,
       estado: 'ACTIVO',
       direccion: defaultDir,
       telefono: defaultTel,
       tieneAlcantarillado: true,
-      lecturaInicial: 0
+      lecturaInicial: 0,
+      isExisting: false
     },
     newIdx,
-    newIdx + 1
+    newIdx + 1,
+    false
   );
   container.appendChild(newCard);
   refreshMedidoresCardsUI();
@@ -882,7 +930,8 @@ function openFormModal(socio = null) {
   document.getElementById('inputFechaAfil').value = socio?.fechaAfiliacion || new Date().toISOString().split('T')[0];
   document.getElementById('inputTelefono').value = socio?.telefono || '';
   document.getElementById('inputDireccion').value = socio?.direccion || '';
-  document.getElementById('selectSector').value = socio?.sectorId || cachedSectores[0]?.id || '';
+  const selSec = document.getElementById('selectSector');
+  if (selSec) selSec.value = socio?.sectorId || cachedSectores[0]?.id || '';
 
   const hiddenMedidor = document.getElementById('inputMedidor');
   if (hiddenMedidor) hiddenMedidor.value = socio?.medidorNumero || '';
@@ -916,15 +965,18 @@ function openFormModal(socio = null) {
           : (m.tiene_alcantarillado !== undefined)
             ? Boolean(m.tiene_alcantarillado)
             : Boolean(socio?.tieneAlcantarillado ?? socio?.tiene_alcantarillado ?? false);
+        const isRealMed = Boolean(m.id && !String(m.id).startsWith('temp-'));
         return {
           id: m.id,
           numeroMedidor: m.numeroMedidor || m.numero_medidor || '',
+          idSector: m.idSector || m.id_sector || socio.sectorId || cachedSectores[0]?.id,
           alias: m.alias || 'Casa principal',
           estado: m.estado || socio.estadoServicio || 'ACTIVO',
           direccion: m.direccion || socio.direccion || '',
           telefono: m.telefono || socio.telefono || '',
           tieneAlcantarillado: tieneAlcant,
-          lecturaInicial: Number(m.lecturaInicial ?? m.lectura_inicial ?? 0)
+          lecturaInicial: Number(m.lecturaInicial ?? m.lectura_inicial ?? 0),
+          isExisting: isRealMed
         };
       });
     } else if (isEdit && (socio?.medidorNumero || socio?.medidor_numero)) {
@@ -932,12 +984,14 @@ function openFormModal(socio = null) {
         {
           id: socio.medidorId || undefined,
           numeroMedidor: socio.medidorNumero || socio.medidor_numero || '',
+          idSector: socio.sectorId || cachedSectores[0]?.id,
           alias: 'Casa principal',
           estado: socio.estadoServicio || socio.estado || 'ACTIVO',
           direccion: socio.direccion || '',
           telefono: socio.telefono || '',
           tieneAlcantarillado: Boolean(socio.tieneAlcantarillado ?? socio.tiene_alcantarillado ?? false),
-          lecturaInicial: Number(socio.lecturaInicial ?? socio.lectura_inicial ?? 0)
+          lecturaInicial: Number(socio.lecturaInicial ?? socio.lectura_inicial ?? 0),
+          isExisting: true
         }
       ];
     } else {
@@ -946,18 +1000,20 @@ function openFormModal(socio = null) {
         {
           id: undefined,
           numeroMedidor: '',
+          idSector: cachedSectores[0]?.id || '11111111-0000-0000-0000-000000000001',
           alias: 'Casa principal',
           estado: 'ACTIVO',
           direccion: '',
           telefono: '',
           tieneAlcantarillado: false,
-          lecturaInicial: 0
+          lecturaInicial: 0,
+          isExisting: false
         }
       ];
     }
 
     medidoresToRender.forEach((m, idx) => {
-      const card = createMedidorCardElement(m, idx, medidoresToRender.length);
+      const card = createMedidorCardElement(m, idx, medidoresToRender.length, m.isExisting);
       containerCards.appendChild(card);
     });
 
@@ -1514,7 +1570,13 @@ async function openDetailModal(socio) {
         }
 
         // Refrescar tabla del padrón para mantener sincronicidad
-        renderSociosTable(cachedSocios);
+        if (Array.isArray(cachedSocios)) {
+          const sIdx = cachedSocios.findIndex((s) => s.id === socio.id);
+          if (sIdx !== -1) {
+            cachedSocios[sIdx] = { ...cachedSocios[sIdx], ...socio };
+          }
+          renderSociosTable(cachedSocios);
+        }
       })
       .catch((err) => {
         console.warn('[Socios] Error actualizando cuenta y medidores desde API genérica:', err);
@@ -1980,9 +2042,17 @@ document.getElementById('formSocio')?.addEventListener('submit', async (e) => {
   const nombres = document.getElementById('inputNombres').value.trim();
   const apellidos = document.getElementById('inputApellidos').value.trim();
   const fechaNacimiento = document.getElementById('inputFechaNac').value;
-  const sectorId = document.getElementById('selectSector').value;
-  const sector = cachedSectores.find((s) => s.id === sectorId);
   const direccion = document.getElementById('inputDireccion')?.value.trim() || '';
+  if (!direccion) {
+    if (typeof Swal !== 'undefined') {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Dirección Requerida',
+        text: 'Por favor complete la dirección del domicilio del socio.'
+      });
+    }
+    return;
+  }
   const telefono = document.getElementById('inputTelefono')?.value.trim() || '';
   const fechaAfiliacion = document.getElementById('inputFechaAfil')?.value || new Date().toISOString().split('T')[0];
   let existing = activeEditingSocio;
@@ -2002,6 +2072,7 @@ document.getElementById('formSocio')?.addEventListener('submit', async (e) => {
     const rawId = card.dataset.medidorId || '';
     const medId = (rawId && !rawId.startsWith('temp-')) ? rawId : undefined;
     const num = card.querySelector('.card-med-numero')?.value.trim() || '';
+    const cardSectorId = card.querySelector('.card-med-sector')?.value || cachedSectores[0]?.id || '11111111-0000-0000-0000-000000000001';
     const alias = card.querySelector('.card-med-alias')?.value.trim() || (idx === 0 ? 'Casa principal' : `Acometida #${idx + 1}`);
     const estado = card.querySelector('.card-med-estado')?.value || 'ACTIVO';
     const dir = card.querySelector('.card-med-direccion')?.value.trim() || direccion;
@@ -2013,7 +2084,8 @@ document.getElementById('formSocio')?.addEventListener('submit', async (e) => {
       medidores.push({
         id: medId,
         idSocio: id || undefined,
-        idSector: sectorId,
+        idSector: cardSectorId,
+        id_sector: cardSectorId,
         numeroMedidor: num,
         alias,
         estado,
@@ -2021,26 +2093,33 @@ document.getElementById('formSocio')?.addEventListener('submit', async (e) => {
         telefono: tel,
         tieneAlcantarillado: tieneAlcant,
         lecturaInicial,
-        lectura_inicial: lecturaInicial
+        lectura_inicial: lecturaInicial,
+        isExisting: !!medId
       });
     }
   });
 
   // Fallback de seguridad si no se ingresaron acometidas
   if (medidores.length === 0) {
+    const defaultSectorId = cachedSectores[0]?.id || '11111111-0000-0000-0000-000000000001';
     medidores.push({
       numeroMedidor: `MED-${Math.floor(10000 + Math.random() * 90000)}`,
+      idSector: defaultSectorId,
+      id_sector: defaultSectorId,
       alias: 'Casa principal',
       estado: 'ACTIVO',
       direccion,
       telefono,
       tieneAlcantarillado: true,
       lecturaInicial: 0,
-      lectura_inicial: 0
+      lectura_inicial: 0,
+      isExisting: false
     });
   }
 
   const primaryMed = medidores[0];
+  const sectorId = primaryMed?.idSector || cachedSectores[0]?.id || '11111111-0000-0000-0000-000000000001';
+  const sector = cachedSectores.find((s) => s.id === sectorId);
   const tieneAlcantarillado = medidores.some((m) => m.tieneAlcantarillado && m.estado !== 'CORTADO');
 
   let estadoServicio = 'ACTIVO';
@@ -2058,6 +2137,7 @@ document.getElementById('formSocio')?.addEventListener('submit', async (e) => {
     fechaNacimiento,
     fechaAfiliacion,
     sectorId,
+    idSector: sectorId,
     nombreSector: sector?.nombre,
     direccion,
     telefono,

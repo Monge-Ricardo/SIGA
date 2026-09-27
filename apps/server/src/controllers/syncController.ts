@@ -3,6 +3,7 @@ import type { SyncBatchRequest, SyncBatchResponse, SyncAck } from '../shared.ts'
 import { ConflictResolver } from '../services/conflictResolver.ts';
 import { supabaseClient } from '../db/supabase.ts';
 import { cloudSyncService } from '../services/cloudSyncService.ts';
+import { resolveLectorId, resolveReadingPeriodId } from './waterController.ts';
 
 export const handlePush = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -26,17 +27,19 @@ export const handlePush = async (req: Request, res: Response): Promise<void> => 
         const entityId = mutation.entityId || (p.id as string);
 
         if (mutation.entity === 'lecturas') {
+          const readingPeriod = await resolveReadingPeriodId((p.periodo || p.idPeriodo) as string);
+          const lectorId = await resolveLectorId((req as any).user, (p.id_lector || p.idLector) as string);
           await supabaseClient.syncRecord('lecturas', {
             id: entityId,
             id_socio: p.clienteId || p.idSocio,
             id_medidor: p.idMedidor || null,
-            id_periodo: p.periodo || p.idPeriodo || '2026-08',
+            id_periodo: readingPeriod,
             lectura_anterior: Number(Number(p.lecturaAnterior || 0).toFixed(2)),
             lectura_actual: Number(Number(p.lecturaActual || 0).toFixed(2)),
             consumo_total: Number(Number(p.consumoM3 || 0).toFixed(2)),
             excedente_m3: Number(Number(p.excedenteM3 || 0).toFixed(2)),
             fecha_lectura: p.updatedAt || new Date().toISOString(),
-            id_lector: '00000000-0000-0000-0000-000000000003',
+            id_lector: lectorId,
             observaciones: p.observaciones || 'Toma en campo',
             updated_at: new Date().toISOString()
           }).catch(() => {});

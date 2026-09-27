@@ -96,6 +96,7 @@ export class CloudSyncService {
         consumoM3,
         excedenteM3,
         updatedAt,
+        idLector,
         ...clean
       } = r as any;
 
@@ -109,7 +110,7 @@ export class CloudSyncService {
         consumo_total: Number(Number(r.consumo_total ?? consumoM3 ?? 0).toFixed(2)),
         excedente_m3: Number(Number(r.excedente_m3 ?? excedenteM3 ?? 0).toFixed(2)),
         fecha_lectura: r.fecha_lectura || updatedAt || now,
-        id_lector: r.id_lector || '00000000-0000-0000-0000-000000000003',
+        id_lector: r.id_lector || idLector || r.idLector || null,
         observaciones: r.observaciones || 'Toma en campo',
         updated_at: now
       };

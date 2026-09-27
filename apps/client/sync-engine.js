@@ -589,7 +589,7 @@ class GitSyncEngine {
     }
 
     try {
-      const storedUserRaw = localStorage.getItem('SIGA_USER') || localStorage.getItem('currentUser');
+      const storedUserRaw = localStorage.getItem('SIGA_AUTH_USER') || localStorage.getItem('SIGA_USER') || localStorage.getItem('currentUser');
       if (storedUserRaw) {
         const u = JSON.parse(storedUserRaw);
         const uId = u.id || u.id_usuario || u.uuid;
@@ -1017,6 +1017,7 @@ class GitSyncEngine {
           const mov = m.payload || {};
           const isEgreso = String(mov.tipo || '').toUpperCase() === 'EGRESO';
           const montoNum = Number(Number(mov.monto || 0).toFixed(2));
+          const respId = await this.resolveLectorUuid(mov.id_responsable || mov.id_usuario);
           body = {
             id: ensureValidUuid(mov.id || m.entityId),
             id_fondo: '22222222-2222-2222-2222-222222220002', // Fondo Operación y Mantenimiento
@@ -1027,7 +1028,7 @@ class GitSyncEngine {
             egreso: isEgreso ? montoNum : 0.00,
             saldo: montoNum,
             numero_comprobante: mov.comprobante || null,
-            id_responsable: '00000000-0000-0000-0000-000000000002',
+            id_responsable: respId,
             beneficiario: mov.beneficiario || 'Proveedor General'
           };
         } else if (m.entity === 'socios') {
@@ -1769,6 +1770,7 @@ class GitSyncEngine {
 
     // 5. Movilizar lecturas en Supabase para el nuevo período
     // La lectura actual de Agosto pasa a ser la lectura anterior de Septiembre
+    const lectorUuid = await this.resolveLectorUuid();
     const lecturasMovilizadas = [];
     for (const m of medidores) {
       const isSN = Boolean((m.numero_medidor || '').toUpperCase().includes('SN'));
@@ -1792,7 +1794,7 @@ class GitSyncEngine {
         consumo_total: 0,
         excedente_m3: 0,
         fecha_lectura: `${nextFechaInicio}T08:00:00.000Z`,
-        id_lector: '00000000-0000-0000-0000-000000000003',
+        id_lector: lectorUuid,
         observaciones: isSN ? 'Sin medidor - Tarifa fija' : `Punto de partida ciclo ${nextPeriodoCodigo}`,
         version: 1,
         created_at: now,

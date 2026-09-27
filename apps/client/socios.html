@@ -183,11 +183,12 @@
           <div class="tariff-preview-card" id="tariffPreviewCard"></div>
         </div>
 
-        <div class="form-section-title">📍 Ubicación y Datos del Servicio</div>
+        <div class="form-section-title">📍 Domicilio y Contacto del Socio</div>
 
         <div class="form-group">
-          <label for="selectSector">Sector / Barrio Comunitario *</label>
-          <select id="selectSector" required></select>
+          <label for="inputDireccion">Dirección del Domicilio *</label>
+          <input type="text" id="inputDireccion" placeholder="Ej. Calle Principal s/n frente a la cancha comunal" required />
+          <span class="field-help">Dirección residencial del socio/titular (asociada a tabla socios)</span>
         </div>
 
         <div class="form-group">
@@ -196,13 +197,8 @@
         </div>
 
         <div class="form-group">
-          <label for="inputFechaAfil">Fecha de Afiliación / Unión</label>
+          <label for="inputFechaAfil">Fecha de Afiliación / Unión *</label>
           <input type="date" id="inputFechaAfil" required />
-        </div>
-
-        <div class="form-group">
-          <label for="inputDireccion">Dirección de Domicilio / Referencia</label>
-          <input type="text" id="inputDireccion" placeholder="Ej. Calle Principal s/n frente a la cancha comunal" />
         </div>
 
         <!-- SECCIÓN DE ACOMETIDAS / MULTI-MEDIDOR COMPLETAMENTE EDITABLES -->

@@ -3,6 +3,7 @@ import type { Response } from '../core/http.ts';
 import { supabaseClient } from '../db/supabase.ts';
 import type { AuthenticatedRequest } from '../middlewares/auth.ts';
 import { getCurrentTarifas } from './adminController.ts';
+import { resolveCajeroId } from './waterController.ts';
 
 export const FONDO_IDS = {
   PADRE_PARROQUIA: '22222222-2222-2222-2222-222222220001',
@@ -614,8 +615,7 @@ export const registrarEgreso = async (req: AuthenticatedRequest, res: Response):
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const respId = req.user?.id && uuidRegex.test(req.user.id) ? req.user.id : '00000000-0000-0000-0000-000000000002';
+    const respId = await resolveCajeroId(req.user);
 
     const fondoMovs = await supabaseClient.fetchRecords<Record<string, unknown>>('fondos_movimientos', `id_fondo=eq.${idFondo}`);
     const ingresosPrev = (fondoMovs.data || []).reduce((acc, m) => acc + Number(m.ingreso || 0), 0);
@@ -797,6 +797,7 @@ export async function autoSincronizarAsientosFacturas(): Promise<number> {
     let count = 0;
     const ahora = new Date().toISOString();
     const nuevosAsientos: any[] = [];
+    const respId = await resolveCajeroId(req.user);
 
     for (const f of facturas) {
       if (facturasConAsiento.has(f.id as string)) continue;
@@ -806,7 +807,6 @@ export async function autoSincronizarAsientosFacturas(): Promise<number> {
       const sNom = soc ? `${soc.nombres || ''} ${soc.apellidos || ''}`.trim() : 'Socio Abonado';
       const numFac = (f.numero_factura as string) || (f.id as string);
       const fechaPago = (f.fecha_pago as string) || (f.created_at as string) || ahora;
-      const respId = '00000000-0000-0000-0000-000000000002';
 
       const items = [
         { idFondo: FONDO_IDS.OPERACION_MANT, monto: d.OPERACION_MANT, concepto: `Cobro Factura #${numFac} - Cuota Operación ($${d.OPERACION_MANT.toFixed(2)}) - ${sNom}` },
