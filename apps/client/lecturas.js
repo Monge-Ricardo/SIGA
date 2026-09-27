@@ -36,8 +36,28 @@ function getSelectedPeriodo() {
   return `${yyyy}-${mm}`;
 }
 
-async function getAllSocios() {
-  // 1. Consultar IndexedDB local (Offline-first inmediato)
+async function getAllSocios(sectoresMap = new Map()) {
+  // 1. Consultar endpoint general del backend REST API (Supabase)
+  if (navigator.onLine) {
+    try {
+      const res = await apiFetch('/api/v1/socios');
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        const normalized = normalizeSociosList(res.data, sectoresMap);
+        if (db) {
+          try {
+            const tx = db.transaction(['socios'], 'readwrite');
+            const store = tx.objectStore('socios');
+            normalized.forEach((s) => store.put(s));
+          } catch (_e) {}
+        }
+        return normalized;
+      }
+    } catch (_err) {
+      console.warn('[Lecturas] Aviso consultando socios de API:', _err);
+    }
+  }
+
+  // 2. Fallback a IndexedDB local si estamos offline
   if (db) {
     const localSocios = await new Promise((resolve) => {
       try {
@@ -51,7 +71,7 @@ async function getAllSocios() {
     });
 
     if (localSocios && localSocios.length > 0) {
-      return normalizeSociosList(localSocios);
+      return normalizeSociosList(localSocios, sectoresMap);
     }
   }
 
@@ -68,11 +88,42 @@ function formatLecturaM3(val) {
   return num.toFixed(2);
 }
 
-function normalizeSociosList(rawList) {
+function normalizeSociosList(rawList, sectoresMap = new Map()) {
   return rawList.map((s) => {
     const nom = s.nombres || '';
     const ape = s.apellidos || '';
     const computedName = `${nom} ${ape}`.trim();
+    const primarySecId = s.idSector || s.sectorId || s.id_sector || '';
+    const primarySecName = s.nombreSector || s.nombre_sector || sectoresMap.get(primarySecId) || 'Sector General';
+
+    const meds = (s.medidores || []).map((m) => {
+      const medSecId = m.idSector || m.sectorId || m.id_sector || primarySecId;
+      const medSecName = m.nombreSector || m.nombre_sector || sectoresMap.get(medSecId) || primarySecName;
+      return {
+        id: m.id || m.idMedidor,
+        idMedidor: m.id || m.idMedidor,
+        idSocio: m.idSocio || m.id_socio || s.id,
+        idSector: medSecId,
+        id_sector: medSecId,
+        sectorId: medSecId,
+        nombreSector: medSecName,
+        nombre_sector: medSecName,
+        numeroMedidor: m.numeroMedidor || m.numero_medidor || m.medidorNumero,
+        medidorNumero: m.numeroMedidor || m.numero_medidor || m.medidorNumero,
+        alias: m.alias || 'Casa principal',
+        aliasMedidor: m.alias || 'Casa principal',
+        direccion: m.direccion || s.direccion || '',
+        lecturaInicial: Number(m.lecturaInicial ?? m.lectura_inicial ?? m.lecturaAnterior ?? m.lectura_anterior ?? 0),
+        lecturaAnterior: Number(m.lecturaAnterior ?? m.lectura_anterior ?? m.lecturaInicial ?? m.lectura_inicial ?? 0),
+        deudaPendiente: Number(m.deudaPendiente ?? m.deuda_pendiente ?? 0),
+        mesesAdeudados: Number(m.mesesAdeudados ?? m.meses_adeudados ?? 0),
+        tieneAlcantarillado: Boolean(m.tieneAlcantarillado ?? m.tiene_alcantarillado),
+        estado: m.estado || 'ACTIVO'
+      };
+    });
+
+    const socioMedNum = s.medidorNumero || s.medidor_numero || meds[0]?.numeroMedidor || 'MED-0000';
+
     return {
       id: s.id,
       codigoSocio: s.codigoSocio || s.codigo_socio,
@@ -80,25 +131,13 @@ function normalizeSociosList(rawList) {
       apellidos: ape,
       nombreCompleto: computedName || s.nombreCompleto || s.codigoSocio,
       cedulaRuc: s.cedulaRuc || s.cedula_ruc,
-    sectorId: s.idSector || s.sectorId || s.id_sector,
-    nombreSector: s.nombreSector || s.nombre_sector || 'Sector General',
-    medidorNumero: s.medidorNumero || s.medidor_numero || 'MED-0000',
-    medidores: (s.medidores || []).map((m) => ({
-      id: m.id || m.idMedidor,
-      idMedidor: m.id || m.idMedidor,
-      idSocio: m.idSocio || m.id_socio || s.id,
-      idSector: m.idSector || m.id_sector,
-      numeroMedidor: m.numeroMedidor || m.numero_medidor || m.medidorNumero,
-      medidorNumero: m.numeroMedidor || m.numero_medidor || m.medidorNumero,
-      alias: m.alias || 'Casa principal',
-      aliasMedidor: m.alias || 'Casa principal',
-      lecturaInicial: Number(m.lecturaInicial ?? m.lectura_inicial ?? m.lecturaAnterior ?? m.lectura_anterior ?? 0),
-      lecturaAnterior: Number(m.lecturaAnterior ?? m.lectura_anterior ?? m.lecturaInicial ?? m.lectura_inicial ?? 0),
-      deudaPendiente: Number(m.deudaPendiente ?? m.deuda_pendiente ?? 0),
-      mesesAdeudados: Number(m.mesesAdeudados ?? m.meses_adeudados ?? 0),
-      tieneAlcantarillado: Boolean(m.tieneAlcantarillado ?? m.tiene_alcantarillado),
-      estado: m.estado || 'ACTIVO'
-    })),
+      sectorId: primarySecId,
+      idSector: primarySecId,
+      id_sector: primarySecId,
+      nombreSector: primarySecName,
+      nombre_sector: primarySecName,
+      medidorNumero: socioMedNum,
+      medidores: meds,
       tieneAlcantarillado: Boolean(s.tieneAlcantarillado ?? s.tiene_alcantarillado),
       estadoServicio: s.estadoServicio || s.estado || 'ACTIVO'
     };
@@ -106,6 +145,35 @@ function normalizeSociosList(rawList) {
 }
 
 async function getAllSectores() {
+  // 1. Consultar endpoint general del backend REST API (Supabase)
+  if (navigator.onLine) {
+    try {
+      const res = await apiFetch('/api/v1/sectores');
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        const sectoresList = res.data.map((s) => ({
+          id: s.id,
+          codigoSector: s.codigoSector || s.codigo_sector || s.codigo,
+          codigo: s.codigoSector || s.codigo_sector || s.codigo,
+          nombreSector: s.nombreSector || s.nombre_sector || s.nombre,
+          nombre: s.nombreSector || s.nombre_sector || s.nombre,
+          descripcion: s.descripcion || '',
+          activo: s.activo !== undefined ? Boolean(s.activo) : true
+        }));
+        if (db) {
+          try {
+            const tx = db.transaction(['sectores'], 'readwrite');
+            const store = tx.objectStore('sectores');
+            sectoresList.forEach((sec) => store.put(sec));
+          } catch (_e) {}
+        }
+        return sectoresList;
+      }
+    } catch (_err) {
+      console.warn('[Lecturas] Aviso consultando sectores de API:', _err);
+    }
+  }
+
+  // 2. Fallback a IndexedDB local si estamos offline
   if (db) {
     const localSectores = await new Promise((resolve) => {
       try {
@@ -121,7 +189,9 @@ async function getAllSectores() {
     if (localSectores.length > 0) {
       return localSectores.map((s) => ({
         id: s.id,
+        codigoSector: s.codigoSector || s.codigo || s.codigo_sector,
         codigo: s.codigoSector || s.codigo || s.codigo_sector,
+        nombreSector: s.nombreSector || s.nombre || s.nombre_sector,
         nombre: s.nombreSector || s.nombre || s.nombre_sector,
         descripcion: s.descripcion || ''
       }));
@@ -253,7 +323,26 @@ function mapLecturasList(rawList, periodo) {
 }
 
 async function getLecturasPeriodo(periodo) {
-  // 1. Consultar IndexedDB local (Offline-first inmediato)
+  // 1. Si hay conexión, consultar endpoint general del backend REST API (Supabase)
+  if (navigator.onLine) {
+    try {
+      const res = await apiFetch(`/api/v1/lecturas?periodoCodigo=${encodeURIComponent(periodo)}`);
+      if (res && Array.isArray(res.data) && res.data.length > 0) {
+        if (db) {
+          try {
+            const tx = db.transaction(['lecturas'], 'readwrite');
+            const store = tx.objectStore('lecturas');
+            res.data.forEach((l) => store.put(l));
+          } catch (_e) {}
+        }
+        return mapLecturasList(res.data, periodo);
+      }
+    } catch (_err) {
+      console.warn('[Lecturas] Aviso consultando lecturas de API:', _err);
+    }
+  }
+
+  // 2. Fallback a IndexedDB local si estamos offline o falló la red
   if (db) {
     const localLecturas = await new Promise((resolve) => {
       try {
@@ -278,25 +367,6 @@ async function getLecturasPeriodo(periodo) {
 
     if (localLecturas.length > 0) {
       return mapLecturasList(localLecturas, periodo);
-    }
-  }
-
-  // 2. Si no hay lecturas en IndexedDB para este período y hay conexión, consultar API REST
-  if (navigator.onLine) {
-    try {
-      const res = await apiFetch(`/api/v1/lecturas?periodo=${encodeURIComponent(periodo)}`);
-      if (res && Array.isArray(res.data) && res.data.length > 0) {
-        if (db) {
-          try {
-            const tx = db.transaction(['lecturas'], 'readwrite');
-            const store = tx.objectStore('lecturas');
-            res.data.forEach((l) => store.put(l));
-          } catch (_e) {}
-        }
-        return mapLecturasList(res.data, periodo);
-      }
-    } catch (_err) {
-      console.warn('[Lecturas] Aviso consultando lecturas de API:', _err);
     }
   }
 
@@ -415,15 +485,18 @@ async function renderLecturasUI() {
     }
   }
 
-  // Cargar datos consolidados en paralelo desde IndexedDB
-  const [socios, sectores, lecturas] = await Promise.all([
-    getAllSocios(),
-    getAllSectores(),
+  // 1. Cargar sectores primero desde /api/v1/sectores para tener el mapeo real de sectores
+  const sectores = await getAllSectores();
+  cachedSectores = sectores;
+  const sectoresMap = new Map(sectores.map((s) => [s.id, s.nombreSector || s.nombre]));
+
+  // 2. Cargar socios y lecturas consumiendo endpoints generales del backend (/api/v1/socios, /api/v1/lecturas)
+  const [socios, lecturas] = await Promise.all([
+    getAllSocios(sectoresMap),
     getLecturasPeriodo(periodo)
   ]);
 
   cachedSocios = socios;
-  cachedSectores = sectores;
   cachedLecturas = lecturas;
 
   populateSectorSelect(cachedSectores);
@@ -513,15 +586,57 @@ function renderTableAndMetrics() {
   const searchFilter = document.getElementById('searchSocioLectura')?.value || '';
   const periodo = getSelectedPeriodo();
 
-  let filtrados = cachedSocios.filter((s) => s.estadoServicio !== 'CORTADO');
+  // Desglosar todos los socios activos en acometidas / medidores individuales (Multi-Medidor)
+  const listaAcometidas = [];
+  const sociosActivos = cachedSocios.filter((s) => s.estadoServicio !== 'CORTADO');
+  sociosActivos.forEach((socio) => {
+    if (socio.medidores && socio.medidores.length > 0) {
+      socio.medidores.forEach((m) => {
+        const secId = m.idSector || m.sectorId || socio.sectorId || socio.idSector || '';
+        const secNom = m.nombreSector || m.nombre_sector || socio.nombreSector || socio.nombre_sector || 'Sector General';
+        listaAcometidas.push({
+          rowKey: `${socio.id}_${m.id || m.numeroMedidor}`,
+          socioId: socio.id,
+          medidorId: m.id || m.idMedidor,
+          medidorNumero: m.numeroMedidor || m.medidorNumero,
+          aliasMedidor: m.alias || m.aliasMedidor || 'Casa principal',
+          nombreCompleto: socio.nombreCompleto,
+          codigoSocio: socio.codigoSocio,
+          cedulaRuc: socio.cedulaRuc,
+          nombreSector: secNom,
+          sectorId: secId,
+          lecturaAnterior: Number(m.lecturaAnterior ?? m.lecturaInicial ?? 0),
+          lecturaInicial: Number(m.lecturaInicial ?? m.lecturaAnterior ?? 0)
+        });
+      });
+    } else {
+      const secId = socio.sectorId || socio.idSector || '';
+      const secNom = socio.nombreSector || socio.nombre_sector || 'Sector General';
+      listaAcometidas.push({
+        rowKey: `${socio.id}_principal`,
+        socioId: socio.id,
+        medidorId: socio.medidorNumero || 'MED-00000',
+        medidorNumero: socio.medidorNumero || 'MED-00000',
+        aliasMedidor: 'Casa principal',
+        nombreCompleto: socio.nombreCompleto,
+        codigoSocio: socio.codigoSocio,
+        cedulaRuc: socio.cedulaRuc,
+        nombreSector: secNom,
+        sectorId: secId,
+        lecturaAnterior: 0,
+        lecturaInicial: 0
+      });
+    }
+  });
 
+  let filtrados = listaAcometidas;
   if (sectorFilter !== 'TODOS') {
-    filtrados = filtrados.filter((s) => s.sectorId === sectorFilter);
+    filtrados = filtrados.filter((a) => a.sectorId === sectorFilter);
   }
 
   if (searchFilter.trim()) {
-    filtrados = filtrados.filter((s) => {
-      const composite = `${s.nombreCompleto || ''} ${s.cedulaRuc || ''} ${s.codigoSocio || ''} ${s.medidorNumero || ''} ${s.nombreSector || ''}`;
+    filtrados = filtrados.filter((item) => {
+      const composite = `${item.nombreCompleto || ''} ${item.cedulaRuc || ''} ${item.codigoSocio || ''} ${item.medidorNumero || ''} ${item.nombreSector || ''}`;
       return matchesSearchTokens(composite, searchFilter);
     });
   }
@@ -547,45 +662,7 @@ function renderTableAndMetrics() {
     return;
   }
 
-  // Desglosar socios en acometidas / medidores individuales (Multi-Medidor)
-  const listaAcometidas = [];
-  filtrados.forEach((socio) => {
-    if (socio.medidores && socio.medidores.length > 0) {
-      socio.medidores.forEach((m) => {
-        listaAcometidas.push({
-          rowKey: `${socio.id}_${m.id || m.numeroMedidor}`,
-          socioId: socio.id,
-          medidorId: m.id || m.idMedidor,
-          medidorNumero: m.numeroMedidor || m.medidorNumero,
-          aliasMedidor: m.alias || m.aliasMedidor || 'Casa principal',
-          nombreCompleto: socio.nombreCompleto,
-          codigoSocio: socio.codigoSocio,
-          cedulaRuc: socio.cedulaRuc,
-          nombreSector: m.nombreSector || socio.nombreSector,
-          sectorId: m.idSector || socio.sectorId,
-          lecturaAnterior: Number(m.lecturaAnterior ?? m.lecturaInicial ?? 0),
-          lecturaInicial: Number(m.lecturaInicial ?? m.lecturaAnterior ?? 0)
-        });
-      });
-    } else {
-      listaAcometidas.push({
-        rowKey: `${socio.id}_principal`,
-        socioId: socio.id,
-        medidorId: socio.medidorNumero || 'MED-00000',
-        medidorNumero: socio.medidorNumero || 'MED-00000',
-        aliasMedidor: 'Casa principal',
-        nombreCompleto: socio.nombreCompleto,
-        codigoSocio: socio.codigoSocio,
-        cedulaRuc: socio.cedulaRuc,
-        nombreSector: socio.nombreSector,
-        sectorId: socio.sectorId,
-        lecturaAnterior: 0,
-        lecturaInicial: 0
-      });
-    }
-  });
-
-  listaAcometidas.forEach((item) => {
+  filtrados.forEach((item) => {
     const isSinMedidor = Boolean((item.medidorNumero || '').toUpperCase().includes('SN'));
 
     const candidatas = cachedLecturas.filter((l) =>
@@ -1221,46 +1298,43 @@ document.getElementById('btnCierreCiclo')?.addEventListener('click', async () =>
   }
 });
 
-// Sincronización Directa Móvil <-> Nube (Actualizar / Subir)
 async function actualizarDatosDesdeNube() {
   Swal.fire({
     title: '🔄 Actualizando Datos...',
-    text: 'Consultando socios, medidores y lecturas desde la base de datos central...',
+    text: 'Consultando socios, sectores y lecturas desde la base de datos central...',
     allowOutsideClick: false,
     didOpen: () => Swal.showLoading()
   });
 
   try {
-    const res = await syncEngine.pullDeltas();
-    if (res.success) {
-      cachedSocios = await getAllSocios();
-      cachedSectores = await getAllSectores();
-      const periodo = getSelectedPeriodo();
-      cachedLecturas = await getLecturasPeriodo(periodo);
-
-      renderTableAndMetrics();
-
-      if (window.AndroidBridge && typeof window.AndroidBridge.vibrate === 'function') {
-        window.AndroidBridge.vibrate(60);
-      }
-
-      Swal.fire({
-        icon: 'success',
-        title: '¡Datos Actualizados!',
-        html: `
-          <div style="text-align: left; font-size: 0.9rem;">
-            <p>✅ Padrón actualizado: <strong>${cachedSocios.length}</strong> socios vigentes.</p>
-            <p>✅ Los socios o medidores modificados o eliminados se han sincronizado correctamente.</p>
-          </div>
-        `
-      });
-    } else {
-      Swal.fire({
-        icon: 'warning',
-        title: 'Aviso de Conexión',
-        text: res.error || res.reason || 'No se pudo consultar el servidor central.'
-      });
+    if (navigator.onLine && !syncEngine.isSyncing) {
+      await syncEngine.pullDeltas().catch(() => {});
     }
+
+    cachedSectores = await getAllSectores();
+    const secMap = new Map(cachedSectores.map((s) => [s.id, s.nombreSector || s.nombre]));
+    cachedSocios = await getAllSocios(secMap);
+    const periodo = getSelectedPeriodo();
+    cachedLecturas = await getLecturasPeriodo(periodo);
+
+    populateSectorSelect(cachedSectores);
+    renderTableAndMetrics();
+
+    if (window.AndroidBridge && typeof window.AndroidBridge.vibrate === 'function') {
+      window.AndroidBridge.vibrate(60);
+    }
+
+    Swal.fire({
+      icon: 'success',
+      title: '¡Datos Actualizados!',
+      html: `
+        <div style="text-align: left; font-size: 0.9rem;">
+          <p>✅ Padrón actualizado: <strong>${cachedSocios.length}</strong> socios vigentes.</p>
+          <p>✅ Sectores cargados: <strong>${cachedSectores.length}</strong> sectores comunitarios.</p>
+          <p>✅ Lecturas del período <strong>${periodo}</strong> sincronizadas con Supabase.</p>
+        </div>
+      `
+    });
   } catch (err) {
     console.error('[Lecturas] Error al actualizar datos:', err);
     Swal.fire({

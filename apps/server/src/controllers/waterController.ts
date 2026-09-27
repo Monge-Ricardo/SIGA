@@ -254,6 +254,7 @@ export const getSocios = async (req: AuthenticatedRequest, res: Response): Promi
         fechaUnion: s.fecha_union as string,
         idSector: primarySectorId,
         id_sector: primarySectorId,
+        sectorId: primarySectorId,
         nombreSector: secMap.get(primarySectorId) || 'Sector General',
         nombre_sector: secMap.get(primarySectorId) || 'Sector General',
         medidorNumero: primaryMedNum,
@@ -266,12 +267,17 @@ export const getSocios = async (req: AuthenticatedRequest, res: Response): Promi
         estadoCuenta: deuda > 0 ? 'EN_MORA' : 'AL_DIA',
         medidores: socioMeds.map((m) => {
           const lecIni = lecturaInicialMap.get(m.id as string) ?? Number(m.lectura_inicial ?? m.lecturaInicial ?? 0);
+          const medSecId = (m.id_sector as string) || primarySectorId;
+          const medSecName = secMap.get(medSecId) || secMap.get(primarySectorId) || 'Sector General';
           return {
             id: m.id as string,
             idSocio: m.id_socio as string,
             id_socio: m.id_socio as string,
-            idSector: m.id_sector as string,
-            id_sector: m.id_sector as string,
+            idSector: medSecId,
+            id_sector: medSecId,
+            sectorId: medSecId,
+            nombreSector: medSecName,
+            nombre_sector: medSecName,
             numeroMedidor: m.numero_medidor as string,
             numero_medidor: m.numero_medidor as string,
             alias: (m.alias as string) || 'Casa principal',
@@ -992,10 +998,13 @@ export const getMedidores = async (req: AuthenticatedRequest, res: Response): Pr
   try {
     const { socioId } = req.query;
     const query = socioId ? `id_socio=eq.${socioId}&order=created_at.asc` : 'order=created_at.asc';
-    const [resData, lecRes] = await Promise.all([
+    const [resData, lecRes, secRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, unknown>>('medidores', query),
-      supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', 'order=fecha_lectura.asc')
+      supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', 'order=fecha_lectura.asc'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('sectores')
     ]);
+
+    const secMap = new Map((secRes.data || []).map((s) => [s.id as string, s.nombre_sector as string]));
 
     const lecturaInicialMap = new Map<string, number>();
     (lecRes.data || []).forEach((l) => {
@@ -1007,12 +1016,17 @@ export const getMedidores = async (req: AuthenticatedRequest, res: Response): Pr
 
     const mapped = (resData.data || []).map((m) => {
       const lecIni = lecturaInicialMap.get(m.id as string) ?? Number(m.lectura_inicial ?? m.lecturaInicial ?? 0);
+      const secId = (m.id_sector as string) || '';
+      const secName = secMap.get(secId) || 'Sector General';
       return {
         id: m.id as string,
         idSocio: m.id_socio as string,
         id_socio: m.id_socio as string,
-        idSector: m.id_sector as string,
-        id_sector: m.id_sector as string,
+        idSector: secId,
+        id_sector: secId,
+        sectorId: secId,
+        nombreSector: secName,
+        nombre_sector: secName,
         numeroMedidor: (m.numero_medidor || m.numeroMedidor || 'S/N') as string,
         numero_medidor: (m.numero_medidor || m.numeroMedidor || 'S/N') as string,
         alias: (m.alias as string) || 'Casa principal',
@@ -1036,10 +1050,13 @@ export const getMedidores = async (req: AuthenticatedRequest, res: Response): Pr
 export const getMedidoresBySocio = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const [resData, lecRes] = await Promise.all([
+    const [resData, lecRes, secRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, unknown>>('medidores', `id_socio=eq.${id}&order=created_at.asc`),
-      supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_socio=eq.${id}&order=fecha_lectura.asc`)
+      supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', `id_socio=eq.${id}&order=fecha_lectura.asc`),
+      supabaseClient.fetchRecords<Record<string, unknown>>('sectores')
     ]);
+
+    const secMap = new Map((secRes.data || []).map((s) => [s.id as string, s.nombre_sector as string]));
 
     const lecturaInicialMap = new Map<string, number>();
     (lecRes.data || []).forEach((l) => {
@@ -1051,12 +1068,17 @@ export const getMedidoresBySocio = async (req: AuthenticatedRequest, res: Respon
 
     const mapped = (resData.data || []).map((m) => {
       const lecIni = lecturaInicialMap.get(m.id as string) ?? Number(m.lectura_inicial ?? m.lecturaInicial ?? 0);
+      const secId = (m.id_sector as string) || '';
+      const secName = secMap.get(secId) || 'Sector General';
       return {
         id: m.id as string,
         idSocio: m.id_socio as string,
         id_socio: m.id_socio as string,
-        idSector: m.id_sector as string,
-        id_sector: m.id_sector as string,
+        idSector: secId,
+        id_sector: secId,
+        sectorId: secId,
+        nombreSector: secName,
+        nombre_sector: secName,
         numeroMedidor: (m.numero_medidor || m.numeroMedidor || 'S/N') as string,
         numero_medidor: (m.numero_medidor || m.numeroMedidor || 'S/N') as string,
         alias: (m.alias as string) || 'Casa principal',
@@ -2339,12 +2361,13 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
 
 export const getLecturas = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { periodoId, periodoCodigo, socioId, medidorId, numeroMedidor } = req.query as Record<string, string>;
+    const { periodo, periodoId, periodoCodigo, socioId, medidorId, numeroMedidor } = req.query as Record<string, string>;
     let query = 'order=fecha_lectura.desc&limit=1000';
 
     let finalPeriodoId = periodoId;
-    if (periodoCodigo && !finalPeriodoId) {
-      const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${periodoCodigo}&limit=1`);
+    const searchCode = periodoCodigo || periodo;
+    if (searchCode && !finalPeriodoId) {
+      const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${searchCode}&limit=1`);
       if (pRes.data && pRes.data.length > 0) finalPeriodoId = pRes.data[0].id as string;
     } else if (finalPeriodoId && (!finalPeriodoId.includes('-') || finalPeriodoId.length < 30)) {
       const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${finalPeriodoId}&limit=1`);
@@ -2361,22 +2384,26 @@ export const getLecturas = async (req: AuthenticatedRequest, res: Response): Pro
     }
     if (finalMedidorId) query += `&id_medidor=eq.${finalMedidorId}`;
 
-    const [resData, medRes, socRes, perRes] = await Promise.all([
+    const [resData, medRes, socRes, perRes, secRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', query),
       supabaseClient.fetchRecords<Record<string, unknown>>('medidores'),
       supabaseClient.fetchRecords<Record<string, unknown>>('socios'),
-      supabaseClient.fetchRecords<Record<string, unknown>>('periodos')
+      supabaseClient.fetchRecords<Record<string, unknown>>('periodos'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('sectores')
     ]);
 
     const medMap = new Map((medRes.data || []).map((m) => [m.id as string, m]));
     const socMap = new Map((socRes.data || []).map((s) => [s.id as string, s]));
     const perMap = new Map((perRes.data || []).map((p) => [p.id as string, p]));
+    const secMap = new Map((secRes.data || []).map((sec) => [sec.id as string, sec.nombre_sector as string]));
 
     const mapped = (resData.data || []).map((l) => {
       const m = l.id_medidor ? medMap.get(l.id_medidor as string) : null;
       const s = l.id_socio ? socMap.get(l.id_socio as string) : null;
       const p = l.id_periodo ? perMap.get(l.id_periodo as string) : null;
       const sName = s ? `${s.nombres || ''} ${s.apellidos || ''}`.trim() : '';
+      const secId = (m?.id_sector as string) || '';
+      const secName = secMap.get(secId) || 'Sector General';
 
       return {
         ...l,
@@ -2388,6 +2415,11 @@ export const getLecturas = async (req: AuthenticatedRequest, res: Response): Pro
         numeroMedidor: m?.numero_medidor || l.id_medidor,
         medidorNumero: m?.numero_medidor || l.id_medidor,
         aliasMedidor: m?.alias || 'Casa principal',
+        idSector: secId,
+        id_sector: secId,
+        sectorId: secId,
+        nombreSector: secName,
+        nombre_sector: secName,
         idPeriodo: l.id_periodo,
         periodo: p?.periodo_codigo || l.id_periodo,
         periodoCodigo: p?.periodo_codigo || l.id_periodo,

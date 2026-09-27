@@ -1398,6 +1398,8 @@ class GitSyncEngine {
       }
     });
 
+    const secMap = new Map((Array.isArray(secRes) ? secRes : []).map((s) => [s.id, s.nombre_sector]));
+
     const medidoresRaw = Array.isArray(medRes) ? medRes : [];
     const medidoresBySocio = new Map();
     medidoresRaw.forEach((m) => {
@@ -1408,11 +1410,17 @@ class GitSyncEngine {
       if (!isSN) {
         uLect = ultimaLecturaPorMedidor.get(m.id) ?? Number(m.lectura_inicial ?? m.lectura_anterior ?? 0);
       }
+      const mSecId = m.id_sector || '';
+      const mSecName = secMap.get(mSecId) || 'Sector General';
       medidoresBySocio.get(socioId).push({
         id: m.id,
         idMedidor: m.id,
         idSocio: m.id_socio,
-        idSector: m.id_sector,
+        idSector: mSecId,
+        id_sector: mSecId,
+        sectorId: mSecId,
+        nombreSector: mSecName,
+        nombre_sector: mSecName,
         numeroMedidor: m.numero_medidor,
         medidorNumero: m.numero_medidor,
         alias: m.alias || 'Casa principal',
@@ -1431,6 +1439,8 @@ class GitSyncEngine {
       const socioMeds = medidoresBySocio.get(s.id) || [];
       const primaryMed = socioMeds[0];
       const hasAlcant = socioMeds.some((m) => Boolean(m.tieneAlcantarillado));
+      const sSecId = primaryMed ? primaryMed.idSector : (s.id_sector || '');
+      const sSecName = secMap.get(sSecId) || 'Sector General';
       return {
         id: s.id,
         codigoSocio: s.codigo_socio,
@@ -1440,7 +1450,11 @@ class GitSyncEngine {
         cedulaRuc: s.cedula_ruc,
         fechaNacimiento: s.fecha_nacimiento || '1985-01-01',
         fechaAfiliacion: s.fecha_union || '2022-01-01',
-        sectorId: primaryMed ? primaryMed.idSector : (s.id_sector || ''),
+        sectorId: sSecId,
+        idSector: sSecId,
+        id_sector: sSecId,
+        nombreSector: sSecName,
+        nombre_sector: sSecName,
         medidorNumero: primaryMed ? primaryMed.numeroMedidor : (s.medidor_numero || ''),
         medidores: socioMeds,
         tieneAlcantarillado: hasAlcant || Boolean(s.tiene_alcantarillado),
@@ -1457,7 +1471,9 @@ class GitSyncEngine {
     const sectores = (Array.isArray(secRes) ? secRes : []).map((sec) => ({
       id: sec.id,
       codigo: sec.codigo_sector,
+      codigoSector: sec.codigo_sector,
       nombre: sec.nombre_sector,
+      nombreSector: sec.nombre_sector,
       descripcion: sec.descripcion || ''
     }));
 
@@ -1467,11 +1483,17 @@ class GitSyncEngine {
       if (!isSN) {
         uLect = ultimaLecturaPorMedidor.get(m.id) ?? Number(m.lectura_inicial ?? m.lectura_anterior ?? 0);
       }
+      const mSecId = m.id_sector || '';
+      const mSecName = secMap.get(mSecId) || 'Sector General';
       return {
         id: m.id,
         idMedidor: m.id,
         idSocio: m.id_socio,
-        idSector: m.id_sector,
+        idSector: mSecId,
+        id_sector: mSecId,
+        sectorId: mSecId,
+        nombreSector: mSecName,
+        nombre_sector: mSecName,
         numeroMedidor: m.numero_medidor,
         alias: m.alias || 'Casa principal',
         tieneAlcantarillado: Boolean(m.tiene_alcantarillado),
