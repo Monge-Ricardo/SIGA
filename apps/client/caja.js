@@ -49,6 +49,12 @@ function resolvePeriodoCodigo(idOrCode) {
   return PERIODO_ACTUAL;
 }
 
+function isPeriodoCorte(periodoCodigo) {
+  if (!periodoCodigo) return false;
+  const clean = String(periodoCodigo).trim();
+  return clean <= '2026-07' || clean.includes('2026-07') || clean.toUpperCase().includes('JUL') || clean.toUpperCase().includes('CORTE');
+}
+
 async function getActivePeriodo() {
   try {
     const res = await apiFetch('/api/v1/periodos');
@@ -1715,11 +1721,14 @@ async function displaySocioPlanilla(socio) {
         // En Caja, las multas tienen su propia sección independiente ("Aspecto 4").
         // Para no duplicar las multas en las deudas anteriores, el saldo de agua anterior
         // es su total_mes (o valor_base + excedente + alcantarillado) + valor_deuda_anterior.
+        const isCorte = isPeriodoCorte(fPeriodo);
         const vMes = Number(f.totalMes ?? f.total_mes ?? 0);
         const vDeuda = Number(f.valorDeudaAnterior ?? f.valor_deuda_anterior ?? 0);
-        const totP = vMes > 0 || vDeuda > 0
-          ? Number((vMes + vDeuda).toFixed(2))
-          : Number(f.totalPagar || f.total_pagar || 0);
+        const totP = isCorte
+          ? Number((vDeuda || vMes || f.totalPagar || f.total_pagar || 0).toFixed(2))
+          : (vMes > 0 || vDeuda > 0
+              ? Number((vMes + vDeuda).toFixed(2))
+              : Number(f.totalPagar || f.total_pagar || 0));
         if (totP > 0 && !socioDeudasAnteriores.some((d) => d.id === f.id)) {
           socioDeudasAnteriores.push({
             id: f.id,
@@ -1758,11 +1767,14 @@ async function displaySocioPlanilla(socio) {
     dataDeudas.facturasPendientes.forEach((fac) => {
       const fPeriodo = resolvePeriodoCodigo(fac.periodoCodigo || fac.id_periodo || fac.idPeriodo);
       const isCurrent = (fPeriodo === PERIODO_ACTUAL) || (PERIODO_ACTUAL && String(fac.numeroFactura || fac.numero_factura || '').includes(PERIODO_ACTUAL.replace('-', '')));
+      const isCorte = isPeriodoCorte(fPeriodo);
       const vMes = Number(fac.totalMes ?? fac.total_mes ?? 0);
       const vDeuda = Number(fac.valorDeudaAnterior ?? fac.valor_deuda_anterior ?? 0);
-      const totP = vMes > 0 || vDeuda > 0
-        ? Number((vMes + vDeuda).toFixed(2))
-        : Number(fac.totalPagar || fac.total_pagar || fac.saldoPendiente || fac.saldo_pendiente || 0);
+      const totP = isCorte
+        ? Number((vDeuda || vMes || fac.totalPagar || fac.total_pagar || 0).toFixed(2))
+        : (vMes > 0 || vDeuda > 0
+            ? Number((vMes + vDeuda).toFixed(2))
+            : Number(fac.totalPagar || fac.total_pagar || fac.saldoPendiente || fac.saldo_pendiente || 0));
       if (!isCurrent && totP > 0 && !socioDeudasAnteriores.some((d) => d.id === fac.id)) {
         socioDeudasAnteriores.push({
           id: fac.id,

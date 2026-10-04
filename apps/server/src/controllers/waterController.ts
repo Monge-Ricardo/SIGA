@@ -2041,9 +2041,9 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
           (pFac) => pFac.id !== f.id && pFac.created_at < f.created_at
         );
         const deudaAntEfectiva = tieneFacturaPreviaPendiente ? 0 : vDeudaAnt;
-        const totalMes = isCorte ? Number(f.total_mes || f.total_pagar || 0) : Number((vBase + vExc + vAlcant).toFixed(2));
+        const totalMes = isCorte ? 0.00 : Number((vBase + vExc + vAlcant).toFixed(2));
         const totPagar = isCorte
-          ? Number(f.total_pagar || totalMes || 0)
+          ? Number((vDeudaAnt || f.total_mes || f.total_pagar || 0).toFixed(2))
           : Number((totalMes + deudaAntEfectiva + vMultas).toFixed(2));
         const deudaAguaMed = totPagar;
 
@@ -4039,7 +4039,8 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
     const pendingFacs = facsRes.data || [];
     if (pendingFacs.length === 0) return;
 
-    // Obtener periodo activo
+    // Obtener mapa de periodos y periodo activo
+    const periodosMap = await getPeriodosMap();
     const pActiveRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'estado=eq.ABIERTO&limit=1');
     const activePeriodId = pActiveRes.data && pActiveRes.data.length > 0 ? pActiveRes.data[0].id : null;
 
@@ -4054,9 +4055,17 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
     for (const fac of pendingFacs) {
       const isTarget = fac.id === targetFac.id;
       const vMultas = isTarget ? nuevoValorMultas : 0;
+      const pObj = fac.id_periodo ? periodosMap.get(fac.id_periodo) : null;
+      const pCod = pObj?.periodo_codigo || pObj?.codigo || fac.periodo_codigo || '';
+      const isCorte = isPeriodoCorte(pCod);
+
       const totMes = Number(fac.total_mes ?? 0);
       const vDeudaAnt = Number(fac.valor_deuda_anterior ?? 0);
-      const nuevoTotalPagar = Number((totMes + vDeudaAnt + vMultas).toFixed(2));
+      // En facturas de corte inicial (Julio 2026), valor_deuda_anterior es el saldo total de corte y total_mes era igual a él;
+      // no deben sumarse entre sí para no duplicar el valor.
+      const nuevoTotalPagar = isCorte
+        ? Number((vDeudaAnt || totMes).toFixed(2))
+        : Number((totMes + vDeudaAnt + vMultas).toFixed(2));
 
       await supabaseClient.request(`facturas?id=eq.${fac.id}`, {
         method: 'PATCH',
@@ -4064,6 +4073,7 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
         body: {
           valor_multas: vMultas,
           total_pagar: nuevoTotalPagar,
+          total_mes: isCorte ? 0.00 : totMes,
           updated_at: now
         }
       });
