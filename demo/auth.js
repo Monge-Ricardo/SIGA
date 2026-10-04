@@ -2,6 +2,26 @@
  * SIGA-Comunitario • Módulo de Autenticación y Manejo de Tokens
  */
 
+// Neutralizar interferencias y errores de extensiones externas del navegador (ej. 200.js / requests.js TypeError M_ID)
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (event) => {
+    const reasonStr = String(event.reason?.stack || event.reason?.message || event.reason || '');
+    if (reasonStr.includes('M_ID') || reasonStr.includes('200.js') || reasonStr.includes('requests.js')) {
+      event.preventDefault();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    }
+  }, true);
+
+  window.addEventListener('error', (event) => {
+    const errStr = String(event.error?.stack || event.message || event.filename || '');
+    if (errStr.includes('M_ID') || errStr.includes('200.js') || errStr.includes('requests.js')) {
+      event.preventDefault();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      return true;
+    }
+  }, true);
+}
+
 /**
  * Normaliza texto eliminando acentos, tildes y diacríticos (ej: Ángel -> angel)
  */
@@ -224,15 +244,18 @@ export async function apiFetch(url, options = {}) {
   };
 
   let res;
-  // Usar xhrFetch directamente para evitar interferencia de extensiones de navegador (ej. 200.js TypeError M_ID)
   try {
-    res = await xhrFetch(fullUrl, options, headers);
-  } catch (xhrErr) {
-    console.warn('[apiFetch] XHR falló, intentando fetch fallback:', xhrErr);
+    res = await fetch(fullUrl, {
+      cache: options.method && options.method !== 'GET' ? 'no-store' : 'default',
+      ...options,
+      headers
+    });
+  } catch (fetchErr) {
+    console.warn('[apiFetch] Fetch falló, intentando xhrFetch fallback:', fetchErr);
     try {
-      res = await fetch(fullUrl, { cache: options.method && options.method !== 'GET' ? 'no-store' : 'default', ...options, headers });
-    } catch (fetchErr) {
-      throw xhrErr;
+      res = await xhrFetch(fullUrl, options, headers);
+    } catch (xhrErr) {
+      throw fetchErr;
     }
   }
 
