@@ -3614,6 +3614,11 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
       await asentarFondos(distActual, numFac, `Cobro Factura #${numFac}`, factura.id);
     }
 
+    // Si hubo abonos a multas, resincronizar las facturas pendientes restantes del socio
+    if (factura.id_socio && (abonosProcesados.length > 0 || (multasCobradasIds && multasCobradasIds.length > 0))) {
+      await syncSocioPendingFacturas(factura.id_socio);
+    }
+
     res.json({
       success: true,
       message: `Cobro procesado exitosamente.`,
@@ -4029,21 +4034,35 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
     // 2. Obtener prefacturas pendientes del socio
     const facsRes = await supabaseClient.fetchRecords<Record<string, any>>(
       'facturas',
-      `id_socio=eq.${encodeURIComponent(idSocio)}&estado_pago=eq.PENDIENTE`
+      `id_socio=eq.${encodeURIComponent(idSocio)}&estado_pago=eq.PENDIENTE&order=created_at.asc`
     );
     const pendingFacs = facsRes.data || [];
+    if (pendingFacs.length === 0) return;
+
+    // Obtener periodo activo
+    const pActiveRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'estado=eq.ABIERTO&limit=1');
+    const activePeriodId = pActiveRes.data && pActiveRes.data.length > 0 ? pActiveRes.data[0].id : null;
+
+    // La factura que debe concentrar las multas es la del periodo activo (o la más reciente si no hay)
+    let targetFac = pendingFacs.find((f) => activePeriodId && f.id_periodo === activePeriodId);
+    if (!targetFac) {
+      targetFac = pendingFacs[pendingFacs.length - 1];
+    }
+
     const now = new Date().toISOString();
 
     for (const fac of pendingFacs) {
+      const isTarget = fac.id === targetFac.id;
+      const vMultas = isTarget ? nuevoValorMultas : 0;
       const totMes = Number(fac.total_mes ?? 0);
       const vDeudaAnt = Number(fac.valor_deuda_anterior ?? 0);
-      const nuevoTotalPagar = Number((totMes + vDeudaAnt + nuevoValorMultas).toFixed(2));
+      const nuevoTotalPagar = Number((totMes + vDeudaAnt + vMultas).toFixed(2));
 
       await supabaseClient.request(`facturas?id=eq.${fac.id}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=representation' },
         body: {
-          valor_multas: nuevoValorMultas,
+          valor_multas: vMultas,
           total_pagar: nuevoTotalPagar,
           updated_at: now
         }
