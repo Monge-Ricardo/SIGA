@@ -39,6 +39,7 @@ let selectedMultasAbonosMap = new Map(); // id -> montoAbonado
 let selectedDeudasAnterioresAbonosMap = new Map(); // id -> montoAbonado
 
 let PERIODO_ACTUAL = null;
+let PERIODO_ACTUAL_ID = null;
 const cachedPeriodosMap = new Map();
 
 function resolvePeriodoCodigo(idOrCode) {
@@ -60,7 +61,11 @@ async function getActivePeriodo() {
         }
       });
       const abierto = res.data.find((p) => p.estado === 'ABIERTO');
-      if (abierto) return abierto.periodoCodigo || abierto.periodo_codigo || abierto.id;
+      if (abierto) {
+        PERIODO_ACTUAL_ID = abierto.id;
+        return abierto.periodoCodigo || abierto.periodo_codigo || abierto.id;
+      }
+      PERIODO_ACTUAL_ID = res.data[0].id;
       return res.data[0].periodoCodigo || res.data[0].periodo_codigo || res.data[0].id;
     }
   } catch (e) {
@@ -2110,7 +2115,7 @@ document.getElementById('formMulta')?.addEventListener('submit', async (e) => {
           tipoRubro,
           motivo,
           monto,
-          idPeriodo: PERIODO_ACTUAL
+          idPeriodo: PERIODO_ACTUAL_ID || PERIODO_ACTUAL
         })
       });
       if (res.data?.id) {
@@ -2404,7 +2409,7 @@ document.getElementById('btnEjecutarCobro')?.addEventListener('click', async () 
         body: JSON.stringify({
           idSocio: selectedSocio.id,
           idMedidor: firstMedidor?.idMedidor || firstMedidor?.id || null,
-          idPeriodo: '33333333-0000-0000-0000-000000000001', // Período activo
+          idPeriodo: PERIODO_ACTUAL_ID || undefined,
           esTerceraEdad: Boolean(currentCalculation.esTerceraEdad),
           valorBase: valBase,
           consumoM3: consM3,

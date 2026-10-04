@@ -2035,8 +2035,16 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
             vExc = Number(f.valor_excedente || 0);
           }
         }
+        // Si medPendientes ya incluye facturas impagas de períodos anteriores para este medidor,
+        // no re-sumar vDeudaAnt en esta factura para evitar duplicar deudas históricas
+        const tieneFacturaPreviaPendiente = medPendientes.some(
+          (pFac) => pFac.id !== f.id && pFac.created_at < f.created_at
+        );
+        const deudaAntEfectiva = tieneFacturaPreviaPendiente ? 0 : vDeudaAnt;
         const totalMes = isCorte ? Number(f.total_mes || f.total_pagar || 0) : Number((vBase + vExc + vAlcant).toFixed(2));
-        const totPagar = Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (isCorte ? (f.total_pagar || totalMes) : (totalMes + vDeudaAnt + vMultas)).toFixed(2));
+        const totPagar = isCorte
+          ? Number(f.total_pagar || totalMes || 0)
+          : Number((totalMes + deudaAntEfectiva + vMultas).toFixed(2));
         const deudaAguaMed = totPagar;
 
         mTotalDeuda += deudaAguaMed;
@@ -3538,27 +3546,28 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
           const prevFac = prevRes.data[0];
           const pObj = periodosMap.get(prevFac.id_periodo);
           const pCod = pObj?.periodo_codigo || pObj?.codigo || '';
-          const saldoPrevio = Number(prevFac.saldo_pendiente ?? prevFac.total_pagar ?? prevFac.total_mes ?? 0);
+          const saldoPrevio = Number(prevFac.total_pagar ?? prevFac.total_mes ?? 0);
           const abonoRealPrev = Math.min(prevMonto, saldoPrevio);
           const saldoRestantePrev = Number(Math.max(0, saldoPrevio - abonoRealPrev).toFixed(2));
-          const montoPagadoNuevoPrev = Number(((prevFac.monto_pagado || 0) + abonoRealPrev).toFixed(2));
-          const estadoNuevoPrev = saldoRestantePrev <= 0.001 ? 'PAGADO' : 'PARCIAL';
+          const estadoNuevoPrev = saldoRestantePrev <= 0.001 ? 'PAGADO' : 'PENDIENTE';
 
-          // Actualizar la factura anterior SIN BORRAR total_mes ni consumo
+          // Actualizar la factura anterior en Supabase con columnas estrictamente existentes
           const patchPrev: Record<string, any> = {
-            monto_pagado: montoPagadoNuevoPrev,
-            saldo_pendiente: saldoRestantePrev,
+            total_pagar: saldoRestantePrev <= 0.001 ? Number(prevFac.total_pagar || abonoRealPrev) : saldoRestantePrev,
             estado_pago: estadoNuevoPrev,
             fecha_pago: fechaPago || now,
-            metodo_pago: metodoPago,
+            metodo_pago: metodoPago || 'EFECTIVO',
             id_cajero: idCajero,
             updated_at: now
           };
-          await supabaseClient.request(`facturas?id=eq.${prevFac.id}`, {
+          const patchRes = await supabaseClient.request(`facturas?id=eq.${prevFac.id}`, {
             method: 'PATCH',
             body: patchPrev
           });
-          facturasActualizadas.push({ id: prevFac.id, numeroFactura: prevFac.numero_factura, ...patchPrev });
+          if (patchRes.error) {
+            console.warn('[WaterController] Error actualizando factura previa:', patchRes.error);
+          }
+          facturasActualizadas.push({ id: prevFac.id, numeroFactura: prevFac.numero_factura, ...patchPrev, saldo_pendiente: saldoRestantePrev });
 
           // Distribuir a fondos según periodo (si <= 2026-07 -> 100% Operación; si > 2026-07 -> desglose exacto)
           const distPrev = calculateAbonoFundDistribution(prevFac, abonoRealPrev, pCod);
@@ -3570,7 +3579,7 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
 
     // 4. Procesar la factura principal actual
     const totalMesActual = Number(factura.total_mes ?? factura.total_pagar ?? 0);
-    const saldoActual = Number(factura.saldo_pendiente !== undefined && factura.saldo_pendiente !== null ? factura.saldo_pendiente : totalMesActual);
+    const saldoActual = Number(factura.total_pagar !== undefined && factura.total_pagar !== null ? factura.total_pagar : totalMesActual);
     const pagoFacturaActual = body.montoFacturaActual !== undefined 
       ? Number(body.montoFacturaActual)
       : (montoAbonado !== undefined ? Number(montoAbonado) : (body.montoRecibido !== undefined && (!abonosFacturasAnteriores || abonosFacturasAnteriores.length === 0) ? Number(body.montoRecibido) : saldoActual));
@@ -3580,24 +3589,25 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
       const pCod = pObj?.periodo_codigo || pObj?.codigo || '';
       const abonoRealActual = Math.min(pagoFacturaActual, saldoActual);
       const saldoRestanteActual = Number(Math.max(0, saldoActual - abonoRealActual).toFixed(2));
-      const montoPagadoNuevoActual = Number(((factura.monto_pagado || 0) + abonoRealActual).toFixed(2));
-      const estadoNuevoActual = saldoRestanteActual <= 0.001 ? 'PAGADO' : 'PARCIAL';
+      const estadoNuevoActual = saldoRestanteActual <= 0.001 ? 'PAGADO' : 'PENDIENTE';
 
       const updatePayload: Record<string, any> = {
-        monto_pagado: montoPagadoNuevoActual,
-        saldo_pendiente: saldoRestanteActual,
+        total_pagar: saldoRestanteActual <= 0.001 ? Number(factura.total_pagar || abonoRealActual) : saldoRestanteActual,
         estado_pago: estadoNuevoActual,
         fecha_pago: fechaPago || now,
-        metodo_pago: metodoPago,
+        metodo_pago: metodoPago || 'EFECTIVO',
         id_cajero: idCajero,
         updated_at: now
       };
 
-      await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
+      const updateRes = await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
         method: 'PATCH',
         body: updatePayload
       });
-      facturasActualizadas.push({ id: factura.id, numeroFactura: factura.numero_factura, ...updatePayload });
+      if (updateRes.error) {
+        console.warn('[WaterController] Error actualizando factura principal:', updateRes.error);
+      }
+      facturasActualizadas.push({ id: factura.id, numeroFactura: factura.numero_factura, ...updatePayload, saldo_pendiente: saldoRestanteActual });
 
       const distActual = calculateAbonoFundDistribution(factura, abonoRealActual, pCod);
       const numFac = factura.numero_factura || factura.id;
@@ -4052,6 +4062,20 @@ export const crearMulta = async (req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
+    // Resolver UUID válido para id_periodo evitando error 22P02 si envían '2026-09'
+    let periodUuid: string | null = null;
+    if (idPeriodo && isValidUUID(idPeriodo)) {
+      periodUuid = idPeriodo;
+    } else if (idPeriodo) {
+      const pRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', `periodo_codigo=eq.${encodeURIComponent(idPeriodo)}&limit=1`);
+      if (pRes.data && pRes.data.length > 0 && pRes.data[0].id) {
+        periodUuid = pRes.data[0].id;
+      }
+    }
+    if (!periodUuid) {
+      periodUuid = await resolveReadingPeriodId();
+    }
+
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const numMonto = Number(Number(monto).toFixed(2));
@@ -4065,7 +4089,7 @@ export const crearMulta = async (req: AuthenticatedRequest, res: Response): Prom
       estado: 'PENDIENTE',
       pagado: false,
       motivo: String(motivo).trim(),
-      id_periodo: idPeriodo || null,
+      id_periodo: periodUuid || null,
       created_at: now
     };
 
