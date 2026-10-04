@@ -526,8 +526,8 @@ async function updateMetricsAndHistory() {
   );
 
   const facturasPendientes = facturasRemotas.filter(
-    (f) => (f.estadoPago === 'PENDIENTE' || f.estado_pago === 'PENDIENTE') &&
-           Number(f.totalPagar ?? f.total_pagar ?? 0) > 0
+    (f) => (f.estadoPago === 'PENDIENTE' || f.estado_pago === 'PENDIENTE' || f.estadoPago === 'PARCIAL' || f.estado_pago === 'PARCIAL' || Number(f.saldo_pendiente || f.saldoPendiente || 0) > 0) &&
+           Number(f.totalPagar ?? f.total_pagar ?? f.saldo_pendiente ?? f.saldoPendiente ?? 0) > 0
   );
 
   if (!isWebView && facturasPagadas.length > 0) {

@@ -274,7 +274,7 @@ export const getReporteConsolidado = async (_req: AuthenticatedRequest, res: Res
     const movimientos = movRes.data || [];
 
     const facturasPagadas = facturas.filter((f) => f.estado_pago === 'PAGADO');
-    const facturasPendientes = facturas.filter((f) => f.estado_pago === 'PENDIENTE');
+    const facturasPendientes = facturas.filter((f) => f.estado_pago === 'PENDIENTE' || f.estado_pago === 'PARCIAL' || (f.estado_pago !== 'PAGADO' && Number(f.saldo_pendiente || 0) > 0));
 
     const totalIngresos = Number(
       facturasPagadas
@@ -524,12 +524,12 @@ export const getEstadoCuentaSocio = async (req: AuthenticatedRequest, res: Respo
     );
     const totalPendiente = Number(
       facturas
-        .filter((f) => f.estado_pago === 'PENDIENTE')
-        .reduce((acc, f) => acc + Number(f.total_pagar || 0), 0)
+        .filter((f) => f.estado_pago === 'PENDIENTE' || f.estado_pago === 'PARCIAL' || (f.estado_pago !== 'PAGADO' && Number(f.saldo_pendiente || 0) > 0))
+        .reduce((acc, f) => acc + Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (f.total_pagar || 0)), 0)
         .toFixed(2)
     );
 
-    const facturasPendientes = facturas.filter((f) => f.estado_pago === 'PENDIENTE');
+    const facturasPendientes = facturas.filter((f) => f.estado_pago === 'PENDIENTE' || f.estado_pago === 'PARCIAL' || (f.estado_pago !== 'PAGADO' && Number(f.saldo_pendiente || 0) > 0));
 
     const esTercera = Boolean(socio.es_tercera_edad);
     const tarifaBase = esTercera ? 5.0 : 7.0;

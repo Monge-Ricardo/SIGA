@@ -1656,7 +1656,7 @@ export const getMedidorDeudas = async (req: AuthenticatedRequest, res: Response)
     const excedenteM3 = Math.max(0, consumoTotalM3 - 30);
     const valorExcedente = Number((excedenteM3 * 0.10).toFixed(2));
 
-    const facturasPendientes = facturas.filter((f) => f.estado_pago === 'PENDIENTE');
+    const facturasPendientes = facturas.filter((f) => f.estado_pago === 'PENDIENTE' || f.estado_pago === 'PARCIAL' || (f.estado_pago !== 'PAGADO' && Number(f.saldo_pendiente || 0) > 0));
     const facturasPagadas = facturas.filter((f) => f.estado_pago === 'PAGADO');
 
     let mesesAdeudados = 0;
@@ -1994,7 +1994,7 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
     const medidoresConDeudas = medidores.map((m) => {
       const mId = m.id as string;
       const medFacs = facturas.filter((f) => f.id_medidor === mId || (medidores.length === 1 && !f.id_medidor));
-      const medPendientes = medFacs.filter((f) => f.estado_pago === 'PENDIENTE');
+      const medPendientes = medFacs.filter((f) => f.estado_pago === 'PENDIENTE' || f.estado_pago === 'PARCIAL' || (f.estado_pago !== 'PAGADO' && Number(f.saldo_pendiente || 0) > 0));
       const medPagadas = medFacs.filter((f) => f.estado_pago === 'PAGADO');
       const medLecs = lecturas.filter((l) => l.id_medidor === mId);
       const ultLec = medLecs[0] || null;
@@ -2075,7 +2075,7 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
       const tieneAguaPendienteMes = facturasDet.some((f) => {
         const isPeriodo = f.periodoCodigo === activePeriodCod || (f.id_periodo === activePeriodId);
         const esConsumoAgua = Number(f.valorBase || f.valor_base || 0) > 0 || Number(f.totalMes || f.total_mes || 0) > 0;
-        return isPeriodo && f.estadoPago === 'PENDIENTE' && esConsumoAgua;
+        return isPeriodo && (f.estadoPago === 'PENDIENTE' || f.estadoPago === 'PARCIAL' || f.estado_pago === 'PARCIAL' || f.estado_pago === 'PENDIENTE') && esConsumoAgua;
       });
       const yaPagadoMes = tienePagadoMes && !tieneAguaPendienteMes;
 
