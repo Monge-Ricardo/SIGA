@@ -2,6 +2,7 @@ import { Router } from '../core/http.ts';
 import { syncRouter } from './syncRoutes.ts';
 import { authenticateJWT, requireRoles } from '../middlewares/auth.ts';
 import { login, register, getMe } from '../controllers/authController.ts';
+import { cajaController } from '../modules/caja/ui/CajaController.ts';
 import {
   getTarifasConfig,
   updateTarifasConfig,
@@ -192,6 +193,20 @@ apiRouter.patch('/facturas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'
 apiRouter.put('/facturas/:id', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), updateFactura);
 apiRouter.delete('/facturas/:id', authenticateJWT, requireRoles('ADMIN'), deleteFactura);
 apiRouter.get('/facturas/:id/abonos', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'AUDITOR'), getFacturaAbonos);
+
+// ==========================================
+// 8.1. MÓDULO 3: CAJA, COBROS Y CUADRE DIARIO (CLEAN ARCHITECTURE / API-FIRST)
+// ==========================================
+apiRouter.get('/caja/periodo-activo', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'LECTOR', 'AUDITOR'), cajaController.obtenerPeriodoActivo);
+apiRouter.get('/caja/socios/:id/deudas', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'LECTOR', 'AUDITOR'), cajaController.consultarDeudasSocio);
+apiRouter.post('/caja/cobros', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), cajaController.procesarCobro);
+apiRouter.get('/caja/cuadre-diario', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'AUDITOR'), cajaController.obtenerCuadreDiario);
+apiRouter.get('/caja/resumen', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'AUDITOR'), cajaController.obtenerCuadreDiario);
+apiRouter.get('/caja/balance', authenticateJWT, requireRoles('CAJERO', 'ADMIN', 'AUDITOR'), cajaController.obtenerCuadreDiario);
+apiRouter.post('/caja/egreso', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), cajaController.registrarEgreso);
+apiRouter.post('/caja/egresos', authenticateJWT, requireRoles('CAJERO', 'ADMIN'), cajaController.registrarEgreso);
+apiRouter.post('/caja/facturas/:id/anular', authenticateJWT, requireRoles('ADMIN'), cajaController.anularCobro);
+apiRouter.delete('/caja/facturas/:id', authenticateJWT, requireRoles('ADMIN'), cajaController.anularCobro);
 
 // ==========================================
 // 9. MULTAS Y CUOTAS EXTRAORDINARIAS

@@ -5,6 +5,7 @@
 
 import { requireAuth, apiFetch, normalizeSearchText, matchesSearchTokens } from './auth.js';
 import { injectAppLayout } from './shared-layout.js';
+import { cargarYMostrarComprobante } from './comprobante.js';
 
 // Auto-limpieza de bases de datos locales obsoletas (IndexedDB)
 if (typeof window !== 'undefined' && window.indexedDB) {
@@ -28,6 +29,7 @@ let sectoresCache = [];
 let consolidadoCache = null;
 let auditoriaCache = [];
 let sectoresLista = [];
+let currentAuditSubTab = 'TODOS'; // 'TODOS' | 'FACTURAS' | 'MOVIMIENTOS'
 
 const FONDO_UI_CONFIG = {
   PADRE_PARROQUIA: { icon: '⛪' },
@@ -274,16 +276,57 @@ function renderInformeGestion(data) {
 // ==========================================
 // 4. AUDITORÍA DE TRANSACCIONES
 // ==========================================
+function actualizarContadoresSubTabs(logs) {
+  const elTodos = document.getElementById('countAuditTodos');
+  const elFac = document.getElementById('countAuditFacturas');
+  const elMov = document.getElementById('countAuditMovimientos');
+  if (elTodos) elTodos.textContent = logs.length;
+  if (elFac) elFac.textContent = logs.filter((l) => l.origen === 'FACTURA').length;
+  if (elMov) elMov.textContent = logs.filter((l) => l.origen === 'MOVIMIENTO').length;
+}
+
+export function setAuditSubTab(subtab) {
+  currentAuditSubTab = subtab;
+  const btnTodos = document.getElementById('btnAuditSubTabTodos');
+  const btnFac = document.getElementById('btnAuditSubTabFacturas');
+  const btnMov = document.getElementById('btnAuditSubTabMovimientos');
+
+  const activeStyle = 'btn btn-sm btn-primary';
+  const inactiveStyle = 'btn btn-sm btn-outline-secondary';
+
+  if (btnTodos) {
+    btnTodos.className = subtab === 'TODOS' ? activeStyle : inactiveStyle;
+    btnTodos.style.fontWeight = subtab === 'TODOS' ? '700' : '600';
+    btnTodos.style.background = subtab === 'TODOS' ? '' : '#fff';
+    btnTodos.style.color = subtab === 'TODOS' ? '' : '#475569';
+  }
+  if (btnFac) {
+    btnFac.className = subtab === 'FACTURAS' ? activeStyle : inactiveStyle;
+    btnFac.style.fontWeight = subtab === 'FACTURAS' ? '700' : '600';
+    btnFac.style.background = subtab === 'FACTURAS' ? '' : '#fff';
+    btnFac.style.color = subtab === 'FACTURAS' ? '' : '#475569';
+  }
+  if (btnMov) {
+    btnMov.className = subtab === 'MOVIMIENTOS' ? activeStyle : inactiveStyle;
+    btnMov.style.fontWeight = subtab === 'MOVIMIENTOS' ? '700' : '600';
+    btnMov.style.background = subtab === 'MOVIMIENTOS' ? '' : '#fff';
+    btnMov.style.color = subtab === 'MOVIMIENTOS' ? '' : '#475569';
+  }
+
+  renderTablaAuditoria(auditoriaCache);
+}
+
 async function cargarReporteAuditoria() {
   const tbody = document.getElementById('tbodyAuditoria');
   try {
     const res = await apiFetch('/api/v1/reportes/auditoria');
     auditoriaCache = res.data || [];
+    actualizarContadoresSubTabs(auditoriaCache);
     renderTablaAuditoria(auditoriaCache);
   } catch (err) {
     console.error('[Reportes] Error cargando auditoría:', err);
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #dc2626; padding: 2rem;">Error cargando auditoría: ${err.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #dc2626; padding: 2rem;">Error cargando auditoría: ${err.message}</td></tr>`;
     }
   }
 }
@@ -298,57 +341,136 @@ function renderTablaAuditoria(logs) {
   const busqueda = (document.getElementById('auditBuscarInput')?.value || '').trim();
 
   let filtrados = logs;
-  if (tipo) {
-    filtrados = filtrados.filter((l) => l.tipo === tipo);
+
+  // 1. Filtrado por Sub-pestaña (Todas / Facturas / Movimientos)
+  if (currentAuditSubTab === 'FACTURAS') {
+    filtrados = filtrados.filter((l) => l.origen === 'FACTURA');
+  } else if (currentAuditSubTab === 'MOVIMIENTOS') {
+    filtrados = filtrados.filter((l) => l.origen === 'MOVIMIENTO');
   }
+
+  // 2. Filtrado por tipo/estado
+  if (tipo) {
+    const t = tipo.trim().toUpperCase();
+    if (t === 'FACTURA') {
+      filtrados = filtrados.filter((l) => l.origen === 'FACTURA');
+    } else if (t === 'MOVIMIENTO') {
+      filtrados = filtrados.filter((l) => l.origen === 'MOVIMIENTO');
+    } else if (t === 'PAGADO' || t === 'PENDIENTE' || t === 'ABONO' || t === 'EMITIDO') {
+      filtrados = filtrados.filter((l) => l.tipo === t || l.estadoPago === t);
+    } else {
+      filtrados = filtrados.filter((l) => l.tipo === t);
+    }
+  }
+
+  // 3. Filtrado por fecha
   if (fDesde) {
     filtrados = filtrados.filter((l) => String(l.fecha) >= fDesde);
   }
   if (fHasta) {
     filtrados = filtrados.filter((l) => String(l.fecha) <= fHasta);
   }
+
+  // 4. Filtrado por buscador
   if (busqueda) {
     filtrados = filtrados.filter((l) => {
-      const composite = `${l.concepto || ''} ${l.numeroComprobante || ''} ${l.socioBeneficiario || ''} ${l.nombreFondo || ''} ${l.responsable || ''}`;
+      const composite = `${l.concepto || ''} ${l.numeroComprobante || ''} ${l.socioBeneficiario || ''} ${l.nombreFondo || ''} ${l.responsable || ''} ${l.tipo || ''} ${l.origen || ''}`;
       return matchesSearchTokens(composite, busqueda);
     });
   }
 
   if (filtrados.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; padding: 2rem; color: #64748b;">No se encontraron registros de auditoría con los filtros aplicados.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 2rem; color: #64748b;">No se encontraron registros ni facturas con los filtros aplicados.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = filtrados
     .map((l) => {
       const fecha = l.fecha ? new Date(l.fecha).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' }) : '-';
-      const esIngreso = l.tipo === 'INGRESO';
-      const ui = FONDO_UI_CONFIG[l.codigoFondo] || { icon: '🏛️' };
-      const montoStr = esIngreso ? `+$${Number(l.monto || 0).toFixed(2)}` : `-$${Number(l.monto || 0).toFixed(2)}`;
-      const montoColor = esIngreso ? '#16a34a' : '#dc2626';
+      const isFactura = l.origen === 'FACTURA';
+
+      let badgeHtml = '';
+      let fondoHtml = '';
+      let montoHtml = '';
+      let accionHtml = '';
+
+      if (isFactura) {
+        const est = l.estadoPago || l.tipo;
+        if (est === 'PAGADO') {
+          badgeHtml = `<span style="background: #dcfce7; color: #15803d; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700;">✅ PAGADO</span>`;
+          montoHtml = `<span style="color: #16a34a; font-weight: 800; font-size: 0.9rem;">+$${Number(l.monto || 0).toFixed(2)}</span>`;
+        } else if (est === 'ABONO') {
+          badgeHtml = `<span style="background: #e0f2fe; color: #0369a1; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700;">💳 ABONO</span>`;
+          montoHtml = `
+            <div style="text-align: right;">
+              <span style="color: #0284c7; font-weight: 800; font-size: 0.9rem;">+$${Number(l.montoCobrado || l.monto || 0).toFixed(2)}</span>
+              <div style="font-size: 0.7rem; color: #dc2626; font-weight: 600;">Saldo: $${Number(l.saldoPendiente || 0).toFixed(2)}</div>
+            </div>
+          `;
+        } else {
+          badgeHtml = `<span style="background: #fef3c7; color: #b45309; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700;">⏳ PENDIENTE</span>`;
+          montoHtml = `<span style="color: #d97706; font-weight: 800; font-size: 0.9rem;">$${Number(l.totalFactura || l.monto || 0).toFixed(2)}</span>`;
+        }
+
+        fondoHtml = `
+          <div style="font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; gap: 0.35rem;">
+            <span>💧</span> <span>Factura de Agua</span>
+          </div>
+        `;
+
+        accionHtml = `
+          <button type="button" class="btn btn-sm btn-view-recibo-audit" data-id="${l.idFactura || l.id}" title="Ver e imprimir comprobante oficial" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; font-weight: 700; border-radius: 4px; border: 1px solid #0284c7; background: #f0f9ff; color: #0284c7; cursor: pointer; white-space: nowrap;">
+            🖨️ Recibo
+          </button>
+        `;
+      } else {
+        const esIngreso = l.tipo === 'INGRESO';
+        badgeHtml = `
+          <span style="background: ${esIngreso ? '#dcfce7' : '#fee2e2'}; color: ${esIngreso ? '#15803d' : '#b91c1c'}; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700;">
+            ${esIngreso ? '📥 INGRESO' : '📤 EGRESO'}
+          </span>
+        `;
+        const ui = FONDO_UI_CONFIG[l.codigoFondo] || { icon: '🏛️' };
+        fondoHtml = `
+          <div style="font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; gap: 0.35rem;">
+            <span>${ui.icon}</span> <span>${l.nombreFondo}</span>
+          </div>
+        `;
+        const montoStr = esIngreso ? `+$${Number(l.monto || 0).toFixed(2)}` : `-$${Number(l.monto || 0).toFixed(2)}`;
+        montoHtml = `<span style="color: ${esIngreso ? '#16a34a' : '#dc2626'}; font-weight: 800; font-size: 0.9rem;">${montoStr}</span>`;
+        accionHtml = l.idFactura ? `
+          <button type="button" class="btn btn-sm btn-view-recibo-audit" data-id="${l.idFactura}" title="Ver comprobante de origen" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; font-weight: 700; border-radius: 4px; border: 1px solid #94a3b8; background: #f8fafc; color: #475569; cursor: pointer; white-space: nowrap;">
+            🧾 Factura
+          </button>
+        ` : `<span style="color: #94a3b8; font-size: 0.75rem;">-</span>`;
+      }
 
       return `
         <tr>
           <td style="font-size: 0.8rem; color: #64748b; white-space: nowrap;">${fecha}</td>
-          <td style="text-align: center;">
-            <span style="background: ${esIngreso ? '#dcfce7' : '#fee2e2'}; color: ${esIngreso ? '#15803d' : '#b91c1c'}; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700;">
-              ${l.tipo}
-            </span>
-          </td>
-          <td>
-            <div style="font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; gap: 0.35rem;">
-              <span>${ui.icon}</span> <span>${l.nombreFondo}</span>
-            </div>
-          </td>
+          <td style="text-align: center;">${badgeHtml}</td>
+          <td>${fondoHtml}</td>
           <td style="font-size: 0.85rem; color: #1e293b;">${l.concepto}</td>
           <td><code style="background: #f1f5f9; padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.78rem;">${l.numeroComprobante}</code></td>
-          <td style="text-align: right; font-weight: 800; font-size: 0.9rem; color: ${montoColor};">${montoStr}</td>
+          <td style="text-align: right;">${montoHtml}</td>
           <td style="font-size: 0.82rem; font-weight: 500;">${l.socioBeneficiario}</td>
           <td style="font-size: 0.78rem; color: #64748b;">${l.responsable}</td>
+          <td style="text-align: center;" class="no-print">${accionHtml}</td>
         </tr>
       `;
     })
     .join('');
+
+  // Vincular eventos de botones para ver recibos oficiales
+  tbody.querySelectorAll('.btn-view-recibo-audit').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const facId = btn.getAttribute('data-id');
+      if (facId) {
+        cargarYMostrarComprobante(facId);
+      }
+    });
+  });
 }
 
 // ==========================================
@@ -480,6 +602,24 @@ function setupEventos() {
   document.getElementById('auditFechaDesde')?.addEventListener('change', () => renderTablaAuditoria(auditoriaCache));
   document.getElementById('auditFechaHasta')?.addEventListener('change', () => renderTablaAuditoria(auditoriaCache));
   document.getElementById('auditBuscarInput')?.addEventListener('input', () => renderTablaAuditoria(auditoriaCache));
+
+  // Sub-pestañas de Auditoría
+  document.getElementById('btnAuditSubTabTodos')?.addEventListener('click', () => setAuditSubTab('TODOS'));
+  document.getElementById('btnAuditSubTabFacturas')?.addEventListener('click', () => setAuditSubTab('FACTURAS'));
+  document.getElementById('btnAuditSubTabMovimientos')?.addEventListener('click', () => setAuditSubTab('MOVIMIENTOS'));
+
+  // Modal Comprobante Oficial
+  document.getElementById('btnCloseReciboModal')?.addEventListener('click', () => {
+    const modal = document.getElementById('modalReciboPrint');
+    if (modal) modal.style.display = 'none';
+  });
+  document.getElementById('btnDoneRecibo')?.addEventListener('click', () => {
+    const modal = document.getElementById('modalReciboPrint');
+    if (modal) modal.style.display = 'none';
+  });
+  document.getElementById('btnPrintReciboBtn')?.addEventListener('click', () => {
+    window.print();
+  });
 
   // Modal Estado de Cuenta
   document.getElementById('btnCerrarModalEstadoCuenta')?.addEventListener('click', cerrarModalEstadoCuenta);

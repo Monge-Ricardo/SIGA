@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --experimental-strip-types src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
-    "test": "node --experimental-strip-types --test src/tests/system.test.ts"
+    "test": "node --experimental-strip-types --test src/tests/modulo3_caja.test.ts src/tests/system.test.ts"
   },
   "dependencies": {
     "@app-agua/shared": "*"

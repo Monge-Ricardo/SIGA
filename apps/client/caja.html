@@ -38,7 +38,7 @@
       <div class="metric-card">
         <div class="metric-label">Total Entradas a Caja</div>
         <div class="metric-value text-green" id="metricTotalEntradas">$0.00</div>
-        <div class="metric-sub">Planillas y otros ingresos</div>
+        <div class="metric-sub" id="metricEntradasSub">Planillas y otros ingresos</div>
       </div>
       <div class="metric-card">
         <div class="metric-label">Salidas / Gastos</div>
@@ -71,8 +71,9 @@
             <input
               type="text"
               id="inputBuscarSocioCobro"
-              placeholder="Escriba nombre, apellido, cédula o medidor..."
+              placeholder="Escriba código, nombre, cédula, medidor o sector..."
               autocomplete="off"
+              autofocus
               style="width: 100%; padding: 0.65rem 0.85rem; font-size: 0.95rem; border: 2px solid #0284c7; border-radius: 8px; outline: none; background: #ffffff; box-shadow: 0 1px 3px rgba(2, 132, 199, 0.15);"
             />
             <div id="dropdownSugerenciasSocio" class="pos-search-dropdown" style="display: none;"></div>
@@ -81,13 +82,20 @@
 
         <!-- Información y Desglose de la Planilla -->
         <div id="socioPlanillaDetails" style="display: none; flex-direction: column; gap: 1rem;">
-          <!-- Socio Mini Card -->
-          <div class="filter-card" style="margin-bottom: 0; padding: 0.85rem 1rem; background: #f8fafc;">
+          <!-- Socio Mini Card (HU-301: Código, Nombre Completo, Cédula, Sector, Medidor) -->
+          <div class="filter-card" style="margin-bottom: 0; padding: 0.85rem 1rem; background: #f8fafc; border-left: 4px solid #0284c7;">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
               <div>
-                <strong id="posSocioNombre" style="font-size: 1.05rem; color: #0f172a;"></strong>
-                <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">
-                  Cédula: <span id="posSocioCedula" class="badge-code"></span> • Sector: <span id="posSocioSector" class="sector-tag"></span>
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                  <span id="posSocioCodigo" class="badge-code" style="font-weight: 800; background: #e0e7ff; color: #3730a3; padding: 0.2rem 0.5rem; border-radius: 4px;"></span>
+                  <strong id="posSocioNombre" style="font-size: 1.05rem; color: #0f172a;"></strong>
+                </div>
+                <div style="font-size: 0.82rem; color: #64748b; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;">
+                  <span>Cédula: <strong id="posSocioCedula" class="badge-code" style="color: #0f172a;"></strong></span>
+                  <span>•</span>
+                  <span>Sector: <span id="posSocioSector" class="sector-tag"></span></span>
+                  <span>•</span>
+                  <span>Medidor: <strong id="posSocioMedidor" style="color: #0369a1; font-weight: 700;"></strong></span>
                 </div>
               </div>
               <div id="posCategoriaBadge"></div>
@@ -230,7 +238,8 @@
             <input 
               type="text" 
               id="inputBuscarReciboTabla" 
-              placeholder="🔍 Filtrar recibo o socio..." 
+              placeholder="🔍 Buscar por socio, recibo, fecha..." 
+              autocomplete="off"
               style="width: 100%; padding: 0.35rem 0.65rem; font-size: 0.82rem; border: 1px solid #cbd5e1; border-radius: 6px; outline: none;"
             />
           </div>
@@ -249,7 +258,7 @@
                 <th>N° Recibo</th>
                 <th>Abonado</th>
                 <th style="text-align: right;">Total</th>
-                <th>Hora</th>
+                <th>Fecha y Hora</th>
                 <th style="text-align: right;">Acción</th>
               </tr>
             </thead>
@@ -335,7 +344,7 @@
             <thead>
               <tr style="background: #0f172a; color: #ffffff;">
                 <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">N° Recibo</th>
-                <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Hora</th>
+                <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Fecha y Hora</th>
                 <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Abonado / Socio</th>
                 <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Cuenta / Cédula</th>
                 <th style="padding: 6px 8px; text-align: left; border: 1px solid #0f172a;">Medidor</th>

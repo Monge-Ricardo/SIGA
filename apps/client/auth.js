@@ -243,17 +243,31 @@ export async function apiFetch(url, options = {}) {
     ...(options.headers || {})
   };
 
+  let formattedBody = options.body;
+  if (
+    formattedBody !== undefined &&
+    formattedBody !== null &&
+    typeof formattedBody !== 'string' &&
+    !(typeof FormData !== 'undefined' && formattedBody instanceof FormData) &&
+    !(typeof Blob !== 'undefined' && formattedBody instanceof Blob)
+  ) {
+    formattedBody = JSON.stringify(formattedBody);
+  }
+
+  const finalOptions = {
+    ...options,
+    headers,
+    cache: options.method && options.method !== 'GET' ? 'no-store' : 'default',
+    ...(formattedBody !== undefined ? { body: formattedBody } : {})
+  };
+
   let res;
   try {
-    res = await fetch(fullUrl, {
-      cache: options.method && options.method !== 'GET' ? 'no-store' : 'default',
-      ...options,
-      headers
-    });
+    res = await fetch(fullUrl, finalOptions);
   } catch (fetchErr) {
     console.warn('[apiFetch] Fetch falló, intentando xhrFetch fallback:', fetchErr);
     try {
-      res = await xhrFetch(fullUrl, options, headers);
+      res = await xhrFetch(fullUrl, { ...options, body: formattedBody }, headers);
     } catch (xhrErr) {
       throw fetchErr;
     }

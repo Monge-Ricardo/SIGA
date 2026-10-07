@@ -1,0 +1,29 @@
+[
+  {
+    "id": "33333333-0000-0000-0000-000000000000",
+    "periodo_codigo": "2026-07",
+    "nombre": "Período Julio 2026",
+    "fecha_inicio": "2026-07-01",
+    "fecha_fin": "2026-07-31",
+    "estado": "CERRADO",
+    "created_at": "2026-09-08T00:21:00.612+00:00"
+  },
+  {
+    "id": "33333333-0000-0000-0000-000000000001",
+    "periodo_codigo": "2026-08",
+    "nombre": "Período Agosto 2026",
+    "fecha_inicio": "2026-08-01",
+    "fecha_fin": "2026-08-31",
+    "estado": "CERRADO",
+    "created_at": "2026-09-08T00:21:00.612+00:00"
+  },
+  {
+    "id": "7a420bed-0c8f-407c-ab03-6814e98f993e",
+    "periodo_codigo": "2026-09",
+    "nombre": "Septiembre 2026",
+    "fecha_inicio": "2026-09-01",
+    "fecha_fin": "2026-09-30",
+    "estado": "ABIERTO",
+    "created_at": "2026-09-17T12:03:52.971+00:00"
+  }
+]

@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-10-05T01:19:51.605Z",
+  "tables": {
+    "facturas": {
+      "count": 203,
+      "file": "facturas.json"
+    },
+    "fondos_movimientos": {
+      "count": 332,
+      "file": "fondos_movimientos.json"
+    },
+    "rubros_abonos": {
+      "count": 8,
+      "file": "rubros_abonos.json"
+    },
+    "multas_rubros": {
+      "count": 81,
+      "file": "multas_rubros.json"
+    },
+    "socios": {
+      "count": 81,
+      "file": "socios.json"
+    },
+    "medidores": {
+      "count": 88,
+      "file": "medidores.json"
+    },
+    "lecturas": {
+      "count": 262,
+      "file": "lecturas.json"
+    },
+    "periodos": {
+      "count": 3,
+      "file": "periodos.json"
+    },
+    "fondos": {
+      "count": 0,
+      "file": "fondos.json"
+    },
+    "auditoria": {
+      "count": 0,
+      "file": "auditoria.json"
+    }
+  }
+}

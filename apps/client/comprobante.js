@@ -301,14 +301,19 @@ export function renderComprobanteEnDOM(data, targetContainer = 'printableReceipt
             <span>Metodo Pago: <strong>${comprobante.metodoPago || 'Efectivo'}</strong></span> &bull; 
             <span>Cajero: <strong>${comprobante.cajeroNombre || 'Caja Central'}</strong></span>
           </div>
-          <div class="comp-stamp-badge ${comprobante.esAbono ? 'badge-abono' : 'badge-cancelado'}">
-            ${comprobante.esAbono ? '⚠️ ABONO PARCIAL REGISTRADO' : '✓ TOTAL CANCELADO'}
-          </div>
-          ${comprobante.esAbono && detalleValores.saldoPendienteTotal > 0 ? `
-            <div style="font-size: 0.78rem; color: #dc2626; font-weight: 700; margin-top: 2px;">
-              Saldo Pendiente Restante: $${Number(detalleValores.saldoPendienteTotal).toFixed(2)} USD
-            </div>
-          ` : ''}
+          ${(() => {
+            const esAbonoFinal = Boolean(
+              comprobante.esAbono ||
+              (detalleValores?.saldoPendienteTotal && Number(detalleValores.saldoPendienteTotal) > 0) ||
+              (itemsRubrosPend && itemsRubrosPend.some((r) => Number(r.saldoRestante || 0) > 0)) ||
+              (comprobante.tipoTransaccion && String(comprobante.tipoTransaccion).includes('ABONO'))
+            );
+            return `
+              <div class="comp-stamp-badge ${esAbonoFinal ? 'badge-abono' : 'badge-cancelado'}">
+                ${esAbonoFinal ? 'ABONO REGISTRADO' : '✓ TOTAL CANCELADO'}
+              </div>
+            `;
+          })()}
         </div>
         <div class="comp-footer-right">
           <div class="comp-total-box">
@@ -499,36 +504,90 @@ export function transformarCobroLocalAComprobante(cobro = {}) {
 
   // Subtabla Rubros Pendientes y Cuotas (SOLO rubros activos o pagados)
   const rubrosPendientes = [];
-  if (deudaAlcant > 0) {
-    rubrosPendientes.push({
-      cp: 'SA01',
-      ca: '01',
-      descripcion: 'Alcantarillado Pendiente Acumulado',
-      valorTotal: deudaAlcant,
-      saldoRestante: 0,
-      aPagarCobrado: deudaAlcant
+
+  const rubrosExplicit = (cobro.rubrosLiquidados && cobro.rubrosLiquidados.length > 0)
+    ? cobro.rubrosLiquidados
+    : (cobro.items && cobro.items.length > 0 ? cobro.items : null);
+
+  if (rubrosExplicit && rubrosExplicit.length > 0) {
+    // Si vienen los rubros explícitos seleccionados y liquidados en caja
+    rubrosExplicit.forEach((item) => {
+      const valTot = Number((item.valorTotal ?? item.montoOriginal ?? item.saldoPendiente ?? item.aPagarCobrado ?? item.montoPagado ?? 0).toFixed(2));
+      const aCob = Number((item.aPagarCobrado ?? item.montoPagado ?? item.montoACobrar ?? 0).toFixed(2));
+      const sRest = item.saldoRestante !== undefined ? Number(Number(item.saldoRestante).toFixed(2)) : Math.max(0, Number((valTot - aCob).toFixed(2)));
+
+      if (item.tipo === 'AGUA_PERIODO_ACTIVO') {
+        if (!consumoMes.some(c => c.descripcion.includes('Consumo Agua'))) {
+          consumoMes.push({
+            cp: 'AP01',
+            ca: '01',
+            descripcion: item.descripcion || 'Consumo Agua Potable (Planilla del Mes)',
+            valorTotal: valTot,
+            saldoRestante: sRest,
+            aPagarCobrado: aCob
+          });
+        }
+      } else if (item.tipo === 'ALCANTARILLADO') {
+        rubrosPendientes.push({
+          cp: 'AL01',
+          ca: '01',
+          descripcion: item.descripcion || 'Servicio Alcantarillado',
+          valorTotal: valTot,
+          saldoRestante: sRest,
+          aPagarCobrado: aCob
+        });
+      } else if (item.tipo === 'DEUDA_HISTORICA_CORTE' || item.tipo === 'AGUA_PERIODO_ANTERIOR') {
+        rubrosPendientes.push({
+          cp: 'MA01',
+          ca: '01',
+          descripcion: item.descripcion || 'Deuda Anterior / Saldo Histórico',
+          valorTotal: valTot,
+          saldoRestante: sRest,
+          aPagarCobrado: aCob
+        });
+      } else {
+        rubrosPendientes.push({
+          cp: 'MU01',
+          ca: '01',
+          descripcion: item.descripcion || 'Multa / Rubro Comunitario',
+          valorTotal: valTot,
+          saldoRestante: sRest,
+          aPagarCobrado: aCob
+        });
+      }
     });
-  }
-  if (saldoAnt > 0) {
-    const valorTotalDeuda = Number((cobro.deudaTotalOriginal ? cobro.deudaTotalOriginal : (saldoAnt + saldoR)).toFixed(2));
-    rubrosPendientes.push({
-      cp: 'MA01',
-      ca: '01',
-      descripcion: 'Saldo Anterior / Deuda Histórica',
-      valorTotal: valorTotalDeuda,
-      saldoRestante: saldoR,
-      aPagarCobrado: saldoAnt
-    });
-  }
-  if (multas > 0) {
-    rubrosPendientes.push({
-      cp: 'MU01',
-      ca: '01',
-      descripcion: 'Multas y Sanciones',
-      valorTotal: multas,
-      saldoRestante: 0,
-      aPagarCobrado: multas
-    });
+  } else {
+    if (deudaAlcant > 0) {
+      rubrosPendientes.push({
+        cp: 'SA01',
+        ca: '01',
+        descripcion: 'Alcantarillado Pendiente Acumulado',
+        valorTotal: deudaAlcant,
+        saldoRestante: 0,
+        aPagarCobrado: deudaAlcant
+      });
+    }
+    if (saldoAnt > 0) {
+      const valorTotalDeuda = Number((cobro.deudaTotalOriginal ? cobro.deudaTotalOriginal : (saldoAnt + saldoR)).toFixed(2));
+      rubrosPendientes.push({
+        cp: 'MA01',
+        ca: '01',
+        descripcion: 'Saldo Anterior / Deuda Histórica',
+        valorTotal: valorTotalDeuda,
+        saldoRestante: Math.max(0, Number((valorTotalDeuda - saldoAnt).toFixed(2))),
+        aPagarCobrado: saldoAnt
+      });
+    }
+    if (multas > 0) {
+      rubrosPendientes.push({
+        cp: 'MU01',
+        ca: '01',
+        descripcion: 'Multas y Sanciones',
+        valorTotal: multas,
+        saldoRestante: 0,
+        aPagarCobrado: multas
+      });
+    }
   }
 
   const subtotalConsumo = consumoMes.reduce((acc, c) => acc + c.aPagarCobrado, 0);

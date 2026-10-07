@@ -405,12 +405,14 @@ export const getReporteAuditoria = async (req: AuthenticatedRequest, res: Respon
       q?: string;
     };
 
-    const [movRes, facRes, socRes, catRes, usuRes] = await Promise.all([
+    const [movRes, facRes, socRes, catRes, usuRes, perRes, abonosRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, unknown>>('fondos_movimientos', 'order=fecha.desc'),
-      supabaseClient.fetchRecords<Record<string, unknown>>('facturas'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('facturas', 'order=created_at.desc'),
       supabaseClient.fetchRecords<Record<string, unknown>>('socios'),
       supabaseClient.fetchRecords<Record<string, unknown>>('fondos_catalogo'),
-      supabaseClient.fetchRecords<Record<string, unknown>>('usuarios')
+      supabaseClient.fetchRecords<Record<string, unknown>>('usuarios'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('periodos'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('rubros_abonos', 'order=created_at.desc')
     ]);
 
     const movimientos = movRes.data || [];
@@ -418,13 +420,25 @@ export const getReporteAuditoria = async (req: AuthenticatedRequest, res: Respon
     const socios = socRes.data || [];
     const catalogo = catRes.data && catRes.data.length > 0 ? catRes.data : DEFAULT_FONDOS;
     const usuarios = usuRes.data || [];
+    const periodos = perRes.data || [];
+    const abonos = abonosRes.data || [];
 
     const facMap = new Map(facturas.map((f) => [f.id as string, f]));
     const socMap = new Map(socios.map((s) => [s.id as string, s]));
     const catMap = new Map(catalogo.map((f) => [f.id as string, f]));
     const usuMap = new Map(usuarios.map((u) => [u.id as string, u]));
+    const perMap = new Map(periodos.map((p) => [p.id as string, p]));
 
-    let logs = movimientos.map((m) => {
+    const abonosPorFactura = new Map<string, number>();
+    for (const a of abonos) {
+      const fid = a.id_factura as string;
+      if (fid) {
+        const monto = Number(a.monto_abonado || 0);
+        abonosPorFactura.set(fid, Number(((abonosPorFactura.get(fid) || 0) + monto).toFixed(2)));
+      }
+    }
+
+    const movimientosLogs = movimientos.map((m) => {
       const f = catMap.get(m.id_fondo as string);
       const fac = m.id_factura ? facMap.get(m.id_factura as string) : null;
       const soc = fac?.id_socio ? socMap.get(fac.id_socio as string) : null;
@@ -435,6 +449,7 @@ export const getReporteAuditoria = async (req: AuthenticatedRequest, res: Respon
 
       return {
         id: m.id,
+        origen: 'MOVIMIENTO',
         fecha: m.fecha || m.created_at,
         tipo: m.tipo,
         nombreFondo: f?.nombre || 'Fondo Comunitario',
@@ -450,8 +465,74 @@ export const getReporteAuditoria = async (req: AuthenticatedRequest, res: Respon
       };
     });
 
+    const facturasLogs = facturas.map((f) => {
+      const soc = f.id_socio ? socMap.get(f.id_socio as string) : null;
+      const per = f.id_periodo ? perMap.get(f.id_periodo as string) : null;
+      const resp = f.id_cajero ? usuMap.get(f.id_cajero as string) : null;
+      const pCod = (per?.periodo_codigo || per?.codigo || f.periodo_codigo || '') as string;
+      const fNum = (f.numero_factura as string) || (f.id as string);
+      const isPagado = f.estado_pago === 'PAGADO';
+      const totP = Number(f.total_pagar || 0);
+      const totAbonos = Number(abonosPorFactura.get(f.id as string) || 0);
+      const montoCobrado = isPagado ? totP : (totAbonos > 0 ? totAbonos : (f.fecha_pago ? totP : Number(f.monto_pagado || 0)));
+      const saldoPendiente = isPagado ? 0 : (totAbonos > 0 ? totP : Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : totP));
+      const esAbono = !isPagado && (totAbonos > 0 || (Boolean(f.fecha_pago) && totP > 0));
+
+      const socioNombre = soc ? `${soc.nombres || ''} ${soc.apellidos || ''}`.trim() : 'Socio';
+      const socioCedula = (soc?.cedula_ruc as string) || '';
+      const responsableNombre = resp ? `${resp.nombre_completo || resp.usuario} (${resp.rol})` : (f.fecha_pago ? 'Cajero / Oficina' : 'Sistema Automático');
+
+      const estadoStr = isPagado ? 'PAGADO' : (esAbono ? 'ABONO' : 'PENDIENTE');
+      const isRec = String(fNum).startsWith('REC-');
+      const conceptoStr = isRec
+        ? `Recibo de Cobro / Abono #${fNum}`
+        : `Planilla Agua [${pCod || 'Mes'}] - Consumo: ${f.consumo_m3 || 0} m³` +
+          (Number(f.valor_multas || 0) > 0 ? ` + Multas: $${Number(f.valor_multas).toFixed(2)}` : '') +
+          (Number(f.valor_deuda_anterior || 0) > 0 ? ` + Deuda: $${Number(f.valor_deuda_anterior).toFixed(2)}` : '');
+
+      return {
+        id: f.id,
+        origen: 'FACTURA',
+        fecha: f.fecha_pago || f.created_at,
+        tipo: isPagado ? 'PAGADO' : (esAbono ? 'ABONO' : 'EMITIDO'),
+        estadoPago: estadoStr,
+        nombreFondo: 'Agua Potable y Servicios',
+        codigoFondo: 'AGUA',
+        concepto: conceptoStr,
+        numeroComprobante: fNum,
+        monto: isPagado ? totP : (montoCobrado > 0 ? montoCobrado : totP),
+        totalFactura: totP,
+        montoCobrado: montoCobrado,
+        saldoPendiente: saldoPendiente,
+        consumoM3: Number(f.consumo_m3 || 0),
+        periodoCodigo: pCod,
+        saldoResultante: saldoPendiente,
+        socioBeneficiario: `${socioNombre} ${socioCedula ? `(${socioCedula})` : ''}`.trim(),
+        socioId: f.id_socio,
+        responsable: responsableNombre,
+        metodoPago: f.metodo_pago || 'EFECTIVO',
+        idFactura: f.id,
+        facturaNumero: fNum
+      };
+    });
+
+    let logs = [...facturasLogs, ...movimientosLogs].sort(
+      (a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime()
+    );
+
     if (tipo && tipo.trim()) {
-      logs = logs.filter((l) => l.tipo === tipo);
+      const t = tipo.trim().toUpperCase();
+      if (t === 'FACTURA') {
+        logs = logs.filter((l) => l.origen === 'FACTURA');
+      } else if (t === 'MOVIMIENTO') {
+        logs = logs.filter((l) => l.origen === 'MOVIMIENTO');
+      } else if (t === 'INGRESO' || t === 'EGRESO') {
+        logs = logs.filter((l) => l.tipo === t);
+      } else if (t === 'PAGADO' || t === 'PENDIENTE' || t === 'ABONO' || t === 'EMITIDO') {
+        logs = logs.filter((l) => l.tipo === t || (l as any).estadoPago === t);
+      } else {
+        logs = logs.filter((l) => l.tipo === t);
+      }
     }
 
     if (fechaDesde && fechaDesde.trim()) {
@@ -466,18 +547,20 @@ export const getReporteAuditoria = async (req: AuthenticatedRequest, res: Respon
       const term = q.trim().toLowerCase();
       logs = logs.filter(
         (l) =>
-          l.concepto.toLowerCase().includes(term) ||
-          l.numeroComprobante.toLowerCase().includes(term) ||
-          l.socioBeneficiario.toLowerCase().includes(term) ||
-          l.nombreFondo.toLowerCase().includes(term) ||
-          l.responsable.toLowerCase().includes(term)
+          (l.concepto && l.concepto.toLowerCase().includes(term)) ||
+          (l.numeroComprobante && l.numeroComprobante.toLowerCase().includes(term)) ||
+          (l.socioBeneficiario && l.socioBeneficiario.toLowerCase().includes(term)) ||
+          (l.nombreFondo && l.nombreFondo.toLowerCase().includes(term)) ||
+          (l.responsable && l.responsable.toLowerCase().includes(term))
       );
     }
 
     res.json({
-      titulo: 'Registro y Trazabilidad de Auditoría Contable',
+      titulo: 'Registro y Trazabilidad de Auditoría Contable y Transacciones',
       totalLogs: logs.length,
-      data: logs
+      data: logs,
+      facturas: facturasLogs,
+      movimientos: movimientosLogs
     });
   } catch (error) {
     console.error('[ReportesController] Error obteniendo auditoría:', error);

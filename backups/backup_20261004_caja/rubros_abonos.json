@@ -1,0 +1,90 @@
+[
+  {
+    "id": "b8b10712-d14a-4335-a8bc-7cfb641af5ec",
+    "id_rubro": "bea9ffbe-6c79-5aba-81c8-b01a0287f220",
+    "id_factura": "b884df85-4f35-44d7-a331-215409556786",
+    "monto_abonado": 5,
+    "saldo_anterior": 5,
+    "saldo_restante": 0,
+    "fecha": "2026-09-20T01:56:49.713+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000002",
+    "created_at": "2026-09-20T01:56:49.726+00:00"
+  },
+  {
+    "id": "6f88b310-5242-4657-bcda-24e920e3201e",
+    "id_rubro": "abedf475-d39e-54ae-b885-36a56f3b7628",
+    "id_factura": "c772aa7b-a277-4bc1-a76b-d92b3728f77b",
+    "monto_abonado": 10,
+    "saldo_anterior": 40,
+    "saldo_restante": 30,
+    "fecha": "2026-09-20T14:40:30.552+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000001",
+    "created_at": "2026-09-20T14:40:30.556+00:00"
+  },
+  {
+    "id": "aac7898b-6019-4bb2-b8cb-4a4672c58b10",
+    "id_rubro": "0410ca3f-a114-5e7e-ad76-8ef77baacd3a",
+    "id_factura": "490daa2a-552c-4f46-bb36-70daa29b80af",
+    "monto_abonado": 5,
+    "saldo_anterior": 5,
+    "saldo_restante": 0,
+    "fecha": "2026-09-20T15:01:55.089+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000002",
+    "created_at": "2026-09-20T15:01:55.092+00:00"
+  },
+  {
+    "id": "9e723d5f-0c87-447a-a39d-97461e53a73d",
+    "id_rubro": "a1111111-0000-0000-0000-000000000005",
+    "id_factura": "32b03fd4-4d9c-4914-a3fd-ec9ad27acf0d",
+    "monto_abonado": 18,
+    "saldo_anterior": 18,
+    "saldo_restante": 0,
+    "fecha": "2026-10-04T15:08:31.553+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000002",
+    "created_at": "2026-10-04T15:08:30.719+00:00"
+  },
+  {
+    "id": "f99aad32-93b1-4704-af52-34aaf545d00c",
+    "id_rubro": "a1111111-0000-0000-0000-000000000007",
+    "id_factura": "2021020f-25d6-4149-af87-ba51ec09b80b",
+    "monto_abonado": 12,
+    "saldo_anterior": 12,
+    "saldo_restante": 0,
+    "fecha": "2026-10-04T15:22:19.301+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000002",
+    "created_at": "2026-10-04T15:22:18.725+00:00"
+  },
+  {
+    "id": "71e83ff9-a2a6-40a7-b64c-54f7fd8213e7",
+    "id_rubro": "7a77579a-b0c1-5602-bfb5-16ef1a4a1271",
+    "id_factura": "32b03fd4-4d9c-4914-a3fd-ec9ad27acf0d",
+    "monto_abonado": 20,
+    "saldo_anterior": 20,
+    "saldo_restante": 0,
+    "fecha": "2026-10-04T15:08:31.553+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000002",
+    "created_at": "2026-10-04T15:08:30.719+00:00"
+  },
+  {
+    "id": "f8acd39f-b2f8-436e-af61-146437554a80",
+    "id_rubro": "a1111111-0000-0000-0000-000000000002",
+    "id_factura": "a9e1dc30-5288-491a-ac4f-4fa63ac074f9",
+    "monto_abonado": 10,
+    "saldo_anterior": 96,
+    "saldo_restante": 86,
+    "fecha": "2026-10-04T17:33:07.383+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000002",
+    "created_at": "2026-10-04T17:33:09.081+00:00"
+  },
+  {
+    "id": "4a8e03d1-b98e-4627-b06e-3cc98352183a",
+    "id_rubro": "e6485f17-54b9-527c-a2c5-4c9cb4980735",
+    "id_factura": "c8ae74ff-ada5-4266-82a5-1aa1e2125f55",
+    "monto_abonado": 25,
+    "saldo_anterior": 25,
+    "saldo_restante": 0,
+    "fecha": "2026-10-04T18:50:37.452+00:00",
+    "id_cajero": "00000000-0000-0000-0000-000000000002",
+    "created_at": "2026-10-04T18:50:37.048+00:00"
+  }
+]

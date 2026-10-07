@@ -797,7 +797,7 @@ export async function autoSincronizarAsientosFacturas(): Promise<number> {
     let count = 0;
     const ahora = new Date().toISOString();
     const nuevosAsientos: any[] = [];
-    const respId = await resolveCajeroId(req.user);
+    const respId = await resolveCajeroId();
 
     for (const f of facturas) {
       if (facturasConAsiento.has(f.id as string)) continue;

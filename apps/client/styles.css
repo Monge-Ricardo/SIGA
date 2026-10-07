@@ -2386,8 +2386,8 @@ body.has-sidebar-layout {
    REGLAS DE IMPRESIÓN OFICIAL (@MEDIA PRINT)
    ========================================================= */
 @page {
-  size: landscape;
-  margin: 6mm;
+  size: A4 portrait;
+  margin: 8mm 10mm;
 }
 
 @media print {

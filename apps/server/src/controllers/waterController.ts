@@ -2147,6 +2147,13 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
     const totalDeudaSocio = Number(medidoresConDeudas.reduce((acc, m) => acc + m.totalDeuda, 0).toFixed(2));
     const totalMesesSocio = Math.max(...medidoresConDeudas.map((m) => m.mesesAdeudados), 0);
 
+    // Las multas concentradas en facturas pendientes ya forman parte de totalDeudaSocio
+    const totalMultasEnFacturas = medidoresConDeudas.reduce((acc, m) => {
+      return acc + (m.facturasPendientes || []).reduce((s: number, f: any) => s + Number(f.valorMultas || f.valor_multas || 0), 0);
+    }, 0);
+    const rubrosNoEnFacturas = Math.max(0, (totalMultasVal + deudaAlcantarillado) - totalMultasEnFacturas);
+    const deudaGeneralTotal = Number((totalDeudaSocio + rubrosNoEnFacturas).toFixed(2));
+
     res.json({
       socio: {
         id: socio.id,
@@ -2161,8 +2168,8 @@ export const getSocioDeudas = async (req: AuthenticatedRequest, res: Response): 
         estado: socio.estado || 'ACTIVO'
       },
       resumenGeneral: {
-        totalDeuda: Number((totalDeudaSocio + deudaAlcantarillado + totalMultasVal).toFixed(2)),
-        totalDeudaAgua: totalDeudaSocio,
+        totalDeuda: deudaGeneralTotal,
+        totalDeudaAgua: Math.max(0, Number((totalDeudaSocio - totalMultasEnFacturas).toFixed(2))),
         deudaAlcantarillado,
         totalMultas: totalMultasVal,
         mesesAdeudados: totalMesesSocio,
@@ -3018,17 +3025,37 @@ export const getFacturas = async (req: AuthenticatedRequest, res: Response): Pro
     if (periodoId) query += `&id_periodo=eq.${periodoId}`;
     if (estadoPago) query += `&estado_pago=eq.${estadoPago}`;
 
-    const [resData, medRes, socRes, perRes] = await Promise.all([
+    const [resData, medRes, socRes, perRes, abonosRes, movsRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, unknown>>('facturas', query),
       supabaseClient.fetchRecords<Record<string, unknown>>('medidores'),
       supabaseClient.fetchRecords<Record<string, unknown>>('socios'),
-      supabaseClient.fetchRecords<Record<string, unknown>>('periodos')
+      supabaseClient.fetchRecords<Record<string, unknown>>('periodos'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('rubros_abonos', 'order=created_at.desc&limit=5000'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('fondos_movimientos', 'tipo=eq.INGRESO&limit=5000')
     ]);
 
     const facturas = resData.data || [];
     const medMap = new Map((medRes.data || []).map((m) => [m.id as string, m]));
     const socMap = new Map((socRes.data || []).map((s) => [s.id as string, s]));
     const perMap = new Map((perRes.data || []).map((p) => [p.id as string, p]));
+
+    const abonosPorFactura = new Map<string, number>();
+    for (const a of abonosRes.data || []) {
+      const fid = a.id_factura as string;
+      if (fid) {
+        const monto = Number(a.monto_abonado || 0);
+        abonosPorFactura.set(fid, Number(((abonosPorFactura.get(fid) || 0) + monto).toFixed(2)));
+      }
+    }
+
+    const movsPorComprobante = new Map<string, number>();
+    for (const m of movsRes.data || []) {
+      const comp = (m.numero_comprobante as string) || '';
+      if (comp) {
+        const ing = Number(m.ingreso || 0);
+        movsPorComprobante.set(comp, Number(((movsPorComprobante.get(comp) || 0) + ing).toFixed(2)));
+      }
+    }
 
     const enriched = facturas.map((f) => {
       const m = f.id_medidor ? medMap.get(f.id_medidor as string) : null;
@@ -3037,7 +3064,37 @@ export const getFacturas = async (req: AuthenticatedRequest, res: Response): Pro
       const fNum = (f.numero_factura as string) || (f.id as string);
       const isPagado = f.estado_pago === 'PAGADO';
       const totP = Number(f.total_pagar || 0);
+      const totMes = Number(f.total_mes || 0);
+      const totAbonos = Number(abonosPorFactura.get(f.id as string) || 0);
+      const totMovs = movsPorComprobante.get(fNum) || movsPorComprobante.get(f.id as string) || 0;
       const pCod = (p?.periodo_codigo || p?.codigo || (f.periodo_codigo as string) || '') as string;
+      const tienePagoRegistrado = Boolean(f.fecha_pago);
+      const fechaPago = f.fecha_pago || null;
+
+      let montoPagado = 0;
+      let saldoPendiente = totP;
+      let esAbono = false;
+
+      if (totMovs > 0) {
+        montoPagado = totMovs;
+        saldoPendiente = isPagado ? 0 : Math.max(0, Number((totP - totAbonos).toFixed(2)));
+        esAbono = !isPagado && totAbonos > 0;
+      } else if (isPagado) {
+        const aguaMonto = totP > 0 ? totP : (totMes > 0 ? totMes : Number(((Number(f.valor_base) || (f.es_tercera_edad ? 5 : 7)) + Number(f.valor_excedente || 0) + Number(f.valor_alcantarillado || 0)).toFixed(2)));
+        montoPagado = Number((aguaMonto + totAbonos).toFixed(2));
+        saldoPendiente = 0;
+        esAbono = false;
+      } else if (tienePagoRegistrado || totAbonos > 0) {
+        esAbono = true;
+        saldoPendiente = totP;
+        const aguaCancelada = Number(f.total_mes || 0) === 0 && Boolean(f.id_lectura || (fNum.includes('2026') && !fNum.startsWith('REC-'))) ? (f.es_tercera_edad ? 5.0 : 8.0) : 0;
+        montoPagado = Number((totAbonos + aguaCancelada).toFixed(2));
+        if (montoPagado <= 0) montoPagado = totP;
+      } else {
+        montoPagado = 0;
+        saldoPendiente = totP;
+        esAbono = false;
+      }
 
       return {
         ...f,
@@ -3064,11 +3121,22 @@ export const getFacturas = async (req: AuthenticatedRequest, res: Response): Pro
         total_mes: Number(f.total_mes ?? totP),
         totalPagar: totP,
         total_pagar: totP,
-        montoPagado: isPagado ? totP : Number(f.monto_pagado || 0),
-        saldoPendiente: Number(f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? f.saldo_pendiente : (isPagado ? 0 : totP)),
-        fechaPago: f.fecha_pago || f.updated_at || null,
+        montoPagado: montoPagado,
+        monto_pagado: montoPagado,
+        saldoPendiente: saldoPendiente,
+        saldo_pendiente: saldoPendiente,
+        esAbono: esAbono,
+        fechaPago: fechaPago,
+        fecha_pago: fechaPago,
         metodoPago: f.metodo_pago || 'EFECTIVO'
       };
+    });
+
+    // Orden cronológico: las más recientes primeras y las más antiguas abajo
+    enriched.sort((a, b) => {
+      const tA = new Date((a.fecha_pago as string) || (a.created_at as string) || 0).getTime();
+      const tB = new Date((b.fecha_pago as string) || (b.created_at as string) || 0).getTime();
+      return tB - tA;
     });
 
     res.json({ data: enriched, total: enriched.length });
@@ -3578,16 +3646,26 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
     }
 
     // 4. Procesar la factura principal actual
-    const totalMesActual = Number(factura.total_mes ?? factura.total_pagar ?? 0);
+    const totalMultasAbonadas = abonosProcesados.reduce((sum, a) => sum + Number(a.monto_abonado || 0), 0);
+    const totalPrevFacAbonadas = Array.isArray(abonosFacturasAnteriores)
+      ? abonosFacturasAnteriores.reduce((sum, p) => sum + Number(p.montoAbonado ?? p.monto ?? 0), 0)
+      : 0;
+
+    const totalMesActual = Number(factura.total_mes ?? 0);
     const saldoActual = Number(factura.total_pagar !== undefined && factura.total_pagar !== null ? factura.total_pagar : totalMesActual);
+    
+    // Determinar con precisión si este cobro abonó al consumo del mes o solo a multas/deudas
     const pagoFacturaActual = body.montoFacturaActual !== undefined 
       ? Number(body.montoFacturaActual)
-      : (montoAbonado !== undefined ? Number(montoAbonado) : (body.montoRecibido !== undefined && (!abonosFacturasAnteriores || abonosFacturasAnteriores.length === 0) ? Number(body.montoRecibido) : saldoActual));
+      : (montoAbonado !== undefined 
+          ? Math.max(0, Number(montoAbonado) - totalMultasAbonadas - totalPrevFacAbonadas)
+          : Math.max(0, Number(body.montoRecibido || 0) - totalMultasAbonadas - totalPrevFacAbonadas));
 
     if (pagoFacturaActual > 0) {
       const pObj = periodosMap.get(factura.id_periodo);
       const pCod = pObj?.periodo_codigo || pObj?.codigo || '';
       const abonoRealActual = Math.min(pagoFacturaActual, saldoActual);
+      const pagoConsumoCompleto = pagoFacturaActual >= totalMesActual && totalMesActual > 0;
       const saldoRestanteActual = Number(Math.max(0, saldoActual - abonoRealActual).toFixed(2));
       const estadoNuevoActual = saldoRestanteActual <= 0.001 ? 'PAGADO' : 'PENDIENTE';
 
@@ -3600,6 +3678,14 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
         updated_at: now
       };
 
+      // Si el consumo del mes fue cancelado en su totalidad, marcar total_mes y componentes en 0 para no re-cobrar agua
+      if (pagoConsumoCompleto) {
+        updatePayload.total_mes = 0.00;
+        updatePayload.valor_base = 0.00;
+        updatePayload.valor_excedente = 0.00;
+        updatePayload.valor_alcantarillado = 0.00;
+      }
+
       const updateRes = await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
         method: 'PATCH',
         body: updatePayload
@@ -3609,9 +3695,27 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
       }
       facturasActualizadas.push({ id: factura.id, numeroFactura: factura.numero_factura, ...updatePayload, saldo_pendiente: saldoRestanteActual });
 
+      // Solo distribuir a fondos de agua (Operación, Parroquia, Lector, etc.) lo que realmente se pagó de consumo
       const distActual = calculateAbonoFundDistribution(factura, abonoRealActual, pCod);
+      // Eliminar componente de multas de distActual para no duplicar lo que ya se asentó en el paso 2
+      delete distActual.MULTAS_EXTRAS;
       const numFac = factura.numero_factura || factura.id;
       await asentarFondos(distActual, numFac, `Cobro Factura #${numFac}`, factura.id);
+    } else if (abonosProcesados.length > 0 || totalPrevFacAbonadas > 0 || String(factura.numero_factura || '').startsWith('REC-')) {
+      // Si solo se pagaron multas/rubros/deuda histórica, registrar fecha_pago y cajero en la factura
+      const isRec = String(factura.numero_factura || '').startsWith('REC-');
+      const patchMeta: Record<string, any> = {
+        estado_pago: isRec ? 'PAGADO' : factura.estado_pago,
+        fecha_pago: fechaPago || now,
+        metodo_pago: metodoPago || 'EFECTIVO',
+        id_cajero: idCajero,
+        updated_at: now
+      };
+      await supabaseClient.request(`facturas?id=eq.${factura.id}`, {
+        method: 'PATCH',
+        body: patchMeta
+      });
+      facturasActualizadas.push({ id: factura.id, numeroFactura: factura.numero_factura, ...patchMeta, saldo_pendiente: isRec ? 0 : saldoActual });
     }
 
     // Si hubo abonos a multas, resincronizar las facturas pendientes restantes del socio
@@ -3619,10 +3723,13 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
       await syncSocioPendingFacturas(factura.id_socio);
     }
 
+    const updatedMain = facturasActualizadas.find((f) => f.id === factura.id) || factura;
+
     res.json({
       success: true,
       message: `Cobro procesado exitosamente.`,
       data: {
+        factura: updatedMain,
         facturaPrincipal: factura.numero_factura,
         facturasActualizadas,
         abonos: abonosProcesados,
@@ -4067,6 +4174,8 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
         ? Number((vDeudaAnt || totMes).toFixed(2))
         : Number((totMes + vDeudaAnt + vMultas).toFixed(2));
 
+      const nuevoEstado = nuevoTotalPagar <= 0.001 ? 'PAGADO' : 'PENDIENTE';
+
       await supabaseClient.request(`facturas?id=eq.${fac.id}`, {
         method: 'PATCH',
         headers: { Prefer: 'return=representation' },
@@ -4074,6 +4183,7 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
           valor_multas: vMultas,
           total_pagar: nuevoTotalPagar,
           total_mes: isCorte ? 0.00 : totMes,
+          estado_pago: nuevoEstado,
           updated_at: now
         }
       });
@@ -4085,7 +4195,12 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
 
 export const crearMulta = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { idSocio, tipoRubro, monto, motivo, idPeriodo } = req.body || {};
+    const idSocio = req.body?.idSocio || req.body?.id_socio;
+    const tipoRubro = req.body?.tipoRubro || req.body?.tipo_rubro;
+    const monto = req.body?.monto;
+    const motivo = req.body?.motivo || req.body?.descripcion;
+    const idPeriodo = req.body?.idPeriodo || req.body?.id_periodo;
+
     if (!idSocio || !tipoRubro || monto === undefined || !motivo) {
       res.status(400).json({ error: 'idSocio, tipoRubro, monto y motivo son requeridos.' });
       return;
@@ -4154,9 +4269,13 @@ export const updateMulta = async (req: AuthenticatedRequest, res: Response): Pro
       return;
     }
     const existing = existingRes.data[0];
+    if (existing.pagado === true || existing.estado === 'PAGADO') {
+      res.status(400).json({ error: 'No se puede modificar una multa que ya ha sido pagada.' });
+      return;
+    }
     const idSocio = existing.id_socio;
 
-    const updatePayload: Record<string, unknown> = { updated_at: now };
+    const updatePayload: Record<string, unknown> = {};
     if (p.monto !== undefined) {
       const numMonto = Number(Number(p.monto).toFixed(2));
       const montoPagado = Number(existing.monto_pagado || 0);
@@ -4215,7 +4334,12 @@ export const deleteMulta = async (req: AuthenticatedRequest, res: Response): Pro
       'multas_rubros',
       `id=eq.${encodeURIComponent(id)}&limit=1`
     );
-    const idSocio = existingRes.data?.[0]?.id_socio;
+    const existing = existingRes.data?.[0];
+    if (existing && (existing.pagado === true || existing.estado === 'PAGADO' || Number(existing.monto_pagado || 0) > 0)) {
+      res.status(400).json({ error: 'No se puede eliminar una multa que ya cuenta con pagos o abonos registrados.' });
+      return;
+    }
+    const idSocio = existing?.id_socio;
 
     const delResult = await supabaseClient.deleteRecord('multas_rubros', id);
     if (delResult && delResult.success === false) {
