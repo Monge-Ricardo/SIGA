@@ -379,49 +379,7 @@ export const getBalanceFondosResumen = async (_req: AuthenticatedRequest, res: R
     const movimientos = movRes.data || [];
     const facturasPagadas = facRes.data || [];
 
-    // Total ingresos directamente de facturas pagadas en Supabase Cloud
-    const totalIngresos = Number(
-      facturasPagadas
-        .reduce((acc, f) => {
-          const tot = Number(f.total_pagar || 0);
-          const monPag = Number(f.monto_pagado || 0);
-          const valorReal = monPag > 0 ? monPag : tot;
-          return acc + valorReal;
-        }, 0)
-        .toFixed(2)
-    );
-
-    // Total egresos directamente de fondos_movimientos en Supabase Cloud
-    const totalEgresos = Number(
-      movimientos
-        .filter((m) => m.tipo === 'EGRESO')
-        .reduce((acc, m) => acc + Number(m.egreso || 0), 0)
-        .toFixed(2)
-    );
-
-    const balanceNeto = Number((totalIngresos - totalEgresos).toFixed(2));
-
-    const isHoy = (fechaStr: unknown): boolean => {
-      if (!fechaStr || typeof fechaStr !== 'string') return false;
-      const d = new Date(fechaStr);
-      if (isNaN(d.getTime())) return false;
-      const hoy = new Date();
-      return d.toISOString().split('T')[0] === hoy.toISOString().split('T')[0];
-    };
-
-    const totalRecaudadoHoy = Number(
-      facturasPagadas
-        .filter((f) => isHoy(f.fecha_pago || f.updated_at || f.created_at))
-        .reduce((acc, f) => {
-          const tot = Number(f.total_pagar || 0);
-          const monPag = Number(f.monto_pagado || 0);
-          const valorReal = monPag > 0 ? monPag : tot;
-          return acc + valorReal;
-        }, 0)
-        .toFixed(2)
-    );
-
-    // Distribución exacta de ingresos de facturas pagadas por fondo
+    // Distribución calculada de ingresos de facturas por fondo (referencia)
     const distribucionFacturas: Record<string, number> = {
       [FONDO_IDS.PADRE_PARROQUIA]: 0,
       [FONDO_IDS.OPERACION_MANT]: 0,
@@ -443,19 +401,28 @@ export const getBalanceFondosResumen = async (_req: AuthenticatedRequest, res: R
       distribucionFacturas[FONDO_IDS.ALCANTARILLADO] += d.ALCANTARILLADO;
     });
 
+    const isHoy = (fechaStr: unknown): boolean => {
+      if (!fechaStr || typeof fechaStr !== 'string') return false;
+      const d = new Date(fechaStr);
+      if (isNaN(d.getTime())) return false;
+      const hoy = new Date();
+      return d.toISOString().split('T')[0] === hoy.toISOString().split('T')[0];
+    };
+
     const resumenFondos = catalogo.map((f) => {
       const fMovs = movimientos.filter((m) => m.id_fondo === f.id);
       const fEgresos = fMovs
         .filter((m) => m.tipo === 'EGRESO')
         .reduce((acc, m) => acc + Number(m.egreso || 0), 0);
 
-      // Ingresos contables procedentes de movimientos manuales
-      const fIngresosManuales = fMovs
-        .filter((m) => m.tipo === 'INGRESO' && !m.id_factura)
+      // Ingresos reales asentados en el Libro Mayor (fondos_movimientos)
+      const fIngresosMovimientos = fMovs
+        .filter((m) => m.tipo === 'INGRESO')
         .reduce((acc, m) => acc + Number(m.ingreso || 0), 0);
 
       const fIngresosFacturas = distribucionFacturas[f.id as string] || 0;
-      const totalFondoIngresos = Number((fIngresosFacturas + fIngresosManuales).toFixed(2));
+      // Tomar el valor real registrado en el libro mayor contable (incluyendo multas, abonos y cuotas)
+      const totalFondoIngresos = Number((Math.max(fIngresosMovimientos, fIngresosFacturas)).toFixed(2));
       const saldo = Number((totalFondoIngresos - fEgresos).toFixed(2));
 
       return {
@@ -470,6 +437,34 @@ export const getBalanceFondosResumen = async (_req: AuthenticatedRequest, res: R
         movimientosCount: fMovs.length
       };
     });
+
+    // Total ingresos consolidando todos los fondos comunitarios
+    const totalIngresos = Number(
+      resumenFondos.reduce((acc, f) => acc + f.totalIngresos, 0).toFixed(2)
+    );
+
+    // Total egresos directamente de fondos_movimientos en Supabase Cloud
+    const totalEgresos = Number(
+      resumenFondos.reduce((acc, f) => acc + f.totalEgresos, 0).toFixed(2)
+    );
+
+    const balanceNeto = Number((totalIngresos - totalEgresos).toFixed(2));
+
+    const totalRecaudadoHoy = Number(
+      movimientos
+        .filter((m) => m.tipo === 'INGRESO' && isHoy(m.fecha || m.created_at))
+        .reduce((acc, m) => acc + Number(m.ingreso || 0), 0)
+        .toFixed(2)
+    ) || Number(
+      facturasPagadas
+        .filter((f) => isHoy(f.fecha_pago || f.updated_at || f.created_at))
+        .reduce((acc, f) => {
+          const tot = Number(f.total_pagar || 0);
+          const monPag = Number(f.monto_pagado || 0);
+          return acc + (monPag > 0 ? monPag : tot);
+        }, 0)
+        .toFixed(2)
+    );
 
     res.json({
       data: {

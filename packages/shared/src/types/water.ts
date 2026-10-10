@@ -142,10 +142,14 @@ export interface Factura {
   excedenteM3: number;
   valorExcedente: number; // excedenteM3 * $0.10
   valorAlcantarillado: number; // $1.00 o $0.00
+  /**
+   * @deprecated Las multas y sanciones se gestionan independientemente en MultaRubro / multas_rubros.
+   * Se mantiene en 0.00 en facturas de agua para retrocompatibilidad.
+   */
   valorMultas: number;
   valorDeudaAnterior: number;
   totalMes: number; // valorBase + valorExcedente + valorAlcantarillado
-  totalPagar: number; // totalMes + valorMultas + valorDeudaAnterior
+  totalPagar: number; // totalMes + valorDeudaAnterior (consumo medido de agua o deuda de corte)
   montoPagado?: number; // Monto acumulado pagado / abonado
   saldoPendiente?: number; // Saldo que resta por pagar
   estadoPago: EstadoPagoFactura;

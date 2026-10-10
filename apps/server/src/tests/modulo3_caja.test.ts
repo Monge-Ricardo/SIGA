@@ -313,4 +313,129 @@ test('MÓDULO 3: CAJA, COBROS Y CUADRE DIARIO (IEEE 830 / CLEAN ARCHITECTURE)', 
     assert.equal(resStatus, 200);
     assert.equal(resData.resumenOperaciones.saldoNetoEfectivo, 0);
   });
+
+  await t.test('9. ProcesarCobroUseCase: Desacoplamiento de Agua ($10.50) + Corte ($7.30) + Abono Multa ($20.00)', async () => {
+    let persistedPayload: any = null;
+    const mockFacturasDB: Record<string, any> = {
+      'fac-corte-jul': {
+        id: 'fac-corte-jul',
+        numero_factura: 'FAC-JUL-1208021050',
+        id_socio: 'soc-test-01',
+        valor_deuda_anterior: 7.30,
+        total_mes: 0,
+        total_pagar: 7.30,
+        estado_pago: 'PENDIENTE'
+      },
+      'fac-sep-079': {
+        id: 'fac-sep-079',
+        numero_factura: 'FAC-202609-0079',
+        id_socio: 'soc-test-01',
+        valor_base: 7.00,
+        valor_excedente: 3.50,
+        valor_multas: 0.00,
+        total_mes: 10.50,
+        total_pagar: 10.50,
+        estado_pago: 'PENDIENTE'
+      }
+    };
+
+    const mockMultasDB: Record<string, any> = {
+      'mlt-minga-01': {
+        id: 'mlt-minga-01',
+        id_socio: 'soc-test-01',
+        tipo_rubro: 'MINGA',
+        monto: 40.00,
+        monto_pagado: 0.00,
+        saldo_pendiente: 40.00,
+        estado: 'PENDIENTE',
+        pagado: false
+      }
+    };
+
+    const mockRepo: any = {
+      getSocioInfo: async () => ({
+        id: 'soc-test-01',
+        nombres: 'Carlos',
+        apellidos: 'Pérez',
+        codigo_socio: 'SOC-001',
+        fecha_nacimiento: '1985-05-15'
+      }),
+      getFacturaPorIdONumero: async (id: string) => mockFacturasDB[id] || null,
+      getMultaPorId: async (id: string) => mockMultasDB[id] || null,
+      getFacturasPendientes: async () => [],
+      getMultasPendientes: async () => [{ ...mockMultasDB['mlt-minga-01'], saldo_pendiente: 20.00 }],
+      persistirCobroAtómico: async (params: any) => {
+        persistedPayload = params;
+      }
+    };
+
+    const { ProcesarCobroUseCase } = await import('../modules/caja/application/ProcesarCobroUseCase.ts');
+    const useCase = new ProcesarCobroUseCase(mockRepo);
+
+    const response = await useCase.ejecutar({
+      idSocio: 'soc-test-01',
+      idCajero: 'cajero-test',
+      metodoPago: 'EFECTIVO',
+      montoTotalRecibido: 40.00,
+      items: [
+        {
+          tipo: 'DEUDA_HISTORICA_CORTE',
+          idReferencia: 'fac-corte-jul',
+          montoACobrar: 7.30,
+          descripcion: 'Corte Julio'
+        },
+        {
+          tipo: 'AGUA_PERIODO_ACTIVO',
+          idReferencia: 'fac-sep-079',
+          montoACobrar: 10.50,
+          descripcion: 'Consumo Septiembre'
+        },
+        {
+          tipo: 'MULTA_COMUNITARIA',
+          idReferencia: 'mlt-minga-01',
+          montoACobrar: 20.00,
+          descripcion: 'Abono Multa Minga'
+        }
+      ]
+    });
+
+    // 1. Validar totales generales
+    assert.equal(response.success, true);
+    assert.equal(response.totalCobrado, 37.80);
+    assert.equal(response.cambioVuelto, 2.20); // 40.00 entregado - 37.80 cobrado = 2.20
+
+    // 2. Validar que la factura de Septiembre quedó PAGADA con $10.50 y valor_multas = 0.00
+    const patchFacSep = persistedPayload.facturasActualizaciones.find((f: any) => f.id === 'fac-sep-079');
+    assert.ok(patchFacSep, 'La factura de Septiembre debe actualizarse');
+    assert.equal(patchFacSep.patch.estado_pago, 'PAGADO', 'El agua del mes debe extinguirse a PAGADO');
+    assert.equal(patchFacSep.patch.total_pagar, 10.50, 'total_pagar debe ser exactamente $10.50');
+    assert.equal(patchFacSep.patch.valor_multas, 0.00, 'valor_multas debe ser 0.00');
+    assert.ok(patchFacSep.patch.fecha_pago, 'Factura extinguida debe registrar fecha_pago');
+
+    // 3. Validar que la factura de Julio quedó PAGADA con $7.30
+    const patchFacJul = persistedPayload.facturasActualizaciones.find((f: any) => f.id === 'fac-corte-jul');
+    assert.ok(patchFacJul, 'La factura de corte debe actualizarse');
+    assert.equal(patchFacJul.patch.estado_pago, 'PAGADO');
+    assert.equal(patchFacJul.patch.total_pagar, 7.30);
+
+    // 4. Validar que la multa quedó en PARCIAL con saldo $20.00 y su abono registrado
+    const patchMulta = persistedPayload.multasActualizaciones.find((m: any) => m.id === 'mlt-minga-01');
+    assert.ok(patchMulta, 'La multa comunitaria debe actualizarse');
+    assert.equal(patchMulta.patch.monto_pagado, 20.00);
+    assert.equal(patchMulta.patch.saldo_pendiente, 20.00);
+    assert.equal(patchMulta.patch.estado, 'PARCIAL');
+    assert.equal(patchMulta.patch.pagado, false);
+    assert.ok(patchMulta.abonoRecord, 'Debe generarse un registro en rubros_abonos');
+    assert.equal(patchMulta.abonoRecord.monto_abonado, 20.00);
+    assert.equal(patchMulta.abonoRecord.saldo_restante, 20.00);
+
+    // 5. Validar distribución de asientos contables a los fondos
+    const asientos = persistedPayload.asientosFondos;
+    const totalAsientos = asientos.reduce((acc: number, a: any) => acc + a.monto, 0);
+    assert.equal(Math.round(totalAsientos * 100) / 100, 37.80, 'Suma de asientos debe ser exactamente $37.80');
+
+    const fondoMultasAsiento = asientos.find((a: any) => a.idFondo === FONDO_IDS.MULTAS_EXTRAS);
+    assert.ok(fondoMultasAsiento, 'Debe existir asiento al Fondo de Multas y Extras');
+    assert.equal(fondoMultasAsiento.monto, 20.00, 'Exactamente $20.00 deben ir al Fondo de Multas');
+  });
 });

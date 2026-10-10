@@ -106,6 +106,7 @@ export class SupabaseClient {
    */
   public async syncRecord(tableName: string, record: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
     if (!this.isConfigured || process.env.NODE_ENV === 'test' || process.env.DISABLE_SUPABASE_SYNC === 'true') return { success: true };
+    if (tableName === 'auditoria') return { success: true };
 
     let payload = record;
     if (tableName === 'socios' || tableName === 'clientes') {

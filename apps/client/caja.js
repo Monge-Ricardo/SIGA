@@ -1214,8 +1214,10 @@ function renderTablaRecibos(recibos) {
   // Listeners de ver y anular
   tbody.querySelectorAll('.btn-ver-recibo').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const recId = btn.getAttribute('data-id') || btn.getAttribute('data-num');
-      cargarYMostrarComprobante(recId);
+      // Priorizar el número oficial de recibo (REC-XXXXXX) para invocar la misma función
+      // de comprobante consolidado bidireccional tanto en ventanilla como en historial
+      const recNum = btn.getAttribute('data-num') || btn.getAttribute('data-id');
+      cargarYMostrarComprobante(recNum);
     });
   });
 

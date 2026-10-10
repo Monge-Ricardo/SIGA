@@ -210,16 +210,7 @@ export class SupabaseCajaRepository {
       }
     }
 
-    // 5. Registrar bitácora de auditoría
-    await supabaseClient.syncRecord('auditoria', {
-      id: crypto.randomUUID(),
-      tabla: 'facturas',
-      operacion: 'COBRO',
-      id_registro: params.numeroRecibo,
-      id_usuario: params.idCajero,
-      descripcion: `Cobro en ventanilla #${params.numeroRecibo} para socio ${params.nombreSocio}`,
-      created_at: now
-    }).catch(() => {});
+
   }
 
   /**
@@ -498,16 +489,6 @@ export class SupabaseCajaRepository {
       }
     }
 
-    // 5. Registrar contraasiento en auditoría (si existe tabla)
-    await supabaseClient.syncRecord('auditoria', {
-      id: crypto.randomUUID(),
-      tabla: 'facturas',
-      operacion: 'ANULACION',
-      id_registro: params.numeroFactura,
-      id_usuario: params.idAdmin,
-      descripcion: `Anulación de comprobante #${params.numeroFactura}. Motivo: ${params.motivo}`,
-      created_at: now
-    }).catch(() => {});
   }
 
   /**

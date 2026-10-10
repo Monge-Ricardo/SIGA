@@ -111,6 +111,19 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
       return;
     }
 
+    // Si encontramos movimientos asociados a la factura pero pertenecen a un recibo consolidado (numero_comprobante),
+    // expandir a TODOS los movimientos de ese recibo para incluir deudas anteriores y multas pagadas juntas
+    const compNumEncontrado = movsComprobante.find(m => m.numero_comprobante && String(m.numero_comprobante).startsWith('REC-'))?.numero_comprobante;
+    if (compNumEncontrado && (!id.startsWith('REC-') || movsComprobante.length < 2)) {
+      const allTxMovs = await supabaseClient.fetchRecords<Record<string, any>>(
+        'fondos_movimientos',
+        `numero_comprobante=eq.${encodeURIComponent(compNumEncontrado)}&limit=100`
+      );
+      if (allTxMovs.data && allTxMovs.data.length > movsComprobante.length) {
+        movsComprobante = allTxMovs.data;
+      }
+    }
+
     // Reconstruir contexto para comprobantes consolidados
     if (movsComprobante.length > 0) {
       const fids = [...new Set(movsComprobante.map(m => m.id_factura).filter(isUuid))];
@@ -135,7 +148,8 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
 
       if (!factura) {
         if (linkedFacturas.length > 0) {
-          factura = { ...linkedFacturas[0], numero_factura: id };
+          const mainWaterFac = linkedFacturas.find(f => Number(f.total_mes || 0) > 0 || Number(f.consumo_m3 || 0) > 0 || Boolean(f.id_lectura)) || linkedFacturas[0];
+          factura = { ...mainWaterFac, numero_factura: id };
         } else {
           const socioNombre = movsComprobante[0].beneficiario || '';
           const sociosRes = await supabaseClient.fetchRecords<Record<string, any>>('socios', 'limit=500');
@@ -163,21 +177,55 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
             estado_pago: 'PAGADO'
           };
         }
+      } else if (linkedFacturas.length > 1 && !id.startsWith('REC-')) {
+        // Si el usuario consultó por una factura de deuda anterior (sin consumo) pero la transacción
+        // incluyó una factura de agua con consumo activo, priorizar la de agua para la cabecera y medidores
+        const mainWaterFac = linkedFacturas.find(f => Number(f.total_mes || 0) > 0 || Number(f.consumo_m3 || 0) > 0 || Boolean(f.id_lectura));
+        if (mainWaterFac && (!factura.total_mes || Number(factura.total_mes) === 0)) {
+          factura = { ...mainWaterFac };
+        }
       }
     }
 
-    // 2. Obtener datos del Socio, Sector, Período y Usuario Cajero en paralelo
-    const [socioRes, periodoRes, cajeroRes] = await Promise.all([
+    // 2. Obtener datos del Socio, Sector, Período, Cajero y Catálogo de Fondos en paralelo
+    const [socioRes, periodoRes, cajeroRes, fondosCatalogoRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, any>>('socios', `id=eq.${factura.id_socio}&limit=1`),
       supabaseClient.fetchRecords<Record<string, any>>('periodos', `id=eq.${factura.id_periodo}&limit=1`),
       factura.id_cajero
         ? supabaseClient.fetchRecords<Record<string, any>>('usuarios', `id=eq.${factura.id_cajero}&limit=1`)
-        : Promise.resolve({ data: [] })
+        : Promise.resolve({ data: [] }),
+      supabaseClient.fetchRecords<Record<string, any>>('fondos_catalogo', 'activo=eq.true')
     ]);
 
     const socio = socioRes.data?.[0] || {};
     const periodo = periodoRes.data?.[0] || {};
     const cajero = cajeroRes.data?.[0] || null;
+    const fondosCatalogo = fondosCatalogoRes.data || [];
+    const fondosMap = new Map<string, Record<string, any>>();
+    fondosCatalogo.forEach((f) => {
+      if (f.id) fondosMap.set(f.id, f);
+    });
+
+    const esFondoAguaConsumo = (idFondo?: string) => {
+      if (!idFondo) return false;
+      const f = fondosMap.get(idFondo);
+      const cod = String(f?.codigo || '').toUpperCase();
+      return ['PADRE_PARROQUIA', 'OPERACION_MANT', 'PAGO_LECTOR', 'MORTUORIO', 'PRO_MEJORAS'].includes(cod);
+    };
+
+    const esFondoMultas = (idFondo?: string, concepto?: string) => {
+      const f = idFondo ? fondosMap.get(idFondo) : null;
+      const cod = String(f?.codigo || '').toUpperCase();
+      const con = String(concepto || '').toLowerCase();
+      return cod === 'MULTAS_EXTRAS' || con.includes('multa') || con.includes('minga');
+    };
+
+    const esFondoAlcantarillado = (idFondo?: string, concepto?: string) => {
+      const f = idFondo ? fondosMap.get(idFondo) : null;
+      const cod = String(f?.codigo || '').toUpperCase();
+      const con = String(concepto || '').toLowerCase();
+      return cod === 'ALCANTARILLADO' || con.includes('alcantarillado');
+    };
 
     // 3. Obtener Medidores del socio y Lecturas del período
     const [medidoresRes, lecturasPeriodoRes, sectorRes] = await Promise.all([
@@ -201,7 +249,8 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
     }
 
     // 4. Formatear Período de Consumo conciso (ej: AGOSTO 2026)
-    const pCodigo = String(periodo.periodo_codigo || '2026-08').trim();
+    const pCodigoFallback = factura.created_at ? String(factura.created_at).slice(0, 7) : new Date().toISOString().slice(0, 7);
+    const pCodigo = String(periodo.periodo_codigo || pCodigoFallback).trim();
     const [pAnioStr, pMesStr] = pCodigo.split('-');
     const pMesNum = parseInt(pMesStr || '8', 10);
     const pAnioNum = parseInt(pAnioStr || '2026', 10);
@@ -278,7 +327,7 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
 
       medidoresTable.push({
         id: factura.id_medidor || 'med-default',
-        numeroMedidor: socio.medidor_numero || '1211036816',
+        numeroMedidor: socio.medidor_numero || socio.codigo_socio || 'S/N',
         alias: 'Acometida principal',
         basicoM3: 30,
         lecturaAnterior: lAnt,
@@ -338,23 +387,36 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
     const consumoTotalAcumulado = medidoresTable.reduce((sum, m) => sum + m.lecturaActual, 0) || (consumoPromedio * 12);
 
     const allRelevantFacturaIds = [...new Set([factura?.id, ...linkedFacturas.map(f => f.id)].filter(isUuid))];
+    const fechaTransaccionIso = factura.fecha_pago || movsComprobante[0]?.fecha || new Date().toISOString();
+    const fechaDay = fechaTransaccionIso.slice(0, 10);
     const rubrosAbonosQuery = allRelevantFacturaIds.length > 0
       ? `id_factura=in.(${allRelevantFacturaIds.join(',')})&order=created_at.asc`
       : `id_factura=eq.${factura.id}&order=created_at.asc`;
 
     // 8. Consultar Rubros Pendientes (Deuda Alcantarillado, Deuda Anterior, Multas) y Abonos de esta Factura
-    const [facturasImpagasRes, multasImpagasRes, rubrosAbonosRes, allSocioRubrosRes] = await Promise.all([
+    const [facturasImpagasRes, multasImpagasRes, rubrosAbonosRes, allSocioRubrosRes, rubrosAbonosDayRes] = await Promise.all([
       supabaseClient.fetchRecords<Record<string, any>>('facturas', `id_socio=eq.${factura.id_socio}&id=neq.${factura.id}&estado_pago=eq.PENDIENTE`),
       supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', `id_socio=eq.${factura.id_socio}&estado=neq.PAGADO`),
       supabaseClient.fetchRecords<Record<string, any>>('rubros_abonos', rubrosAbonosQuery),
-      supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', `id_socio=eq.${factura.id_socio}`)
+      supabaseClient.fetchRecords<Record<string, any>>('multas_rubros', `id_socio=eq.${factura.id_socio}`),
+      factura.id_socio
+        ? supabaseClient.fetchRecords<Record<string, any>>('rubros_abonos', `fecha=gte.${fechaDay}T00:00:00.000Z&fecha=lte.${fechaDay}T23:59:59.999Z&order=created_at.asc`)
+        : Promise.resolve({ data: [] })
     ]);
 
     const facturasImpagas = facturasImpagasRes.data || [];
     const multasImpagas = multasImpagasRes.data || [];
-    const rubrosAbonosFactura = rubrosAbonosRes.data || [];
     const rubrosMap = new Map<string, Record<string, any>>();
     (allSocioRubrosRes.data || []).forEach((r) => { if (r.id) rubrosMap.set(r.id, r); });
+
+    let rubrosAbonosFactura = rubrosAbonosRes.data || [];
+    // Si no vinieron abonos por id_factura, revisar si hubo abonos de multas de este socio en la misma fecha
+    if (rubrosAbonosFactura.length === 0 && rubrosAbonosDayRes.data && rubrosAbonosDayRes.data.length > 0) {
+      rubrosAbonosFactura = rubrosAbonosDayRes.data.filter((ab) => {
+        const r = rubrosMap.get(ab.id_rubro);
+        return r && r.id_socio === factura.id_socio;
+      });
+    }
 
     // Determinar valores de la factura y si en este cobro se incluyó consumo del mes
     const valorBaseMes = Number(Number(factura.valor_base || 0).toFixed(2));
@@ -371,7 +433,7 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
     // Solo se cobra consumo de agua si la factura tiene lecturas o valores de consumo de agua (no en recibos exclusivos de deuda)
     const tieneConsumoRegistrado = consumoM3 > 0 || totalMesFactura > 0 || valorBaseMes > 0 || Boolean(factura.id_lectura);
     const hasLinkedWaterConsumption = linkedFacturas.some(f => Number(f.total_mes || 0) > 0 || Number(f.consumo_m3 || 0) > 0 || Number(f.valor_base || 0) > 0 || Boolean(f.id_lectura));
-    const esSoloDeudaOHistorico = (valorDeudaAntFactura > 0 && totalMesFactura === 0 && valorBaseMes === 0 && !factura.id_lectura && !hasLinkedWaterConsumption) || String(factura.numero_factura || '').startsWith('REC-1211036816');
+    const esSoloDeudaOHistorico = (valorDeudaAntFactura > 0 && totalMesFactura === 0 && valorBaseMes === 0 && !factura.id_lectura && !hasLinkedWaterConsumption);
 
     const tieneCobroConsumoAgua = !esSoloDeudaOHistorico && (tieneConsumoRegistrado || hasLinkedWaterConsumption) && (
       (factura.estado_pago === 'PAGADO') ||
@@ -495,6 +557,15 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
     }
 
     // 2. Deuda Anterior / Facturas Históricas pagadas o abonadas en esta transacción
+    const getDescDeudaAnterior = (facObj?: Record<string, any> | null, prefijo = 'Pago ') => {
+      const numTxt = facObj?.numero_factura ? ` (#${facObj.numero_factura})` : '';
+      const pCod = facObj?.id_periodo ? periodMap.get(facObj.id_periodo) : null;
+      if (pCod) {
+        return `${prefijo}Deuda Anterior Período ${pCod}${numTxt}`;
+      }
+      return `${prefijo}Deuda Anterior / Saldo Histórico${numTxt}`;
+    };
+
     const movsDeudaAnt = movsComprobante.filter(m =>
       (m.concepto || '').toLowerCase().includes('deuda anterior')
     );
@@ -508,10 +579,7 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
           : (valorDeudaAntFactura > 0 ? valorDeudaAntFactura : aCob);
         const sRest = Math.max(0, Number((valFacturado - aCob).toFixed(2)));
         const prefijo = sRest <= 0.001 ? 'Pago ' : 'Abono ';
-        const numTxt = facLinked?.numero_factura ? ` (#${facLinked.numero_factura})` : (factura?.numero_factura?.startsWith('FAC-JUL-') ? ` (#${factura.numero_factura})` : '');
-        const desc = (facLinked?.numero_factura?.startsWith('FAC-JUL-') || factura?.numero_factura?.startsWith('FAC-JUL-'))
-          ? `${prefijo}Deuda Anterior Corte Julio 2026${numTxt}`
-          : `${prefijo}Deuda Anterior${numTxt}`;
+        const desc = getDescDeudaAnterior(facLinked || factura, prefijo);
 
         rubrosPendientesItems.push({
           cp: 'MA01',
@@ -544,13 +612,32 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
       rubrosPendientesItems.push({
         cp: 'MA01',
         ca: '01',
-        descripcion: factura.numero_factura?.startsWith('FAC-JUL-') 
-          ? `${prefijo}Deuda Anterior Corte Julio 2026 (#${factura.numero_factura})`
-          : `${prefijo}Saldo Anterior / Deuda Histórica`,
+        descripcion: getDescDeudaAnterior(factura, prefijo),
         valorTotal: valFacturado,
         saldoRestante: sRest,
         aPagarCobrado: aCob
       });
+    }
+
+    // Agregar cualquier factura anterior vinculada en esta transacción que no haya sido procesada
+    // (Solo si la factura vinculada efectivamente fue pagada en esta transacción)
+    for (const lf of linkedFacturas) {
+      const esFacPagadaEstaTx = lf.id !== factura.id && lf.estado_pago === 'PAGADO' && (lf.fecha_pago === factura.fecha_pago || lf.numero_factura === factura.numero_factura || movsComprobante.some(m => m.id_factura === lf.id));
+      const esDeudaHist = Number(lf.valor_deuda_anterior || 0) > 0 || (Number(lf.total_mes || 0) === 0 && Number(lf.total_pagar || 0) > 0);
+      if (esFacPagadaEstaTx && esDeudaHist) {
+        const lfNum = lf.numero_factura || lf.id.slice(0, 8);
+        if (!rubrosPendientesItems.some(r => r.descripcion.includes(lfNum))) {
+          const valLf = Number((lf.valor_deuda_anterior || lf.total_pagar || lf.total_mes || 0).toFixed(2));
+          rubrosPendientesItems.push({
+            cp: 'MA01',
+            ca: '01',
+            descripcion: getDescDeudaAnterior(lf, 'Pago '),
+            valorTotal: valLf,
+            saldoRestante: 0,
+            aPagarCobrado: valLf
+          });
+        }
+      }
     }
 
     // 3. Multas históricas si no vinieron en rubros_abonos
@@ -572,18 +659,26 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
       const totalRecibo = Math.round(movsComprobante.reduce((s, m) => s + Number(m.ingreso || 0), 0) * 100) / 100;
       const diferencia = Math.round((totalRecibo - sumConsumo - sumRubrosAct) * 100) / 100;
 
-      if (diferencia > 0) {
+      if (diferencia > 0.01) {
         const idsFondosConsumidos = new Set<string>();
         if (movsDeudaAnt.length > 0) {
           movsDeudaAnt.forEach(m => idsFondosConsumidos.add(m.id));
         }
         if (sumConsumo > 0) {
           movsComprobante
-            .filter(m => m.id_fondo === '22222222-2222-2222-2222-222222220001' ||
-                         m.id_fondo === '22222222-2222-2222-2222-222222220002' ||
-                         m.id_fondo === '22222222-2222-2222-2222-222222220003' ||
-                         m.id_fondo === '22222222-2222-2222-2222-222222220004' ||
-                         m.id_fondo === '22222222-2222-2222-2222-222222220005')
+            .filter(m => esFondoAguaConsumo(m.id_fondo))
+            .forEach(m => idsFondosConsumidos.add(m.id));
+        }
+        if (consumoMesItems.some(c => c.cp === 'AL01') || rubrosPendientesItems.some(r => r.cp === 'AL01')) {
+          movsComprobante
+            .filter(m => esFondoAlcantarillado(m.id_fondo, m.concepto))
+            .forEach(m => idsFondosConsumidos.add(m.id));
+        }
+        // Si ya existen multas o abonos a multas en rubrosPendientesItems, marcar como consumidos
+        // los movimientos de fondos de multas para evitar duplicación fantasma con código RU01
+        if (rubrosPendientesItems.some(r => r.cp === 'MU01' || r.cp === 'MG01' || r.descripcion.toLowerCase().includes('multa') || r.descripcion.toLowerCase().includes('minga'))) {
+          movsComprobante
+            .filter(m => esFondoMultas(m.id_fondo, m.concepto))
             .forEach(m => idsFondosConsumidos.add(m.id));
         }
 
@@ -594,8 +689,9 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
           for (const fe of fondosExtras) {
             const key = fe.id_fondo || 'extra';
             const mVal = Number(fe.ingreso || 0);
-            const rawDesc = (fe.concepto || 'Rubro Comunitario').split(' - ')[1] || fe.concepto || 'Rubro Comunitario';
-            const cleanDesc = rawDesc.replace(/\(\$[0-9.]+\)/, '').trim();
+            const fInfo = fe.id_fondo ? fondosMap.get(fe.id_fondo) : null;
+            const descFondo = fInfo?.nombre || (fe.concepto || 'Rubro Comunitario').split(' - ')[1] || fe.concepto || 'Rubro Comunitario';
+            const cleanDesc = descFondo.replace(/\(\$[0-9.]+\)/, '').trim();
             if (agrupados.has(key)) {
               agrupados.get(key)!.monto += mVal;
             } else {
@@ -612,15 +708,6 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
               aPagarCobrado: Math.round(val.monto * 100) / 100
             });
           }
-        } else {
-          rubrosPendientesItems.push({
-            cp: 'RU01',
-            ca: '01',
-            descripcion: 'Pago Rubro / Obligación Comunitaria',
-            valorTotal: diferencia,
-            saldoRestante: 0,
-            aPagarCobrado: diferencia
-          });
         }
       }
     }
@@ -642,8 +729,9 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
       ? 'DEUDA ANTERIOR / SALDO HISTÓRICO'
       : periodoConsumoTexto;
 
-    const esTerceraEdad = ValidationRules.calcularEsTerceraEdad(socio.fecha_nacimiento as string) || Boolean(socio.es_tercera_edad);
-    const codigoBarras = (factura.numero_factura || 'FAC-202608-0001').replace(/[^a-zA-Z0-9]/g, '');
+    const esTerceraEdad = esTerceraEdadCalc;
+    const compNumFinal = movsComprobante[0]?.numero_comprobante || factura.numero_factura || `REC-${factura.id.slice(0, 8)}`;
+    const codigoBarras = compNumFinal.replace(/[^a-zA-Z0-9]/g, '');
 
     res.json({
       success: true,
@@ -657,9 +745,9 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
         comprobante: {
           id: factura.id,
           numeroFactura: factura.numero_factura || `FAC-${factura.id.slice(0, 8)}`,
-          numeroComprobante: (movsComprobante[0]?.numero_comprobante || factura.numero_factura || `1211036816-01`),
+          numeroComprobante: compNumFinal,
           fechaHoraAut: fechaHoraFormateada,
-          codigoBarras: codigoBarras || 'ABC0123456789ABC',
+          codigoBarras: codigoBarras,
           metodoPago: factura.metodo_pago || 'EFECTIVO',
           cajeroNombre: cajero?.nombre_completo || req.user?.username || 'Cajero Responsable',
           esAbono: esAbonoFactura,
@@ -686,10 +774,10 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
         },
         detalleValores: {
           consumoMes: consumoMesItems,
-          subtotalConsumoMes: Number((cobradoBase + cobradoExc + cobradoAlcant).toFixed(2)),
+          subtotalConsumoMes: Number(subtotalConsumo.toFixed(2)),
           rubrosPendientes: rubrosPendientesItems,
-          subtotalRubrosPendientes: subtotalRubros,
-          totalFactura: Number(totalFactura.toFixed(2)),
+          subtotalRubrosPendientes: Number(subtotalRubros.toFixed(2)),
+          totalFactura: Number(totalCobrado.toFixed(2)),
           totalCobrado: Number(totalCobrado.toFixed(2)),
           saldoPendienteTotal: Number(saldoPendienteTotal.toFixed(2))
         }

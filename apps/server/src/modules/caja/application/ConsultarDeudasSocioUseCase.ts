@@ -46,7 +46,10 @@ export class ConsultarDeudasSocioUseCase {
     // 1. Desglosar Facturas Pendientes (Agua activa, periodos cerrados, deudas anteriores)
     for (const f of facturas) {
       const fNum = String(f.numero_factura || f.id || '');
-      const esDeudaHistorica = fNum.startsWith('FAC-JUL-') || String(f.id_periodo || '').includes('000000000000');
+      const esDeudaHistorica = (Number(f.valor_deuda_anterior || 0) > 0 && Number(f.total_mes || 0) === 0) ||
+        !f.id_periodo ||
+        String(f.id_periodo).includes('000000000000') ||
+        (activePeriodId ? f.id_periodo !== activePeriodId : false);
       const esPeriodoActivo = !esDeudaHistorica && Boolean(activePeriodId && (f.id_periodo === activePeriodId || f.periodo_codigo === activePeriod?.periodo_codigo));
 
       // Buscar medidor específico asociado a la factura
@@ -68,8 +71,10 @@ export class ConsultarDeudasSocioUseCase {
       let saldo = 0;
       if (esPeriodoActivo) {
         saldo = totalAguaCalculado;
+      } else if (f.saldo_pendiente !== undefined && f.saldo_pendiente !== null) {
+        saldo = Number(f.saldo_pendiente);
       } else {
-        saldo = Number(f.saldo_pendiente ?? f.total_pagar ?? f.total_mes ?? f.total ?? 0);
+        saldo = Number((Number(f.total_mes) > 0 ? f.total_mes : f.total_pagar) || 0);
       }
 
       if (saldo <= 0) continue;
@@ -82,11 +87,12 @@ export class ConsultarDeudasSocioUseCase {
       }
 
       const pObj = periodos.find((p) => p.id === f.id_periodo);
-      const pNombre = pObj?.nombre || pObj?.periodo_codigo || (esPeriodoActivo ? (activePeriod?.nombre || 'Septiembre 2026') : 'Anterior');
+      const pNombre = pObj?.nombre || pObj?.periodo_codigo || (esPeriodoActivo ? (activePeriod?.nombre || 'Período Activo') : 'Anterior');
 
       let concepto = `Planilla de Agua #${fNum}`;
       if (esDeudaHistorica) {
-        concepto = numMed ? `Deuda Anterior Corte Julio 2026 - Medidor #${numMed} (#${fNum})` : `Deuda Anterior Corte Julio 2026 (#${fNum})`;
+        const perTxt = pObj?.nombre || pObj?.periodo_codigo ? ` (Corte ${pObj?.nombre || pObj?.periodo_codigo})` : '';
+        concepto = numMed ? `Deuda Anterior${perTxt} - Medidor #${numMed} (#${fNum})` : `Deuda Anterior${perTxt} (#${fNum})`;
       } else if (esPeriodoActivo) {
         concepto = numMed ? `Consumo de Agua del Mes - Medidor #${numMed} (#${fNum})` : `Consumo de Agua del Mes - ${pNombre} (#${fNum})`;
       } else {

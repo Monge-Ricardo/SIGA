@@ -84,7 +84,10 @@ export class ProcesarCobroUseCase {
         throw new Error(`Factura ${item.idReferencia} no encontrada.`);
       }
 
-      const saldoActual = Number(fac.saldo_pendiente ?? fac.total_pagar ?? 0);
+      const saldoActual = fac.saldo_pendiente !== undefined && fac.saldo_pendiente !== null
+        ? Number(fac.saldo_pendiente)
+        : Number((Number(fac.total_mes) > 0 ? fac.total_mes : fac.total_pagar) || 0);
+
       if (item.montoACobrar > saldoActual + 0.001) {
         throw new Error(
           `El monto a cobrar ($${item.montoACobrar.toFixed(2)}) supera el saldo de la factura ${fac.numero_factura} ($${saldoActual.toFixed(2)}).`
@@ -98,11 +101,11 @@ export class ProcesarCobroUseCase {
         id: fac.id,
         patch: {
           estado_pago: estaExtinguida ? 'PAGADO' : 'PENDIENTE',
-          total_pagar: estaExtinguida ? Number(fac.total_pagar || item.montoACobrar) : nuevoSaldo,
-          valor_multas: 0,
-          fecha_pago: now,
-          metodo_pago: dto.metodoPago,
-          id_cajero: rawCajeroId,
+          total_pagar: estaExtinguida ? Number(fac.total_mes || fac.total_pagar || item.montoACobrar) : nuevoSaldo,
+          valor_multas: 0.00, // @deprecated: Multas gestionadas de forma independiente
+          fecha_pago: estaExtinguida ? now : (fac.fecha_pago || null),
+          metodo_pago: estaExtinguida ? dto.metodoPago : (fac.metodo_pago || null),
+          id_cajero: estaExtinguida ? rawCajeroId : (fac.id_cajero || null),
           updated_at: now
         }
       });
@@ -120,11 +123,12 @@ export class ProcesarCobroUseCase {
         nombreSocio: nombreCompleto
       });
 
-      const descFac = fac.numero_factura?.startsWith('FAC-JUL-')
-        ? `Deuda Anterior Corte Julio 2026 (#${fac.numero_factura})`
+      const esDeudaHist = Number(fac.valor_deuda_anterior || 0) > 0 && Number(fac.total_mes || 0) === 0;
+      const descFac = esDeudaHist
+        ? `Deuda Anterior / Saldo Histórico (#${fac.numero_factura || fac.id.slice(0, 8)})`
         : (fac.numero_factura ? `Planilla de Agua #${fac.numero_factura}` : 'Planilla de Agua');
 
-      const totalOriginalFac = Number((Number(fac.valor_deuda_anterior || 0) + Number(fac.total_mes || 0) + Number(fac.valor_multas || 0)).toFixed(2));
+      const totalOriginalFac = Number((Number(fac.valor_deuda_anterior || 0) + Number(fac.total_mes || fac.total_pagar || 0)).toFixed(2));
       const valTotFacturado = totalOriginalFac > 0 ? totalOriginalFac : saldoActual;
 
       rubrosLiquidados.push({

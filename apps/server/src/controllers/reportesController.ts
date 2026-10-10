@@ -305,14 +305,15 @@ export const getReporteConsolidado = async (_req: AuthenticatedRequest, res: Res
     let baseAgua = 0;
     let excedentes = 0;
     let alcantarillado = 0;
-    let multas = 0;
 
     facturasPagadas.forEach((f) => {
       baseAgua += Number(f.valor_base || 0);
       excedentes += Number(f.valor_excedente || 0);
       alcantarillado += Number(f.valor_alcantarillado || 0);
-      multas += Number(f.valor_multas || 0);
     });
+
+    const multasMovs = movimientos.filter((m) => m.id_fondo === FONDO_IDS.MULTAS_EXTRAS && m.tipo === 'INGRESO');
+    const multas = Number(multasMovs.reduce((acc, m) => acc + Number(m.ingreso || 0), 0).toFixed(2));
 
     // Desglose de saldos por fondos comunitarios
     const distribucionFacturas: Record<string, number> = {
@@ -342,12 +343,12 @@ export const getReporteConsolidado = async (_req: AuthenticatedRequest, res: Res
         .filter((m) => m.tipo === 'EGRESO')
         .reduce((acc, m) => acc + Number(m.egreso || 0), 0);
 
-      const fIngresosManuales = fMovs
-        .filter((m) => m.tipo === 'INGRESO' && !m.id_factura)
+      const fIngresosMovimientos = fMovs
+        .filter((m) => m.tipo === 'INGRESO')
         .reduce((acc, m) => acc + Number(m.ingreso || 0), 0);
 
       const fIngresosFacturas = distribucionFacturas[f.id as string] || 0;
-      const fIngresosTotal = Number((fIngresosFacturas + fIngresosManuales).toFixed(2));
+      const fIngresosTotal = Number((Math.max(fIngresosMovimientos, fIngresosFacturas)).toFixed(2));
       const fSaldo = Number((fIngresosTotal - fEgresos).toFixed(2));
 
       return {

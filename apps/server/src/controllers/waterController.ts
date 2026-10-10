@@ -501,9 +501,10 @@ export const getSocioById = async (req: AuthenticatedRequest, res: Response): Pr
     const socioFacs = facRes.data || [];
     const socioMuls = mulRes.data || [];
     const deudaAgua = socioFacs.reduce((acc, f) => {
-      const sal = f.saldo_pendiente !== undefined && f.saldo_pendiente !== null ? Number(f.saldo_pendiente) : Number(f.total_pagar || 0);
-      const mulInFac = Number(f.valor_multas || 0);
-      return acc + Math.max(0, sal - mulInFac);
+      const sal = f.saldo_pendiente !== undefined && f.saldo_pendiente !== null
+        ? Number(f.saldo_pendiente)
+        : Number((Number(f.total_mes) > 0 ? f.total_mes : f.total_pagar) || 0);
+      return acc + Math.max(0, sal);
     }, 0);
     const deudaMultas = socioMuls.reduce((acc, m) => acc + Number(m.saldo_pendiente ?? m.monto ?? 0), 0);
     const deuda = Number((deudaAgua + deudaMultas).toFixed(2));
@@ -732,9 +733,10 @@ export const getSocioEstadoCuenta = async (req: AuthenticatedRequest, res: Respo
       rubrosAlcant.reduce((acc, m) => acc + Number(m.saldo_pendiente ?? m.monto ?? 0), 0).toFixed(2)
     );
     const totalDeudaAgua = facturasPendientes.reduce((acc, f) => {
-      const sal = f.saldoPendiente !== undefined && f.saldoPendiente !== null ? Number(f.saldoPendiente) : Number(f.totalPagar || 0);
-      const mulInFac = Number(f.valorMultas || 0);
-      return acc + Math.max(0, sal - mulInFac);
+      const sal = f.saldoPendiente !== undefined && f.saldoPendiente !== null
+        ? Number(f.saldoPendiente)
+        : Number((Number(f.totalMes) > 0 ? f.totalMes : f.totalPagar) || 0);
+      return acc + Math.max(0, sal);
     }, 0);
     const totalMultas = Number(
       multasOtras.reduce((acc, m) => acc + Number(m.saldo_pendiente ?? m.monto ?? 0), 0).toFixed(2)
@@ -4122,23 +4124,14 @@ export const getMultas = async (req: AuthenticatedRequest, res: Response): Promi
 };
 
 /**
- * Recalcula y sincroniza el valor_multas y total_pagar de las prefacturas/facturas
- * pendientes de un socio con el total real de multas/rubros impagos en multas_rubros.
+ * @deprecated Las facturas de agua ya no concentran multas comunitarias.
+ * Cada entidad mantiene su propio saldo independiente en multas_rubros.
+ * Esta función asegura que las prefacturas pendientes de agua reflejen únicamente su consumo mensual.
  */
 export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
   if (!idSocio) return;
   try {
-    // 1. Obtener todas las multas y rubros pendientes no pagados del socio
-    const multasRes = await supabaseClient.fetchRecords<Record<string, any>>(
-      'multas_rubros',
-      `id_socio=eq.${encodeURIComponent(idSocio)}&pagado=eq.false`
-    );
-    const multas = multasRes.data || [];
-    const nuevoValorMultas = Number(
-      multas.reduce((sum, m) => sum + Number(m.saldo_pendiente ?? m.monto ?? 0), 0).toFixed(2)
-    );
-
-    // 2. Obtener prefacturas pendientes del socio
+    // 1. Obtener prefacturas pendientes del socio
     const facsRes = await supabaseClient.fetchRecords<Record<string, any>>(
       'facturas',
       `id_socio=eq.${encodeURIComponent(idSocio)}&estado_pago=eq.PENDIENTE&order=created_at.asc`
@@ -4146,33 +4139,19 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
     const pendingFacs = facsRes.data || [];
     if (pendingFacs.length === 0) return;
 
-    // Obtener mapa de periodos y periodo activo
     const periodosMap = await getPeriodosMap();
-    const pActiveRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'estado=eq.ABIERTO&limit=1');
-    const activePeriodId = pActiveRes.data && pActiveRes.data.length > 0 ? pActiveRes.data[0].id : null;
-
-    // La factura que debe concentrar las multas es la del periodo activo (o la más reciente si no hay)
-    let targetFac = pendingFacs.find((f) => activePeriodId && f.id_periodo === activePeriodId);
-    if (!targetFac) {
-      targetFac = pendingFacs[pendingFacs.length - 1];
-    }
-
     const now = new Date().toISOString();
 
     for (const fac of pendingFacs) {
-      const isTarget = fac.id === targetFac.id;
-      const vMultas = isTarget ? nuevoValorMultas : 0;
       const pObj = fac.id_periodo ? periodosMap.get(fac.id_periodo) : null;
       const pCod = pObj?.periodo_codigo || pObj?.codigo || fac.periodo_codigo || '';
       const isCorte = isPeriodoCorte(pCod);
 
       const totMes = Number(fac.total_mes ?? 0);
       const vDeudaAnt = Number(fac.valor_deuda_anterior ?? 0);
-      // En facturas de corte inicial (Julio 2026), valor_deuda_anterior es el saldo total de corte y total_mes era igual a él;
-      // no deben sumarse entre sí para no duplicar el valor.
       const nuevoTotalPagar = isCorte
         ? Number((vDeudaAnt || totMes).toFixed(2))
-        : Number((totMes + vDeudaAnt + vMultas).toFixed(2));
+        : Number((totMes + vDeudaAnt).toFixed(2));
 
       const nuevoEstado = nuevoTotalPagar <= 0.001 ? 'PAGADO' : 'PENDIENTE';
 
@@ -4180,7 +4159,7 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
         method: 'PATCH',
         headers: { Prefer: 'return=representation' },
         body: {
-          valor_multas: vMultas,
+          valor_multas: 0.00, // @deprecated: multas viven exclusivamente en multas_rubros
           total_pagar: nuevoTotalPagar,
           total_mes: isCorte ? 0.00 : totMes,
           estado_pago: nuevoEstado,
@@ -4189,7 +4168,7 @@ export async function syncSocioPendingFacturas(idSocio: string): Promise<void> {
       });
     }
   } catch (err) {
-    console.warn(`[syncSocioPendingFacturas] Advertencia recalculando prefacturas para socio ${idSocio}:`, err);
+    console.warn(`[syncSocioPendingFacturas] Advertencia saneando prefacturas para socio ${idSocio}:`, err);
   }
 }
 

@@ -154,6 +154,17 @@ export function renderComprobanteEnDOM(data, targetContainer = 'printableReceipt
   // 5. SVG del Código de Barras
   const barcodeSVG = generarBarcodeSVG(comprobante.codigoBarras || comprobante.numeroFactura || 'ABC0123456789ABC');
 
+  const subtotalConsumo = Number((detalleValores?.subtotalConsumoMes !== undefined
+    ? detalleValores.subtotalConsumoMes
+    : itemsConsumoMes.reduce((acc, it) => acc + Number(it.aPagarCobrado || 0), 0)).toFixed(2));
+
+  const subtotalRubros = Number((detalleValores?.subtotalRubrosPendientes !== undefined
+    ? detalleValores.subtotalRubrosPendientes
+    : itemsRubrosPend.reduce((acc, it) => acc + Number(it.aPagarCobrado || 0), 0)).toFixed(2));
+
+  const totalCobradoGeneral = Number((detalleValores?.totalCobrado || detalleValores?.totalFactura || (subtotalConsumo + subtotalRubros) || 0).toFixed(2));
+  const saldoPendienteGeneral = Number(detalleValores?.saldoPendienteTotal || comprobante.saldoPendiente || 0);
+
   // Subtablas dinámicas: Solo se renderizan si tienen rubros cobrados o facturados
   const subtablaConsumoMesHTML = itemsConsumoMes.length > 0 ? `
     <div class="comp-subtable-title">Consumo del Mes</div>
@@ -171,6 +182,12 @@ export function renderComprobanteEnDOM(data, targetContainer = 'printableReceipt
       <tbody>
         ${rowsConsumoMes}
       </tbody>
+      <tfoot>
+        <tr style="background: #f0f9ff; font-weight: 700; border-top: 1.5px solid #0284c7;">
+          <td colspan="5" style="text-align: right; padding: 4px 8px; color: #0369a1; font-size: 0.8rem;">SUBTOTAL CONSUMO AGUA:</td>
+          <td style="text-align: right; padding: 4px 8px; color: #0284c7; font-size: 0.88rem;">$${subtotalConsumo.toFixed(2)}</td>
+        </tr>
+      </tfoot>
     </table>
   ` : '';
 
@@ -190,6 +207,12 @@ export function renderComprobanteEnDOM(data, targetContainer = 'printableReceipt
       <tbody>
         ${rowsRubrosPend}
       </tbody>
+      <tfoot>
+        <tr style="background: #f8fafc; font-weight: 700; border-top: 1.5px solid #64748b;">
+          <td colspan="5" style="text-align: right; padding: 4px 8px; color: #334155; font-size: 0.8rem;">SUBTOTAL RUBROS Y SANCIONES:</td>
+          <td style="text-align: right; padding: 4px 8px; color: #0f172a; font-size: 0.88rem;">$${subtotalRubros.toFixed(2)}</td>
+        </tr>
+      </tfoot>
     </table>
   ` : '';
 
@@ -304,21 +327,32 @@ export function renderComprobanteEnDOM(data, targetContainer = 'printableReceipt
           ${(() => {
             const esAbonoFinal = Boolean(
               comprobante.esAbono ||
-              (detalleValores?.saldoPendienteTotal && Number(detalleValores.saldoPendienteTotal) > 0) ||
+              (saldoPendienteGeneral > 0) ||
               (itemsRubrosPend && itemsRubrosPend.some((r) => Number(r.saldoRestante || 0) > 0)) ||
               (comprobante.tipoTransaccion && String(comprobante.tipoTransaccion).includes('ABONO'))
             );
             return `
               <div class="comp-stamp-badge ${esAbonoFinal ? 'badge-abono' : 'badge-cancelado'}">
-                ${esAbonoFinal ? 'ABONO REGISTRADO' : '✓ TOTAL CANCELADO'}
+                ${esAbonoFinal ? 'ABONO PARCIAL REGISTRADO' : '✓ TOTAL CANCELADO'}
               </div>
             `;
           })()}
         </div>
         <div class="comp-footer-right">
-          <div class="comp-total-box">
-            <span class="comp-total-lbl">VALOR TOTAL FACTURA</span>
-            <span class="comp-total-num">${Number(detalleValores.totalCobrado || detalleValores.totalFactura || 0).toFixed(2)}</span>
+          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 3px;">
+            ${(itemsConsumoMes.length > 0 && itemsRubrosPend.length > 0) ? `
+              <div style="font-size: 0.78rem; color: #475569;">Subtotal Agua: <strong>$${subtotalConsumo.toFixed(2)}</strong></div>
+              <div style="font-size: 0.78rem; color: #475569;">Subtotal Rubros/Multas: <strong>$${subtotalRubros.toFixed(2)}</strong></div>
+            ` : ''}
+            <div class="comp-total-box" style="margin-top: 2px;">
+              <span class="comp-total-lbl">TOTAL COBRADO</span>
+              <span class="comp-total-num">$${totalCobradoGeneral.toFixed(2)}</span>
+            </div>
+            ${saldoPendienteGeneral > 0 ? `
+              <div style="font-size: 0.78rem; font-weight: 700; color: #dc2626; margin-top: 2px;">
+                Saldo Pendiente Socio: $${saldoPendienteGeneral.toFixed(2)}
+              </div>
+            ` : ''}
           </div>
         </div>
       </div>
@@ -664,6 +698,14 @@ export async function cargarYMostrarComprobante(facturaId, fallbackCobro = null)
         <p style="font-weight: 700; font-size: 0.95rem;">Cargando comprobante oficial desde el servidor...</p>
       </div>
     `;
+  }
+
+  // Si se dispone de los datos exactos del cobro recién procesado con sus rubros liquidados en memoria,
+  // los priorizamos de inmediato para garantizar consistencia perfecta de centavos y rubros.
+  if (fallbackCobro && (fallbackCobro.rubrosLiquidados || fallbackCobro.items)) {
+    const fallbackData = transformarCobroLocalAComprobante(fallbackCobro);
+    renderComprobanteEnDOM(fallbackData, container);
+    return;
   }
 
   try {
