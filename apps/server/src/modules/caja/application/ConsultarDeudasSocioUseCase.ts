@@ -1,5 +1,6 @@
 import { SupabaseCajaRepository } from '../infrastructure/SupabaseCajaRepository.ts';
 import type { ConsultarDeudasSocioResponseDTO, RubroPendienteSocioDTO } from '../domain/CajaDTOs.ts';
+import { isPeriodoCorte } from '../../../controllers/financeController.ts';
 
 export class ConsultarDeudasSocioUseCase {
   private readonly cajaRepo: SupabaseCajaRepository;
@@ -46,11 +47,17 @@ export class ConsultarDeudasSocioUseCase {
     // 1. Desglosar Facturas Pendientes (Agua activa, periodos cerrados, deudas anteriores)
     for (const f of facturas) {
       const fNum = String(f.numero_factura || f.id || '');
-      const esDeudaHistorica = (Number(f.valor_deuda_anterior || 0) > 0 && Number(f.total_mes || 0) === 0) ||
-        !f.id_periodo ||
-        String(f.id_periodo).includes('000000000000') ||
-        (activePeriodId ? f.id_periodo !== activePeriodId : false);
-      const esPeriodoActivo = !esDeudaHistorica && Boolean(activePeriodId && (f.id_periodo === activePeriodId || f.periodo_codigo === activePeriod?.periodo_codigo));
+      const pObj = periodos.find((p) => p.id === f.id_periodo);
+      const pCodigo = String(pObj?.periodo_codigo || f.periodo_codigo || '').trim();
+
+      // Regla Contable Macro:
+      // Solo es DEUDA_HISTORICA_CORTE si el periodo es <= 2026-07 (corte inicial de julio hacia atras)
+      // o si es una deuda inicial sin lecturas ni periodo asignado.
+      const esCorteInicial = isPeriodoCorte(pCodigo) ||
+        (!f.id_periodo && Number(f.total_mes || 0) === 0 && !f.id_lectura && Number(f.consumo_m3 || 0) === 0);
+
+      // Periodo activo: periodo abierto actualmente
+      const esPeriodoActivo = !esCorteInicial && Boolean(activePeriodId && (f.id_periodo === activePeriodId || pCodigo === activePeriod?.periodo_codigo));
 
       // Buscar medidor específico asociado a la factura
       const medObj = f.id_medidor ? medMap.get(f.id_medidor) : null;
@@ -80,17 +87,16 @@ export class ConsultarDeudasSocioUseCase {
       if (saldo <= 0) continue;
 
       let tipo: RubroPendienteSocioDTO['tipo'] = 'AGUA_PERIODO_ANTERIOR';
-      if (esDeudaHistorica) {
+      if (esCorteInicial) {
         tipo = 'DEUDA_HISTORICA_CORTE';
       } else if (esPeriodoActivo) {
         tipo = 'AGUA_PERIODO_ACTIVO';
       }
 
-      const pObj = periodos.find((p) => p.id === f.id_periodo);
       const pNombre = pObj?.nombre || pObj?.periodo_codigo || (esPeriodoActivo ? (activePeriod?.nombre || 'Período Activo') : 'Anterior');
 
       let concepto = `Planilla de Agua #${fNum}`;
-      if (esDeudaHistorica) {
+      if (esCorteInicial) {
         const perTxt = pObj?.nombre || pObj?.periodo_codigo ? ` (Corte ${pObj?.nombre || pObj?.periodo_codigo})` : '';
         concepto = numMed ? `Deuda Anterior${perTxt} - Medidor #${numMed} (#${fNum})` : `Deuda Anterior${perTxt} (#${fNum})`;
       } else if (esPeriodoActivo) {

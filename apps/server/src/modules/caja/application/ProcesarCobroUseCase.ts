@@ -1,7 +1,8 @@
 import { SupabaseCajaRepository } from '../infrastructure/SupabaseCajaRepository.ts';
 import { CobroTransaction } from '../domain/CobroTransaction.ts';
 import { DistribucionFondosStrategy, type ItemLiquidadoContext } from '../domain/DistribucionFondosStrategy.ts';
-import type { RegistrarCobroRequestDTO, RegistrarCobroResponseDTO } from '../domain/CajaDTOs.ts';
+import type { RegistrarCobroRequestDTO, RegistrarCobroResponseDTO, TipoRubroCobro } from '../domain/CajaDTOs.ts';
+import { isPeriodoCorte } from '../../../controllers/financeController.ts';
 import crypto from 'node:crypto';
 
 export class ProcesarCobroUseCase {
@@ -29,11 +30,16 @@ export class ProcesarCobroUseCase {
       }
     }
 
-    // 2. Verificar existencia del socio (por ID, código, cédula o medidor)
-    const socio = await this.cajaRepo.getSocioInfo(rawSocioId);
+    const [socio, periodos] = await Promise.all([
+      this.cajaRepo.getSocioInfo(rawSocioId),
+      typeof this.cajaRepo.getPeriodos === 'function' ? this.cajaRepo.getPeriodos() : Promise.resolve([])
+    ]);
     if (!socio) {
       throw new Error(`Socio con ID o identificador '${rawSocioId}' no encontrado.`);
     }
+
+    const activePeriod = periodos.find((p: any) => (p.estado || '').toUpperCase() === 'ABIERTO') || periodos[periodos.length - 1];
+    const activePeriodId = activePeriod?.id;
 
     const socioId = socio.id;
 
@@ -110,8 +116,24 @@ export class ProcesarCobroUseCase {
         }
       });
 
+      const pObj = periodos.find((p: any) => p.id === fac.id_periodo);
+      const pCodigo = String(pObj?.periodo_codigo || fac.periodo_codigo || '').trim();
+      const esCorteInicial = isPeriodoCorte(pCodigo) ||
+        (!fac.id_periodo && Number(fac.total_mes || 0) === 0 && !fac.id_lectura && Number(fac.consumo_m3 || 0) === 0);
+
+      // Regla Macro: Si el periodo es a partir de Agosto 2026 (> 2026-07) o registra consumo/lectura,
+      // es AGUA_PERIODO_ANTERIOR (o ACTIVO). Solo el corte inicial <= 2026-07 es DEUDA_HISTORICA_CORTE.
+      let tipoReal: TipoRubroCobro = item.tipo;
+      if (esCorteInicial) {
+        tipoReal = 'DEUDA_HISTORICA_CORTE';
+      } else if (activePeriodId && fac.id_periodo === activePeriodId) {
+        tipoReal = 'AGUA_PERIODO_ACTIVO';
+      } else if (pCodigo > '2026-07' || Number(fac.total_mes || 0) > 0 || Number(fac.valor_base || 0) > 0 || Boolean(fac.id_lectura)) {
+        tipoReal = 'AGUA_PERIODO_ANTERIOR';
+      }
+
       itemsLiquidacionFondos.push({
-        tipo: item.tipo,
+        tipo: tipoReal,
         idReferencia: fac.id,
         idFactura: fac.id,
         numeroComprobante: numeroRecibo,
@@ -123,8 +145,7 @@ export class ProcesarCobroUseCase {
         nombreSocio: nombreCompleto
       });
 
-      const esDeudaHist = Number(fac.valor_deuda_anterior || 0) > 0 && Number(fac.total_mes || 0) === 0;
-      const descFac = esDeudaHist
+      const descFac = esCorteInicial
         ? `Deuda Anterior / Saldo Histórico (#${fac.numero_factura || fac.id.slice(0, 8)})`
         : (fac.numero_factura ? `Planilla de Agua #${fac.numero_factura}` : 'Planilla de Agua');
 
@@ -132,7 +153,7 @@ export class ProcesarCobroUseCase {
       const valTotFacturado = totalOriginalFac > 0 ? totalOriginalFac : saldoActual;
 
       rubrosLiquidados.push({
-        tipo: item.tipo,
+        tipo: tipoReal,
         idReferencia: fac.id,
         descripcion: item.descripcion || descFac,
         valorTotal: valTotFacturado,
