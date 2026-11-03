@@ -138,7 +138,27 @@ export class SupabaseCajaRepository {
   }): Promise<void> {
     const now = params.fechaPago;
 
-    // 1. Asentar en fondos_movimientos
+    // 1. Si se emitió una factura/recibo independiente, insertarlo PRIMERO en facturas
+    // Esto garantiza que la clave foránea exista antes de insertar en fondos_movimientos o rubros_abonos
+    if (params.nuevoReciboFactura) {
+      const res = await supabaseClient.syncRecord('facturas', params.nuevoReciboFactura);
+      if (res.error) {
+        throw new Error(`Error creando comprobante de cobro: ${res.error}`);
+      }
+    }
+
+    // 2. Actualizar facturas existentes (marcar como pagadas o actualizar saldo pendiente)
+    for (const fa of params.facturasActualizaciones) {
+      const res = await supabaseClient.request(`facturas?id=eq.${encodeURIComponent(fa.id)}`, {
+        method: 'PATCH',
+        body: fa.patch
+      });
+      if (res.error) {
+        throw new Error(`Error actualizando factura ${fa.id}: ${res.error}`);
+      }
+    }
+
+    // 3. Asentar en fondos_movimientos (ahora id_factura siempre existe previamente en facturas)
     const isUuid = (val?: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val || '');
     const validFacturaIds = new Set<string>();
     for (const fa of params.facturasActualizaciones) {
@@ -170,25 +190,6 @@ export class SupabaseCajaRepository {
       const res = await supabaseClient.syncRecord('fondos_movimientos', mov);
       if (res.error) {
         throw new Error(`Error asentando en fondos_movimientos: ${res.error}`);
-      }
-    }
-
-    // 2. Actualizar facturas
-    for (const fa of params.facturasActualizaciones) {
-      const res = await supabaseClient.request(`facturas?id=eq.${encodeURIComponent(fa.id)}`, {
-        method: 'PATCH',
-        body: fa.patch
-      });
-      if (res.error) {
-        throw new Error(`Error actualizando factura ${fa.id}: ${res.error}`);
-      }
-    }
-
-    // 3. Si se emitió una factura/recibo independiente
-    if (params.nuevoReciboFactura) {
-      const res = await supabaseClient.syncRecord('facturas', params.nuevoReciboFactura);
-      if (res.error) {
-        throw new Error(`Error creando comprobante de cobro: ${res.error}`);
       }
     }
 

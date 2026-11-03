@@ -171,12 +171,13 @@ export class ProcesarCobroUseCase {
 
     if (facturasActualizaciones.length === 0 && itemsMultas.length > 0) {
       reciboFacturaId = crypto.randomUUID();
+      const fallbackPeriodId = activePeriodId || (Array.isArray(periodos) && periodos.length > 0 ? periodos[0].id : '33333333-0000-0000-0000-000000000000');
       nuevoReciboFactura = {
         id: reciboFacturaId,
         numero_factura: numeroRecibo,
         id_socio: socioId,
         id_medidor: null,
-        id_periodo: null,
+        id_periodo: fallbackPeriodId,
         id_lectura: null,
         es_tercera_edad: es3ra,
         valor_base: 0,
