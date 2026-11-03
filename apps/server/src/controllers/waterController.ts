@@ -3548,8 +3548,7 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
               monto_pagado: montoPagadoNuevo,
               saldo_pendiente: saldoRestante,
               estado: nuevoEstado,
-              pagado: saldoRestante === 0,
-              id_factura: factura.id
+              pagado: saldoRestante === 0
             }
           });
 
@@ -3588,8 +3587,7 @@ export const cobrarFactura = async (req: AuthenticatedRequest, res: Response): P
                 monto_pagado: Number((rubro.monto || saldoAnterior).toFixed(2)),
                 saldo_pendiente: 0.00,
                 estado: 'PAGADO',
-                pagado: true,
-                id_factura: factura.id
+                pagado: true
               }
             });
 
@@ -3853,8 +3851,7 @@ export const deleteFactura = async (req: AuthenticatedRequest, res: Response): P
                 saldo_pendiente: nuevoSaldo,
                 monto_pagado: nuevoPagado,
                 estado: nuevoSaldo > 0 ? (nuevoPagado > 0 ? 'PARCIAL' : 'PENDIENTE') : 'PAGADO',
-                pagado: nuevoSaldo === 0,
-                id_factura: null
+                pagado: nuevoSaldo === 0
               }
             });
           }
@@ -3866,22 +3863,25 @@ export const deleteFactura = async (req: AuthenticatedRequest, res: Response): P
         method: 'DELETE'
       });
 
-      // 3. Revertir multas vinculadas directamente
-      const multasDirectas = await supabaseClient.fetchRecords<Record<string, any>>(
-        'multas_rubros',
-        `id_factura=eq.${encodeURIComponent(canonicalId)}`
-      );
-      for (const m of multasDirectas.data || []) {
-        await supabaseClient.request(`multas_rubros?id=eq.${m.id}`, {
-          method: 'PATCH',
-          body: {
-            saldo_pendiente: m.monto,
-            monto_pagado: 0.00,
-            estado: 'PENDIENTE',
-            pagado: false,
-            id_factura: null
-          }
-        });
+      // 3. Compatibilidad legacy: Revertir multas si existieran registros historicos vinculados directamente
+      try {
+        const multasDirectas = await supabaseClient.fetchRecords<Record<string, any>>(
+          'multas_rubros',
+          `id_factura=eq.${encodeURIComponent(canonicalId)}`
+        );
+        for (const m of multasDirectas.data || []) {
+          await supabaseClient.request(`multas_rubros?id=eq.${m.id}`, {
+            method: 'PATCH',
+            body: {
+              saldo_pendiente: m.monto,
+              monto_pagado: 0.00,
+              estado: 'PENDIENTE',
+              pagado: false
+            }
+          });
+        }
+      } catch {
+        // Ignorar si la columna id_factura ya fue descartada en la BD
       }
 
       // 4. Revertir asientos contables en fondos_movimientos

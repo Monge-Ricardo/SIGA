@@ -981,7 +981,7 @@ class GitSyncEngine {
                   await this.fetchSupabase(`multas_rubros?id=eq.${encodeURIComponent(mId)}`, {
                     method: 'PATCH',
                     headers,
-                    body: JSON.stringify({ pagado: true, id_factura: existingRow.id })
+                    body: JSON.stringify({ pagado: true, estado: 'PAGADO', saldo_pendiente: 0.00 })
                   }).catch(() => {});
                 }
               }
@@ -1077,7 +1077,7 @@ class GitSyncEngine {
                 await this.fetchSupabase(`multas_rubros?id=eq.${encodeURIComponent(mId)}`, {
                   method: 'PATCH',
                   headers,
-                  body: JSON.stringify({ pagado: true, id_factura: body.id })
+                  body: JSON.stringify({ pagado: true, estado: 'PAGADO', saldo_pendiente: 0.00 })
                 }).catch(() => {});
               }
             }
@@ -1921,12 +1921,25 @@ class GitSyncEngine {
         canonicalId = factura.id;
         const numFac = factura.numero_factura;
 
-        // Revertir multas asociadas
+        // Revertir multas asociadas vía rubros_abonos
         if (canonicalId) {
-          await this.fetchSupabase(`multas_rubros?id_factura=eq.${encodeURIComponent(canonicalId)}`, {
-            method: 'PATCH',
-            body: { pagado: false, id_factura: null }
-          });
+          try {
+            const abRes = await this.fetchSupabase(`rubros_abonos?id_factura=eq.${encodeURIComponent(canonicalId)}`);
+            if (abRes.ok) {
+              const abList = await abRes.json();
+              for (const ab of (abList || [])) {
+                if (ab.id_rubro) {
+                  await this.fetchSupabase(`multas_rubros?id=eq.${encodeURIComponent(ab.id_rubro)}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ pagado: false, estado: 'PENDIENTE' })
+                  }).catch(() => {});
+                }
+              }
+              await this.fetchSupabase(`rubros_abonos?id_factura=eq.${encodeURIComponent(canonicalId)}`, {
+                method: 'DELETE'
+              }).catch(() => {});
+            }
+          } catch {}
         }
 
         // Revertir fondos_movimientos

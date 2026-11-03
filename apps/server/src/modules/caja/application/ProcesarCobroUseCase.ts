@@ -219,7 +219,7 @@ export class ProcesarCobroUseCase {
       const nuevoMontoPagado = Number((Number(rubro.monto_pagado || 0) + item.montoACobrar).toFixed(2));
       const estaExtinguido = nuevoSaldo === 0;
 
-      const idFacturaAsociada = rubro.id_factura || primaryFacturaId;
+      const idFacturaAsociada = primaryFacturaId;
 
       const abonoRecord = {
         id: crypto.randomUUID(),
