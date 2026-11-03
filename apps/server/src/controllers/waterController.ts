@@ -1522,9 +1522,6 @@ export const updateMedidor = async (req: AuthenticatedRequest, res: Response): P
       const meds = allMedsRes.data || [];
       const hasAnyAlcant = meds.some((m) => Boolean(m.tiene_alcantarillado) && m.estado !== 'CORTADO');
       const socioPatch: Record<string, unknown> = { tiene_alcantarillado: hasAnyAlcant, updated_at: now };
-      if (updatePayload.numero_medidor) {
-        socioPatch.medidor_numero = updatePayload.numero_medidor;
-      }
       await supabaseClient.request(`socios?id=eq.${socioId}`, {
         method: 'PATCH',
         body: socioPatch
@@ -1580,7 +1577,6 @@ export const deleteMedidor = async (req: AuthenticatedRequest, res: Response): P
         method: 'PATCH',
         body: {
           tiene_alcantarillado: hasAnyAlcant,
-          medidor_numero: (firstActive?.numero_medidor as string) || 'S/N',
           updated_at: now
         }
       }).catch(() => {});
