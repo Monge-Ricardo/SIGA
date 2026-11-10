@@ -122,8 +122,8 @@ export const handlePull = async (req: Request, res: Response): Promise<void> => 
       supabaseClient.fetchRecords<Record<string, unknown>>('socios', 'order=nombres.asc'),
       supabaseClient.fetchRecords<Record<string, unknown>>('sectores', 'order=nombre_sector.asc'),
       supabaseClient.fetchRecords<Record<string, unknown>>('medidores', 'order=created_at.asc'),
-      supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', 'order=fecha_lectura.desc&limit=500'),
-      supabaseClient.fetchRecords<Record<string, unknown>>('facturas', 'order=created_at.desc&limit=500'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('lecturas', 'order=fecha_lectura.desc&limit=5000'),
+      supabaseClient.fetchRecords<Record<string, unknown>>('facturas', 'order=created_at.desc&limit=5000'),
       supabaseClient.fetchRecords<Record<string, unknown>>('periodos', 'order=fecha_inicio.desc')
     ]);
 

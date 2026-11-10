@@ -1,0 +1,32 @@
+[
+  {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "username": "cajero",
+    "password_hash": "462897a842583ab32a08e83dba61f7fd:fe3609476836a2a50f4a9bf4d395048deeb4553befb0f137290a19706ffb4d51154914cbca102556d2903ba6a762ff61d97f022af725eaa86015b529c40c5dc8",
+    "nombre_completo": "Elsa Maribel Miño (Cajera)",
+    "rol": "CAJERO",
+    "activo": true,
+    "created_at": "2026-09-04T03:20:34.603394+00:00",
+    "updated_at": "2026-09-17T04:20:09.252+00:00"
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "username": "admin",
+    "password_hash": "87f41bba8ad569603e056d9ec298afd4:e3609239515146685cd0a261d388bf29746ab65141dbc85c8692a9ccc85cd4bd9c22d637ea3b22eea7a37e964ef31f3531162207aadb0ccefa95fc10bb254ece",
+    "nombre_completo": "Ricardo Monge (Administrador)",
+    "rol": "ADMIN",
+    "activo": true,
+    "created_at": "2026-09-04T03:20:34.603394+00:00",
+    "updated_at": "2026-09-17T11:25:43.181+00:00"
+  },
+  {
+    "id": "00000000-0000-0000-0000-000000000003",
+    "username": "lector",
+    "password_hash": "30ff7ad75bebad4bae71525f1e70179c:a5c1e34fe3a78611d08b625eb2348d71fadb46300678f3741df2ee5faefca4950c10d71c70cf08496d0a524fa2bc8c857ff96ce7f77f997c38f0fd86d6d296bc",
+    "nombre_completo": "Ruben Flores (Lector)",
+    "rol": "LECTOR",
+    "activo": true,
+    "created_at": "2026-09-04T03:20:34.603394+00:00",
+    "updated_at": "2026-09-21T00:21:40.114+00:00"
+  }
+]

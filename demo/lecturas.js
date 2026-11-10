@@ -261,7 +261,29 @@ async function getAllPeriodos() {
   ];
 }
 
+let cachedPeriodos = [];
+let isAvanzandoPeriodo = false;
+
+function getSelectedPeriodoObj() {
+  const cod = getSelectedPeriodo();
+  return cachedPeriodos.find((p) => (p.periodoCodigo || p.periodo_codigo || p.id) === cod) || null;
+}
+
+function updatePeriodoButtonsState() {
+  const btnAvanzar = document.getElementById('btnAvanzarPeriodo');
+  if (!btnAvanzar) return;
+  const selObj = getSelectedPeriodoObj();
+  const isCerrado = Boolean(selObj && selObj.estado && selObj.estado !== 'ABIERTO');
+  btnAvanzar.disabled = isAvanzandoPeriodo || isCerrado;
+  btnAvanzar.style.opacity = (isAvanzandoPeriodo || isCerrado) ? '0.55' : '1';
+  btnAvanzar.style.cursor = (isAvanzandoPeriodo || isCerrado) ? 'not-allowed' : 'pointer';
+  btnAvanzar.title = isCerrado
+    ? `El período ${selObj.periodoCodigo || selObj.periodo_codigo} ya está CERRADO. Seleccione el período activo.`
+    : 'Cerrar período actual, emitir planillas y pasar al siguiente período';
+}
+
 function populatePeriodosSelect(periodos, preferredPeriodo = null) {
+  cachedPeriodos = Array.isArray(periodos) ? periodos : [];
   const select = document.getElementById('selectPeriodo');
   if (!select) return;
 
@@ -290,6 +312,7 @@ function populatePeriodosSelect(periodos, preferredPeriodo = null) {
       select.value = abierto.periodoCodigo || abierto.periodo_codigo;
     }
   }
+  updatePeriodoButtonsState();
 }
 
 function mapLecturasList(rawList, periodo) {
@@ -465,17 +488,7 @@ async function renderLecturasUI() {
     if (btnAvanzar) btnAvanzar.style.display = 'none';
   }
 
-  // Cargar períodos dinámicamente si el select solo tiene opciones estáticas
-  const selectPeriodoEl = document.getElementById('selectPeriodo');
-  if (selectPeriodoEl && (!selectPeriodoEl.dataset.dynamicLoaded || selectPeriodoEl.options.length <= 3)) {
-    const periodos = await getAllPeriodos();
-    populatePeriodosSelect(periodos);
-    selectPeriodoEl.dataset.dynamicLoaded = 'true';
-  }
-
-  const periodo = getSelectedPeriodo();
-
-  // Si hay conexión, sincronizar padrón y deltas con Supabase Cloud para incorporar nuevos socios
+  // Si hay conexión, sincronizar padrón y deltas con Supabase Cloud antes de poblar períodos
   if (navigator.onLine && !syncEngine.isSyncing) {
     try {
       console.log('🔄 [Lecturas UI] Sincronizando padrón de socios con el servidor central...');
@@ -484,6 +497,16 @@ async function renderLecturasUI() {
       console.warn('[Lecturas UI] Aviso en sincronización inicial:', e);
     }
   }
+
+  // Cargar períodos dinámicamente desde la nube / IndexedDB
+  const selectPeriodoEl = document.getElementById('selectPeriodo');
+  if (selectPeriodoEl && (!selectPeriodoEl.dataset.dynamicLoaded || selectPeriodoEl.options.length <= 3)) {
+    const periodos = await getAllPeriodos();
+    populatePeriodosSelect(periodos);
+    selectPeriodoEl.dataset.dynamicLoaded = 'true';
+  }
+
+  const periodo = getSelectedPeriodo();
 
   // 1. Cargar sectores primero desde /api/v1/sectores para tener el mapeo real de sectores
   const sectores = await getAllSectores();
@@ -1311,6 +1334,8 @@ async function actualizarDatosDesdeNube() {
       await syncEngine.pullDeltas().catch(() => {});
     }
 
+    const freshPeriodos = await getAllPeriodos();
+    populatePeriodosSelect(freshPeriodos);
     cachedSectores = await getAllSectores();
     const secMap = new Map(cachedSectores.map((s) => [s.id, s.nombreSector || s.nombre]));
     cachedSocios = await getAllSocios(secMap);
@@ -1440,7 +1465,36 @@ async function exportLecturasCSV(periodo) {
 }
 
 async function avanzarSiguientePeriodo() {
+  if (isAvanzandoPeriodo) return;
+
   const currentPeriodoCodigo = getSelectedPeriodo();
+  const periodoObj = getSelectedPeriodoObj();
+  if (periodoObj && periodoObj.estado && periodoObj.estado !== 'ABIERTO') {
+    await Swal.fire({
+      icon: 'warning',
+      title: 'Período ya Cerrado',
+      text: `El período ${currentPeriodoCodigo} se encuentra en estado ${periodoObj.estado}. Seleccione el período ABIERTO actual para avanzar.`
+    });
+    return;
+  }
+
+  const lecturasReales = (cachedLecturas || []).filter((l) =>
+    l.lecturaActual !== null &&
+    l.lecturaActual !== undefined &&
+    !String(l.observaciones || '').startsWith('Punto de partida') &&
+    !String(l.observaciones || '').startsWith('Apertura automática') &&
+    !String(l.observaciones || '').startsWith('Sin medidor') &&
+    !String(l.numeroMedidor || '').toUpperCase().includes('SN')
+  );
+
+  if (lecturasReales.length === 0) {
+    await Swal.fire({
+      icon: 'warning',
+      title: 'Sin Lecturas de Medidores',
+      text: `El período ${currentPeriodoCodigo} aún no tiene lecturas de medidores registradas en campo. Tome y suba las lecturas antes de pasar al siguiente período.`
+    });
+    return;
+  }
 
   const confirmResult = await Swal.fire({
     title: '⏩ ¿Pasar al Siguiente Período?',
@@ -1466,6 +1520,13 @@ async function avanzarSiguientePeriodo() {
   });
 
   if (!confirmResult.isConfirmed) return;
+
+  isAvanzandoPeriodo = true;
+  const btnAvanzarEl = document.getElementById('btnAvanzarPeriodo');
+  if (btnAvanzarEl) {
+    btnAvanzarEl.disabled = true;
+    btnAvanzarEl.textContent = '⏳ Avanzando...';
+  }
 
   Swal.fire({
     title: 'Avanzando Período...',
@@ -1525,8 +1586,9 @@ async function avanzarSiguientePeriodo() {
       // 3. Recargar períodos y renderizar UI en el nuevo período
       const periodos = await getAllPeriodos();
       populatePeriodosSelect(periodos, nuevoCodigo);
-      if (selectPeriodoEl) {
-        selectPeriodoEl.value = nuevoCodigo;
+      const selectEl = document.getElementById('selectPeriodo');
+      if (selectEl) {
+        selectEl.value = nuevoCodigo;
       }
       await renderLecturasUI();
 
@@ -1563,6 +1625,12 @@ async function avanzarSiguientePeriodo() {
       title: 'Error al Avanzar Período',
       text: err.message || 'Ocurrió un error inesperado al cerrar y avanzar el ciclo.'
     });
+  } finally {
+    isAvanzandoPeriodo = false;
+    if (btnAvanzarEl) {
+      btnAvanzarEl.textContent = '⏩ Pasar al Siguiente Período';
+    }
+    updatePeriodoButtonsState();
   }
 }
 
@@ -1653,6 +1721,7 @@ async function pasarLecturasACajaUI() {
 // Listeners de filtros y acciones
 document.getElementById('selectPeriodo')?.addEventListener('change', async () => {
   const periodo = document.getElementById('selectPeriodo').value;
+  updatePeriodoButtonsState();
   cachedLecturas = await getLecturasPeriodo(periodo);
   renderTableAndMetrics();
 });

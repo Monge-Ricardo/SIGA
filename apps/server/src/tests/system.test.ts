@@ -10,7 +10,13 @@ import { ValidationRules } from '../shared.ts';
 import { supabaseClient } from '../db/supabase.ts';
 import { centralDb } from '../db/connection.ts';
 import { getFacturaComprobante } from '../controllers/comprobanteController.ts';
-import { inicializarLecturasPeriodo } from '../controllers/waterController.ts';
+import {
+  inicializarLecturasPeriodo,
+  avanzarPeriodo,
+  ejecutarPasarLecturasACaja,
+  registrarLectura,
+  resolveReadingPeriodId
+} from '../controllers/waterController.ts';
 
 test('1. Seguridad: Hashing PBKDF2 y JWT HMAC-SHA256', () => {
   const pwd = 'PasswordSegura2026*';
@@ -510,5 +516,267 @@ test('13. Pipeline Genérico de Transición de Período y Línea Base de Lectura
   }
 });
 
+function createMockRes() {
+  let statusCode = 200;
+  let body: any = null;
+  const res: any = {
+    status(code: number) {
+      statusCode = code;
+      return res;
+    },
+    json(payload: any) {
+      body = payload;
+      return res;
+    }
+  };
+  return { res, getStatus: () => statusCode, getBody: () => body };
+}
 
+test('14. Guardas de avanzarPeriodo: bloquea CERRADO, sin lecturas reales y doble clic concurrente', async () => {
+  const origFetch = supabaseClient.fetchRecords.bind(supabaseClient);
+  const origReq = supabaseClient.request.bind(supabaseClient);
+  const origSync = supabaseClient.syncRecord.bind(supabaseClient);
+
+  const P_OCT_ID = 'b8756f10-e25c-443e-8d68-4f917ecc614e';
+  const P_SEP_ID = '7a420bed-0c8f-407c-ab03-6814e98f993e';
+  const MED_REAL_ID = '11111111-1111-1111-1111-111111111001';
+  const MED_SN_ID = '11111111-1111-1111-1111-111111111002';
+  const SOC_ID = '22222222-2222-2222-2222-222222222001';
+
+  let mockMode: 'empty_oct' | 'ready_oct' | 'slow_ready' = 'empty_oct';
+  const syncedRows: Array<{ table: string; record: any }> = [];
+  const patchedEndpoints: Array<{ endpoint: string; body: any }> = [];
+
+  try {
+    supabaseClient.fetchRecords = (async (table: string, query = '') => {
+      if (table === 'periodos') {
+        return {
+          data: [
+            { id: P_OCT_ID, periodo_codigo: '2026-10', nombre: 'Octubre 2026', fecha_inicio: '2026-10-01', fecha_fin: '2026-10-31', estado: 'ABIERTO' },
+            { id: P_SEP_ID, periodo_codigo: '2026-09', nombre: 'Septiembre 2026', fecha_inicio: '2026-09-01', fecha_fin: '2026-09-30', estado: 'CERRADO' }
+          ],
+          error: null
+        };
+      }
+      if (table === 'medidores') {
+        return {
+          data: [
+            { id: MED_REAL_ID, id_socio: SOC_ID, numero_medidor: 'MED-100', tiene_alcantarillado: false, estado: 'ACTIVO' },
+            { id: MED_SN_ID, id_socio: SOC_ID, numero_medidor: 'SN-01', tiene_alcantarillado: false, estado: 'ACTIVO' }
+          ],
+          error: null
+        };
+      }
+      if (table === 'socios') {
+        return { data: [{ id: SOC_ID, nombres: 'Juan', apellidos: 'Pérez', fecha_nacimiento: '1985-01-01' }], error: null };
+      }
+      if (table === 'lecturas') {
+        if (query.includes(P_OCT_ID)) {
+          if (mockMode === 'empty_oct') {
+            return {
+              data: [
+                { id: 'lec-1', id_medidor: MED_REAL_ID, id_socio: SOC_ID, id_periodo: P_OCT_ID, lectura_anterior: 100, lectura_actual: 100, observaciones: 'Punto de partida ciclo 2026-10' },
+                { id: 'lec-2', id_medidor: MED_SN_ID, id_socio: SOC_ID, id_periodo: P_OCT_ID, lectura_anterior: 0, lectura_actual: 0, observaciones: 'Sin medidor - Tarifa fija' }
+              ],
+              error: null
+            };
+          }
+          if (mockMode === 'slow_ready') {
+            await new Promise((r) => setTimeout(r, 80));
+          }
+          return {
+            data: [
+              { id: 'lec-1', id_medidor: MED_REAL_ID, id_socio: SOC_ID, id_periodo: P_OCT_ID, lectura_anterior: 100, lectura_actual: 120, consumo_total: 20, observaciones: 'Toma de lectura en campo' },
+              { id: 'lec-2', id_medidor: MED_SN_ID, id_socio: SOC_ID, id_periodo: P_OCT_ID, lectura_anterior: 0, lectura_actual: 0, consumo_total: 0, observaciones: 'Sin medidor - Tarifa fija' }
+            ],
+            error: null
+          };
+        }
+        return { data: [], error: null };
+      }
+      if (table === 'facturas') return { data: [], error: null };
+      if (table === 'usuarios') return { data: [{ id: '00000000-0000-0000-0000-000000000003', rol: 'LECTOR' }], error: null };
+      return { data: [], error: null };
+    }) as any;
+
+    supabaseClient.request = (async (endpoint: string, options: any = {}) => {
+      if (options.method === 'PATCH') {
+        patchedEndpoints.push({ endpoint, body: options.body });
+      }
+      return { data: [], error: null };
+    }) as any;
+
+    supabaseClient.syncRecord = (async (table: string, record: any) => {
+      syncedRows.push({ table, record });
+      return { success: true };
+    }) as any;
+
+    // A. Bloquear período CERRADO
+    const mockClosed = createMockRes();
+    await avanzarPeriodo({ body: { idPeriodo: '2026-09' }, user: { id: '00000000-0000-0000-0000-000000000001' } } as any, mockClosed.res);
+    assert.strictEqual(mockClosed.getStatus(), 409, 'Debe rechazar avanzar un período ya CERRADO con 409');
+
+    // B. Bloquear período ABIERTO sin lecturas reales de medidores (solo SN y Punto de partida)
+    const mockEmpty = createMockRes();
+    await avanzarPeriodo({ body: { idPeriodo: '2026-10' }, user: { id: '00000000-0000-0000-0000-000000000001' } } as any, mockEmpty.res);
+    assert.strictEqual(mockEmpty.getStatus(), 400, 'Debe rechazar avanzar cuando hay 0 lecturas reales');
+    assert.strictEqual(mockEmpty.getBody()?.code, 'SIN_LECTURAS_REALES');
+
+    // C. Bloquear doble clic concurrente (uno avanza lento -> el segundo recibe 409)
+    mockMode = 'slow_ready';
+    const r1 = createMockRes();
+    const r2 = createMockRes();
+    await Promise.all([
+      avanzarPeriodo({ body: { idPeriodo: '2026-10' }, user: { id: '00000000-0000-0000-0000-000000000001' } } as any, r1.res),
+      avanzarPeriodo({ body: { idPeriodo: '2026-10' }, user: { id: '00000000-0000-0000-0000-000000000001' } } as any, r2.res)
+    ]);
+    const statuses = [r1.getStatus(), r2.getStatus()].sort((a, b) => a - b);
+    assert.deepStrictEqual(statuses, [200, 409], 'Uno debe completar en 200 y el concurrente debe rechazarse con 409');
+
+    // Verificar que no se dispararon PATCHes a medidores y que se creó 2026-11
+    assert.ok(!patchedEndpoints.some((p) => p.endpoint.startsWith('medidores')), 'No debe intentar parchar lectura_anterior en medidores');
+    const createdNov = syncedRows.find((s) => s.table === 'periodos' && s.record.periodo_codigo === '2026-11');
+    assert.ok(createdNov, 'Debe haber creado el período 2026-11');
+    assert.strictEqual(createdNov.record.estado, 'ABIERTO');
+  } finally {
+    supabaseClient.fetchRecords = origFetch;
+    supabaseClient.request = origReq;
+    supabaseClient.syncRecord = origSync;
+  }
+});
+
+test('15. ejecutarPasarLecturasACaja no factura solo SN y continúa correlativo sin colisiones', async () => {
+  const origFetch = supabaseClient.fetchRecords.bind(supabaseClient);
+  const origSync = supabaseClient.syncRecord.bind(supabaseClient);
+
+  const P_OCT_ID = 'b8756f10-e25c-443e-8d68-4f917ecc614e';
+  const MED_SN = '11111111-1111-1111-1111-111111111010';
+  const MED_REAL = '11111111-1111-1111-1111-111111111011';
+  const SOC_ID = '22222222-2222-2222-2222-222222222010';
+
+  let onlySN = true;
+  const syncedFacs: any[] = [];
+
+  try {
+    supabaseClient.fetchRecords = (async (table: string) => {
+      if (table === 'periodos') {
+        return { data: [{ id: P_OCT_ID, periodo_codigo: '2026-10', fecha_fin: '2026-10-31', estado: 'ABIERTO' }], error: null };
+      }
+      if (table === 'socios') {
+        return { data: [{ id: SOC_ID, nombres: 'Ana', apellidos: 'López', fecha_nacimiento: '1988-01-01' }], error: null };
+      }
+      if (table === 'medidores') {
+        return {
+          data: [
+            { id: MED_SN, id_socio: SOC_ID, numero_medidor: 'SN-01', estado: 'ACTIVO' },
+            { id: MED_REAL, id_socio: SOC_ID, numero_medidor: 'MED-200', estado: 'ACTIVO' }
+          ],
+          error: null
+        };
+      }
+      if (table === 'lecturas') {
+        return {
+          data: onlySN
+            ? [{ id: 'l-sn', id_medidor: MED_SN, id_socio: SOC_ID, id_periodo: P_OCT_ID, lectura_anterior: 0, lectura_actual: 0, observaciones: 'Sin medidor - Tarifa fija' }]
+            : [{ id: 'l-real', id_medidor: MED_REAL, id_socio: SOC_ID, id_periodo: P_OCT_ID, lectura_anterior: 50, lectura_actual: 70, observaciones: 'Toma de lectura en campo' }],
+          error: null
+        };
+      }
+      if (table === 'facturas') {
+        return {
+          data: [{ id: 'f-old', id_medidor: MED_SN, id_periodo: P_OCT_ID, numero_factura: 'FAC-202610-0005', estado_pago: 'PENDIENTE' }],
+          error: null
+        };
+      }
+      return { data: [], error: null };
+    }) as any;
+
+    supabaseClient.syncRecord = (async (_table: string, record: any) => {
+      syncedFacs.push(record);
+      return { success: true };
+    }) as any;
+
+    const resOnlySN = await ejecutarPasarLecturasACaja(P_OCT_ID);
+    assert.strictEqual(resOnlySN.sinLecturas, true, 'No debe emitir facturas cuando solo hay registros SN sin tomas reales');
+    assert.strictEqual(resOnlySN.facturasGeneradas, 0);
+
+    onlySN = false;
+    const resReal = await ejecutarPasarLecturasACaja(P_OCT_ID);
+    assert.strictEqual(resReal.sinLecturas, false);
+    assert.strictEqual(resReal.facturasGeneradas, 1);
+    assert.strictEqual(syncedFacs[0].numero_factura, 'FAC-202610-0006', 'Debe continuar el correlativo tras FAC-202610-0005');
+  } finally {
+    supabaseClient.fetchRecords = origFetch;
+    supabaseClient.syncRecord = origSync;
+  }
+});
+
+test('16. resolveReadingPeriodId y registrarLectura resuelven códigos YYYY-MM, idLector e id_medidor correctamente', async () => {
+  const origFetch = supabaseClient.fetchRecords.bind(supabaseClient);
+  const origSync = supabaseClient.syncRecord.bind(supabaseClient);
+
+  const P_JUL_ID = '33333333-0000-0000-0000-000000000000';
+  const P_OCT_ID = 'b8756f10-e25c-443e-8d68-4f917ecc614e';
+  const MED_ID = '11111111-1111-1111-1111-111111111099';
+  const SOC_ID = '22222222-2222-2222-2222-222222222099';
+  const LECTOR_ID = '00000000-0000-0000-0000-000000000003';
+
+  const queriesSeen: Array<{ table: string; query: string }> = [];
+  const synced: Array<{ table: string; record: any }> = [];
+
+  try {
+    supabaseClient.fetchRecords = (async (table: string, query = '') => {
+      queriesSeen.push({ table, query });
+      if (table === 'periodos') {
+        if (query.includes('periodo_codigo=eq.2026-10')) {
+          return { data: [{ id: P_OCT_ID, periodo_codigo: '2026-10', estado: 'ABIERTO' }], error: null };
+        }
+        if (query.includes('estado=eq.ABIERTO')) {
+          return { data: [{ id: P_OCT_ID, periodo_codigo: '2026-10', estado: 'ABIERTO' }], error: null };
+        }
+        return { data: [{ id: P_JUL_ID, periodo_codigo: '2026-07', estado: 'CERRADO' }], error: null };
+      }
+      if (table === 'medidores') {
+        return { data: [{ id: MED_ID, id_socio: SOC_ID, numero_medidor: 'MED-99', lectura_inicial: 10 }], error: null };
+      }
+      if (table === 'facturas') {
+        return { data: [], error: null };
+      }
+      return { data: [], error: null };
+    }) as any;
+
+    supabaseClient.syncRecord = (async (table: string, record: any) => {
+      synced.push({ table, record });
+      return { success: true };
+    }) as any;
+
+    const byCode = await resolveReadingPeriodId('2026-10');
+    assert.strictEqual(byCode, P_OCT_ID, 'Debe resolver código 2026-10 al UUID de Octubre');
+
+    const byActive = await resolveReadingPeriodId();
+    assert.strictEqual(byActive, P_OCT_ID, 'Sin argumento debe priorizar el período ABIERTO sobre 2026-07');
+
+    const mockReq: any = {
+      body: {
+        idMedidor: MED_ID,
+        periodo: '2026-10',
+        lecturaAnterior: 10,
+        lecturaActual: 45,
+        idLector: LECTOR_ID
+      },
+      user: { id: '00000000-0000-0000-0000-000000000001', rol: 'ADMIN' }
+    };
+    const resMock = createMockRes();
+    await registrarLectura(mockReq, resMock.res);
+    assert.strictEqual(resMock.getStatus(), 201, 'registrarLectura no debe fallar por idLector no declarado');
+    const savedLec = synced.find((s) => s.table === 'lecturas');
+    assert.strictEqual(savedLec?.record.id_periodo, P_OCT_ID);
+    assert.strictEqual(savedLec?.record.id_lector, LECTOR_ID);
+    const facQuery = queriesSeen.find((q) => q.table === 'facturas');
+    assert.ok(facQuery?.query.includes(`id_medidor=eq.${MED_ID}`), 'Debe filtrar facturas pendientes por id_medidor');
+  } finally {
+    supabaseClient.fetchRecords = origFetch;
+    supabaseClient.syncRecord = origSync;
+  }
+});
 

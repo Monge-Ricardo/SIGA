@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-11-10T14:59:44.457Z",
+  "reason": "Pre-migration snapshot before restoring 2026-10 (Octubre) from premature 2026-11 (Noviembre)",
+  "tables": {
+    "usuarios": {
+      "count": 3,
+      "file": "usuarios.json"
+    },
+    "sectores": {
+      "count": 4,
+      "file": "sectores.json"
+    },
+    "socios": {
+      "count": 81,
+      "file": "socios.json"
+    },
+    "medidores": {
+      "count": 88,
+      "file": "medidores.json"
+    },
+    "periodos": {
+      "count": 5,
+      "file": "periodos.json"
+    },
+    "lecturas": {
+      "count": 438,
+      "file": "lecturas.json"
+    },
+    "facturas": {
+      "count": 302,
+      "file": "facturas.json"
+    },
+    "multas_rubros": {
+      "count": 93,
+      "file": "multas_rubros.json"
+    },
+    "rubros_abonos": {
+      "count": 25,
+      "file": "rubros_abonos.json"
+    },
+    "fondos_catalogo": {
+      "count": 7,
+      "file": "fondos_catalogo.json"
+    },
+    "fondos_movimientos": {
+      "count": 403,
+      "file": "fondos_movimientos.json"
+    }
+  }
+}

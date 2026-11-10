@@ -1,0 +1,51 @@
+[
+  {
+    "id": "22222222-2222-2222-2222-222222220001",
+    "codigo": "PADRE_PARROQUIA",
+    "nombre": "Fondo Parroquial (Entrega al Padre)",
+    "descripcion": "$2.00 recaudados de cada tarifa base normal",
+    "activo": true
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222220003",
+    "codigo": "PAGO_LECTOR",
+    "nombre": "Fondo Pago a Lectores",
+    "descripcion": "$0.50 mensual por toma de micromedición",
+    "activo": true
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222220004",
+    "codigo": "MORTUORIO",
+    "nombre": "Fondo Mortuorio Solidario",
+    "descripcion": "$0.50 de auxilio funerario comunitario",
+    "activo": true
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222220006",
+    "codigo": "MULTAS_EXTRAS",
+    "nombre": "Fondo Multas y Mingas",
+    "descripcion": "Recaudaciones por inasistencias y sanciones",
+    "activo": true
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222220007",
+    "codigo": "ALCANTARILLADO",
+    "nombre": "Fondo Alcantarillado Comunitario",
+    "descripcion": "$1.00 mensual para mantenimiento de red de saneamiento",
+    "activo": true
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222220002",
+    "codigo": "OPERACION_MANT",
+    "nombre": "Fondo Operación y Mantenimiento",
+    "descripcion": "Cuota de .00 base (+ deuda anterior) para operación y mantenimiento general",
+    "activo": true
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222220005",
+    "codigo": "PRO_MEJORAS",
+    "nombre": "Fondo Pro-Mejoras e Infraestructura",
+    "descripcion": "100% de recaudación por excedentes de consumo para obras de infraestructura",
+    "activo": true
+  }
+]

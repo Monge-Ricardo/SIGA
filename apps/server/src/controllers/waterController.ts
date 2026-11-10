@@ -15,6 +15,21 @@ import { getCurrentTarifas } from './adminController.ts';
 const isValidUUID = (val: unknown): boolean =>
   typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
+const isBaselineObservation = (obs?: unknown): boolean => {
+  const txt = String(obs || '');
+  return (
+    txt.startsWith('Punto de partida') ||
+    txt.startsWith('Apertura automática') ||
+    txt === 'Alta inicial de socio'
+  );
+};
+
+const isSinMedidorReading = (obs?: unknown, numeroMedidor?: unknown): boolean =>
+  String(obs || '').startsWith('Sin medidor') ||
+  String(numeroMedidor || '').toUpperCase().includes('SN');
+
+let isAdvancingPeriodLock = false;
+
 /**
  * Obtiene el período actualmente ABIERTO en Supabase, o el más reciente.
  */
@@ -42,25 +57,39 @@ export async function getInitialPeriod(): Promise<Record<string, any> | null> {
 }
 
 /**
- * Resuelve dinámicamente el ID del período para lecturas iniciales/aperturas:
- * 1. Prioridad: ID explícito proporcionado.
- * 2. Período inicial histórico del sistema (order=fecha_inicio.asc).
+ * Resuelve dinámicamente el ID del período para lecturas/movimientos:
+ * 1. Prioridad: UUID explícito proporcionado.
+ * 2. Código YYYY-MM explícito (ej: '2026-10') consultando tabla 'periodos'.
  * 3. Período actualmente activo (estado=ABIERTO).
- * 4. Si la tabla 'periodos' estuviera completamente vacía, crea dinámicamente el período corriente en Supabase.
+ * 4. Período inicial histórico del sistema.
+ * 5. Si la tabla 'periodos' estuviera completamente vacía, crea dinámicamente el período corriente en Supabase.
  */
 export async function resolveReadingPeriodId(explicitPeriodId?: string | null): Promise<string> {
   if (explicitPeriodId && isValidUUID(explicitPeriodId)) {
     return explicitPeriodId;
   }
 
-  const init = await getInitialPeriod();
-  if (init?.id && isValidUUID(init.id as string)) {
-    return init.id as string;
+  if (explicitPeriodId && String(explicitPeriodId).trim()) {
+    try {
+      const code = String(explicitPeriodId).trim();
+      const byCode = await supabaseClient.fetchRecords<Record<string, any>>(
+        'periodos',
+        `periodo_codigo=eq.${encodeURIComponent(code)}&limit=1`
+      );
+      if (byCode.data?.[0]?.id && isValidUUID(byCode.data[0].id as string)) {
+        return byCode.data[0].id as string;
+      }
+    } catch (_e) {}
   }
 
   const act = await getActivePeriod();
   if (act?.id && isValidUUID(act.id as string)) {
     return act.id as string;
+  }
+
+  const init = await getInitialPeriod();
+  if (init?.id && isValidUUID(init.id as string)) {
+    return init.id as string;
   }
 
   // Fallback dinámico auto-creando el período del mes corriente si no existe ninguno
@@ -94,6 +123,10 @@ export async function resolveReadingPeriodId(explicitPeriodId?: string | null): 
  * Obtiene el ID del período base para lecturas iniciales de acometidas sin quemar UUIDs ficticios.
  */
 export async function getBaselinePeriodId(): Promise<string> {
+  const init = await getInitialPeriod();
+  if (init?.id && isValidUUID(init.id as string)) {
+    return init.id as string;
+  }
   return await resolveReadingPeriodId();
 }
 
@@ -2207,11 +2240,28 @@ export const createPeriodo = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
+    const codeClean = String(periodoCodigo).trim();
+    const existingRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc');
+    const existingPeriodos = existingRes.data || [];
+
+    if (existingPeriodos.some((p) => String(p.periodo_codigo || '').trim() === codeClean)) {
+      res.status(409).json({ error: `El período ${codeClean} ya existe en la base de datos.` });
+      return;
+    }
+
+    const openPeriod = existingPeriodos.find((p) => p.estado === 'ABIERTO');
+    if (openPeriod) {
+      res.status(409).json({
+        error: `Ya existe un período activo (${openPeriod.periodo_codigo}). Ciérrelo antes de abrir ${codeClean}.`
+      });
+      return;
+    }
+
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const record = {
       id,
-      periodo_codigo: String(periodoCodigo).trim(),
+      periodo_codigo: codeClean,
       nombre: String(nombre).trim(),
       fecha_inicio: fechaInicio,
       fecha_fin: fechaFin,
@@ -2219,7 +2269,11 @@ export const createPeriodo = async (req: AuthenticatedRequest, res: Response): P
       created_at: now
     };
 
-    await supabaseClient.syncRecord('periodos', record);
+    const syncRes = await supabaseClient.syncRecord('periodos', record);
+    if (!syncRes.success) {
+      res.status(400).json({ error: syncRes.error || 'Error creando período.' });
+      return;
+    }
     res.status(201).json({ message: 'Período creado exitosamente.', data: record });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error creando período.';
@@ -2230,11 +2284,21 @@ export const createPeriodo = async (req: AuthenticatedRequest, res: Response): P
 export const cerrarPeriodo = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    await supabaseClient.request(`periodos?id=eq.${id}`, {
+    const periodosRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc');
+    const target = (periodosRes.data || []).find((p) => p.id === id || p.periodo_codigo === id);
+    if (!target) {
+      res.status(404).json({ error: `Período "${id}" no encontrado.` });
+      return;
+    }
+    const patchRes = await supabaseClient.request(`periodos?id=eq.${target.id}`, {
       method: 'PATCH',
       body: { estado: 'CERRADO' }
     });
-    res.json({ message: 'Período cerrado exitosamente.' });
+    if (patchRes.error) {
+      res.status(400).json({ error: patchRes.error });
+      return;
+    }
+    res.json({ message: `Período ${target.periodo_codigo || id} cerrado exitosamente.` });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Error cerrando período.';
     res.status(400).json({ error: message });
@@ -2255,9 +2319,9 @@ export const inicializarLecturasPeriodo = async (
   const lectorValido = await resolveLectorId(null, idLector);
 
   const [medRes, lecAntRes, existingNextLecRes] = await Promise.all([
-    supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
-    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${periodoAnteriorId}&order=created_at.desc`),
-    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${periodoNuevoId}`)
+    supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO&limit=5000'),
+    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${periodoAnteriorId}&order=created_at.desc&limit=5000`),
+    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${periodoNuevoId}&limit=5000`)
   ]);
 
   const medidores = medRes.data || [];
@@ -2316,15 +2380,6 @@ export const inicializarLecturasPeriodo = async (
         updated_at: now
       });
     }
-
-    // Actualizar lectura_anterior en tabla medidores
-    await supabaseClient.request(`medidores?id=eq.${mId}`, {
-      method: 'PATCH',
-      body: {
-        lectura_anterior: nuevaLant,
-        updated_at: now
-      }
-    }).catch(() => {});
 
     medidoresAvanzados++;
   }
@@ -2387,37 +2442,75 @@ export const inicializarLecturasController = async (req: AuthenticatedRequest, r
 };
 
 export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if (isAdvancingPeriodLock) {
+    res.status(409).json({
+      error: 'Ya existe un cierre y avance de período en ejecución. Espere unos segundos antes de volver a intentarlo.'
+    });
+    return;
+  }
+
+  isAdvancingPeriodLock = true;
   try {
-    const { idPeriodo } = req.body || req.params || {};
+    const idPeriodo = req.body?.idPeriodo || req.body?.id_periodo || req.params?.id;
+    const forzarSinLecturas = Boolean(req.body?.forzarSinLecturas);
     const now = new Date().toISOString();
 
     // 1. Obtener todos los periodos
     const periodosRes = await supabaseClient.fetchRecords<Record<string, any>>('periodos', 'order=fecha_inicio.desc');
     const periodos = periodosRes.data || [];
 
-    // Encontrar el periodo a cerrar (por id o el que esté ABIERTO)
+    // Encontrar el periodo a cerrar (por id/codigo explícito, o el que esté ABIERTO)
     let currentPeriod: Record<string, any> | null = null;
     if (idPeriodo) {
       currentPeriod = periodos.find((p) => p.id === idPeriodo || p.periodo_codigo === idPeriodo) || null;
-    }
-    if (!currentPeriod) {
-      currentPeriod = periodos.find((p) => p.estado === 'ABIERTO') || periodos[0] || null;
+      if (!currentPeriod) {
+        res.status(404).json({ error: `El período "${idPeriodo}" no fue encontrado.` });
+        return;
+      }
+    } else {
+      currentPeriod = periodos.find((p) => p.estado === 'ABIERTO') || null;
     }
 
     if (!currentPeriod) {
-      res.status(400).json({ error: 'No se encontró un período activo para avanzar.' });
+      res.status(400).json({ error: 'No se encontró un período ABIERTO para avanzar.' });
+      return;
+    }
+
+    if (currentPeriod.estado !== 'ABIERTO') {
+      res.status(409).json({
+        error: `El período ${currentPeriod.periodo_codigo} ya está en estado ${currentPeriod.estado}. Solo se puede avanzar desde el período ABIERTO actual.`
+      });
       return;
     }
 
     const currentCode = String(currentPeriod.periodo_codigo || new Date().toISOString().slice(0, 7)).trim();
 
-    // Emitir facturas a Caja de las lecturas registradas en el período que se cierra (si existen)
+    // 2. Verificar que existan lecturas reales de micromedición antes de cerrar el ciclo
+    const [curLecRes, curMedRes] = await Promise.all([
+      supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${currentPeriod.id}&limit=5000`),
+      supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO&limit=5000')
+    ]);
+    const medidorMap = new Map((curMedRes.data || []).map((m) => [m.id, m]));
+    const realMeterReadingsCount = (curLecRes.data || []).filter((l) => {
+      if (l.lectura_actual === null || l.lectura_actual === undefined || !l.id_medidor) return false;
+      if (isBaselineObservation(l.observaciones)) return false;
+      const med = medidorMap.get(l.id_medidor);
+      return Boolean(med && !isSinMedidorReading(l.observaciones, med.numero_medidor));
+    }).length;
+
+    if (realMeterReadingsCount === 0 && !forzarSinLecturas) {
+      res.status(400).json({
+        error: `El período ${currentCode} aún no tiene lecturas de medidores registradas en campo. Registre las lecturas antes de pasar al siguiente período.`,
+        code: 'SIN_LECTURAS_REALES'
+      });
+      return;
+    }
+
+    // 3. Emitir facturas a Caja de las lecturas registradas en el período que se cierra
     let facturasGeneradasPeriodoAnterior = 0;
-    try {
-      const resEmision = await ejecutarPasarLecturasACaja(currentPeriod.id);
+    const resEmision = await ejecutarPasarLecturasACaja(currentPeriod.id);
+    if (!resEmision.sinLecturas) {
       facturasGeneradasPeriodoAnterior = resEmision.facturasGeneradas;
-    } catch (_e) {
-      // Si no había lecturas tomadas o ya estaban facturadas, continúa normalmente
     }
 
     // Calcular siguiente código YYYY-MM
@@ -2439,21 +2532,31 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
     const lastDay = new Date(year, month, 0).getDate();
     const fechaFin = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-    // 2. Cerrar el periodo actual en Supabase
-    await supabaseClient.request(`periodos?id=eq.${currentPeriod.id}`, {
-      method: 'PATCH',
-      body: { estado: 'CERRADO' }
-    });
+    // 4. Cerrar el período actual y cualquier otro período que hubiera quedado ABIERTO (invariante: máx. 1 ABIERTO)
+    for (const p of periodos) {
+      if (p.id === currentPeriod.id || (p.estado === 'ABIERTO' && p.periodo_codigo !== nextCode)) {
+        const closeRes = await supabaseClient.request(`periodos?id=eq.${p.id}`, {
+          method: 'PATCH',
+          body: { estado: 'CERRADO' }
+        });
+        if (closeRes.error) {
+          throw new Error(`Error cerrando período ${p.periodo_codigo}: ${closeRes.error}`);
+        }
+      }
+    }
 
-    // 3. Crear o activar el nuevo periodo
+    // 5. Crear o activar el nuevo periodo
     let nextPeriod = periodos.find((p) => p.periodo_codigo === nextCode);
     let nextPeriodId: string;
     if (nextPeriod) {
       nextPeriodId = nextPeriod.id;
-      await supabaseClient.request(`periodos?id=eq.${nextPeriodId}`, {
+      const openRes = await supabaseClient.request(`periodos?id=eq.${nextPeriodId}`, {
         method: 'PATCH',
         body: { estado: 'ABIERTO' }
       });
+      if (openRes.error) {
+        throw new Error(`Error activando período ${nextCode}: ${openRes.error}`);
+      }
     } else {
       nextPeriodId = crypto.randomUUID();
       const newPeriodRecord = {
@@ -2465,13 +2568,16 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
         estado: 'ABIERTO',
         created_at: now
       };
-      await supabaseClient.syncRecord('periodos', newPeriodRecord);
+      const syncPerRes = await supabaseClient.syncRecord('periodos', newPeriodRecord);
+      if (!syncPerRes.success) {
+        throw new Error(`Error creando período ${nextCode}: ${syncPerRes.error}`);
+      }
       nextPeriod = newPeriodRecord;
     }
 
-    // 4. Rollover de lecturas y consolidación de deudas pendientes
+    // 6. Rollover de lecturas y consolidación de deudas pendientes
     const [facRes, initRes] = await Promise.all([
-      supabaseClient.fetchRecords<Record<string, any>>('facturas', 'estado_pago=eq.PENDIENTE'),
+      supabaseClient.fetchRecords<Record<string, any>>('facturas', 'estado_pago=eq.PENDIENTE&limit=5000'),
       inicializarLecturasPeriodo(nextPeriodId, currentPeriod.id, nextCode, req.user?.id)
     ]);
 
@@ -2517,6 +2623,8 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
     const message = error instanceof Error ? error.message : 'Error al avanzar período.';
     console.error('[WaterController] Error avanzando período:', error);
     res.status(500).json({ error: message });
+  } finally {
+    isAdvancingPeriodLock = false;
   }
 };
 
@@ -2527,7 +2635,7 @@ export const avanzarPeriodo = async (req: AuthenticatedRequest, res: Response): 
 export const getLecturas = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { periodo, periodoId, periodoCodigo, socioId, medidorId, numeroMedidor } = req.query as Record<string, string>;
-    let query = 'order=fecha_lectura.desc&limit=1000';
+    let query = 'order=fecha_lectura.desc&limit=5000';
 
     let finalPeriodoId = periodoId;
     const searchCode = periodoCodigo || periodo;
@@ -2641,7 +2749,7 @@ export const registrarLectura = async (req: AuthenticatedRequest, res: Response)
     if (Array.isArray(req.body) || Array.isArray(req.body?.lecturas)) {
       return sincronizarLecturasBatch(req, res);
     }
-    const { idSocio, idMedidor, medidorId, numeroMedidor, idPeriodo, periodo, lecturaActual, lecturaAnterior, observaciones } = req.body || {};
+    const { idSocio, idMedidor, medidorId, numeroMedidor, idPeriodo, periodo, idLector, lecturaActual, lecturaAnterior, observaciones } = req.body || {};
     
     if (lecturaActual === undefined || lecturaActual === null || isNaN(Number(lecturaActual))) {
       res.status(400).json({ error: 'lecturaActual es requerida y debe ser un valor numérico.' });
@@ -2686,18 +2794,12 @@ export const registrarLectura = async (req: AuthenticatedRequest, res: Response)
     const finalIdMedidor = foundMedidor.id as string;
     const finalIdSocio = (foundMedidor.id_socio as string) || idSocio;
 
-    // 2. Resolver el período
+    // 2. Resolver el período (UUID, código YYYY-MM o período activo ABIERTO)
     const inputPeriodo = idPeriodo || periodo;
-    let finalIdPeriodo = inputPeriodo;
-
-    if (!finalIdPeriodo || !finalIdPeriodo.includes('-') || finalIdPeriodo.length < 30) {
-      const activeP = await getActivePeriod();
-      if (finalIdPeriodo) {
-        const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${finalIdPeriodo}&limit=1`);
-        finalIdPeriodo = (pRes.data?.[0]?.id as string) || (activeP?.id as string) || '';
-      } else {
-        finalIdPeriodo = (activeP?.id as string) || '';
-      }
+    const finalIdPeriodo = await resolveReadingPeriodId(inputPeriodo);
+    if (!finalIdPeriodo) {
+      res.status(400).json({ error: 'No se pudo resolver un período válido para registrar la lectura.' });
+      return;
     }
 
     // 3. Resolver lectura anterior
@@ -2749,7 +2851,7 @@ export const registrarLectura = async (req: AuthenticatedRequest, res: Response)
     try {
       const facRes = await supabaseClient.fetchRecords<Record<string, unknown>>(
         'facturas',
-        `id_socio=eq.${finalIdSocio}&id_periodo=eq.${finalIdPeriodo}&estado_pago=eq.PENDIENTE&limit=1`
+        `id_medidor=eq.${finalIdMedidor}&id_periodo=eq.${finalIdPeriodo}&estado_pago=eq.PENDIENTE&limit=1`
       );
       if (facRes.data && facRes.data.length > 0) {
         const fac = facRes.data[0];
@@ -2757,7 +2859,7 @@ export const registrarLectura = async (req: AuthenticatedRequest, res: Response)
         const valExc = Number((excedente * 0.10).toFixed(2));
         const valAlcant = Number(fac.valor_alcantarillado || 0);
         const totMes = Number((valBase + valExc + valAlcant).toFixed(2));
-        const deudasAnt = Number(fac.total_deudas_anteriores || 0);
+        const deudasAnt = Number(fac.valor_deuda_anterior || 0);
         const totPagar = Number((totMes + deudasAnt).toFixed(2));
 
         await supabaseClient.syncRecord('facturas', {
@@ -2840,15 +2942,10 @@ export const sincronizarLecturasBatch = async (req: AuthenticatedRequest, res: R
         const finalIdSocio = (foundMedidor.id_socio as string) || idSocio;
 
         const inputPeriodo = idPeriodo || periodo;
-        let finalIdPeriodo = inputPeriodo;
-        if (!finalIdPeriodo || !finalIdPeriodo.includes('-') || finalIdPeriodo.length < 30) {
-          const activeP = await getActivePeriod();
-          if (finalIdPeriodo) {
-            const pRes = await supabaseClient.fetchRecords<Record<string, unknown>>('periodos', `periodo_codigo=eq.${finalIdPeriodo}&limit=1`);
-            finalIdPeriodo = (pRes.data?.[0]?.id as string) || (activeP?.id as string) || '';
-          } else {
-            finalIdPeriodo = (activeP?.id as string) || '';
-          }
+        const finalIdPeriodo = await resolveReadingPeriodId(inputPeriodo);
+        if (!finalIdPeriodo) {
+          errors.push({ item, error: 'Período no encontrado o inválido' });
+          continue;
         }
 
         let lAnt = Number(lecturaAnterior);
@@ -2951,9 +3048,10 @@ export const updateLectura = async (req: AuthenticatedRequest, res: Response): P
     // Sincronizar factura si aplica
     if (current.id_socio && current.id_periodo) {
       try {
+        const medFilter = current.id_medidor ? `id_medidor=eq.${current.id_medidor}` : `id_socio=eq.${current.id_socio}`;
         const facRes = await supabaseClient.fetchRecords<Record<string, unknown>>(
           'facturas',
-          `id_socio=eq.${current.id_socio}&id_periodo=eq.${current.id_periodo}&estado_pago=eq.PENDIENTE&limit=1`
+          `${medFilter}&id_periodo=eq.${current.id_periodo}&estado_pago=eq.PENDIENTE&limit=1`
         );
         if (facRes.data && facRes.data.length > 0) {
           const fac = facRes.data[0];
@@ -2961,7 +3059,7 @@ export const updateLectura = async (req: AuthenticatedRequest, res: Response): P
           const valExc = Number((excedente * 0.10).toFixed(2));
           const valAlcant = Number(fac.valor_alcantarillado || 0);
           const totMes = Number((valBase + valExc + valAlcant).toFixed(2));
-          const deudasAnt = Number(fac.total_deudas_anteriores || 0);
+          const deudasAnt = Number(fac.valor_deuda_anterior || 0);
           const totPagar = Number((totMes + deudasAnt).toFixed(2));
 
           await supabaseClient.syncRecord('facturas', {
@@ -3018,7 +3116,7 @@ export const deleteLectura = async (req: AuthenticatedRequest, res: Response): P
 export const getFacturas = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { socioId, periodoId, estadoPago } = req.query as Record<string, string>;
-    let query = 'order=created_at.desc&limit=1000';
+    let query = 'order=created_at.desc&limit=5000';
     if (socioId) query += `&id_socio=eq.${socioId}`;
     if (periodoId) query += `&id_periodo=eq.${periodoId}`;
     if (estadoPago) query += `&estado_pago=eq.${estadoPago}`;
@@ -3266,10 +3364,10 @@ export async function ejecutarPasarLecturasACaja(idPeriodo?: string): Promise<{
 
   // 3. Obtener socios, medidores, lecturas del periodo, facturas existentes y multas
   const [sociosRes, medidoresRes, lecturasRes, facturasRes] = await Promise.all([
-    supabaseClient.fetchRecords<Record<string, any>>('socios'),
-    supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO'),
-    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${targetPeriod.id}`),
-    supabaseClient.fetchRecords<Record<string, any>>('facturas')
+    supabaseClient.fetchRecords<Record<string, any>>('socios', 'limit=5000'),
+    supabaseClient.fetchRecords<Record<string, any>>('medidores', 'estado=neq.INACTIVO&limit=5000'),
+    supabaseClient.fetchRecords<Record<string, any>>('lecturas', `id_periodo=eq.${targetPeriod.id}&limit=5000`),
+    supabaseClient.fetchRecords<Record<string, any>>('facturas', 'limit=5000')
   ]);
 
   const socios = sociosRes.data || [];
@@ -3286,11 +3384,16 @@ export async function ejecutarPasarLecturasACaja(idPeriodo?: string): Promise<{
       l.lectura_actual !== null &&
       l.lectura_actual !== undefined &&
       l.id_medidor &&
-      !String(l.observaciones || '').startsWith('Punto de partida') &&
-      !String(l.observaciones || '').startsWith('Apertura automática')
+      !isBaselineObservation(l.observaciones)
   );
 
-  if (lecturasConToma.length === 0) {
+  // Exigir al menos 1 lectura real de micromedidor (evita emitir solo SN en un período recién abierto)
+  const tieneLecturaMedidorReal = lecturasConToma.some((l) => {
+    const med = medidorMap.get(l.id_medidor);
+    return Boolean(med && !isSinMedidorReading(l.observaciones, med.numero_medidor));
+  });
+
+  if (lecturasConToma.length === 0 || !tieneLecturaMedidorReal) {
     return {
       periodo: targetPeriod.periodo_codigo,
       targetPeriodId: targetPeriod.id,
@@ -3310,7 +3413,16 @@ export async function ejecutarPasarLecturasACaja(idPeriodo?: string): Promise<{
   const procesadas: any[] = [];
 
   const periodCodeClean = String(targetPeriod.periodo_codigo || new Date().toISOString().slice(0, 7)).replace(/-/g, '');
-  let correlativo = 1;
+  let maxCorrelativo = 0;
+  const facNumRegex = new RegExp(`^FAC-${periodCodeClean}-(\\d+)$`);
+  for (const f of facturas) {
+    const match = String(f.numero_factura || '').match(facNumRegex);
+    if (match) {
+      const n = parseInt(match[1], 10);
+      if (!isNaN(n) && n > maxCorrelativo) maxCorrelativo = n;
+    }
+  }
+  let correlativo = maxCorrelativo + 1;
 
   for (const lec of lecturasConToma) {
     const med = medidorMap.get(lec.id_medidor);
@@ -4062,7 +4174,7 @@ export const sincronizarFacturas = async (req: AuthenticatedRequest, res: Respon
           numero_factura: numeroFactura,
           id_socio: soc.id,
           id_medidor: med ? med.id : null,
-          id_periodo: PERIODO_AGOSTO_ID,
+          id_periodo: targetPeriodId,
           es_tercera_edad: Boolean(soc.fecha_nacimiento && ValidationRules.calcularEsTerceraEdad(soc.fecha_nacimiento)),
           valor_base: pagoAgosto,
           consumo_m3: 0.0,

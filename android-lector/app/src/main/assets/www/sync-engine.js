@@ -1217,9 +1217,30 @@ class GitSyncEngine {
             incoming.medidores.forEach((m) => medStore.put(m));
           }
 
-          // Lecturas
+          const incomingPeriodosList = Array.isArray(incoming.periodos) ? incoming.periodos : [];
+          const incomingPeriodoIds = new Set(incomingPeriodosList.map((p) => p.id).filter(Boolean));
+          const incomingPeriodoCodigos = new Set(incomingPeriodosList.map((p) => p.periodoCodigo || p.periodo_codigo).filter(Boolean));
+
+          // Lecturas (Purgar lecturas obsoletas o de períodos eliminados en la nube)
           if (Array.isArray(incoming.lecturas)) {
             const lecStore = tx.objectStore('lecturas');
+            const incomingLecIds = new Set(incoming.lecturas.map((l) => l.id).filter(Boolean));
+            const lecturasTruncated = incoming.lecturas.length >= 1000;
+            const getLecReq = lecStore.getAll();
+            getLecReq.onsuccess = () => {
+              const localLecs = getLecReq.result || [];
+              localLecs.forEach((ll) => {
+                if (pendingIds.has(ll.id)) return;
+                const pId = ll.idPeriodo || ll.id_periodo;
+                const pCod = ll.periodo || ll.periodoCodigo || ll.periodo_codigo;
+                const periodGone = incomingPeriodosList.length > 0 &&
+                  ((pId && !incomingPeriodoIds.has(pId) && !incomingPeriodoCodigos.has(pId)) ||
+                   (pCod && !incomingPeriodoCodigos.has(pCod) && !incomingPeriodoIds.has(pCod)));
+                if (periodGone || (!lecturasTruncated && !incomingLecIds.has(ll.id))) {
+                  lecStore.delete(ll.id);
+                }
+              });
+            };
             incoming.lecturas.forEach((l) => {
               if (l.idMedidor && l.periodo) {
                 try { lecStore.delete(`lec-${l.idMedidor}-${l.periodo}`); } catch (e) {}
@@ -1234,9 +1255,19 @@ class GitSyncEngine {
             });
           }
 
-          // Periodos
+          // Periodos (Purgar períodos eliminados en la nube y actualizar vigentes)
           if (Array.isArray(incoming.periodos)) {
             const pStore = tx.objectStore('periodos');
+            const getPerReq = pStore.getAll();
+            getPerReq.onsuccess = () => {
+              const localPers = getPerReq.result || [];
+              localPers.forEach((lp) => {
+                const lpCod = lp.periodoCodigo || lp.periodo_codigo;
+                if (!incomingPeriodoIds.has(lp.id) && !(lpCod && incomingPeriodoCodigos.has(lpCod))) {
+                  pStore.delete(lp.id);
+                }
+              });
+            };
             incoming.periodos.forEach((p) => {
               pStore.put(p);
               appliedCount++;
@@ -1246,6 +1277,8 @@ class GitSyncEngine {
           // Facturas / Cobros
           if (Array.isArray(incoming.facturas)) {
             const cStore = tx.objectStore('cobros');
+            const incomingFacIds = new Set(incoming.facturas.map((c) => c.id).filter(Boolean));
+            const facturasTruncated = incoming.facturas.length >= 1000;
             const reqAllCobros = cStore.getAll();
             reqAllCobros.onsuccess = () => {
               const localCobros = reqAllCobros.result || [];
@@ -1253,8 +1286,14 @@ class GitSyncEngine {
               localCobros.forEach((item) => {
                 const numKey = String(item.numeroRecibo || item.numeroFactura || item.numero_factura || item.id || '').trim().toUpperCase();
                 if (numKey) numToLocalId.set(numKey, item.id);
-                // Purgar cobros de prueba
+                const pId = item.idPeriodo || item.id_periodo;
+                const pCod = item.periodo || item.periodoCodigo || item.periodo_codigo;
+                const periodGone = incomingPeriodosList.length > 0 &&
+                  ((pId && !incomingPeriodoIds.has(pId) && !incomingPeriodoCodigos.has(pId)) ||
+                   (pCod && !incomingPeriodoCodigos.has(pCod) && !incomingPeriodoIds.has(pCod)));
+
                 if (
+                  (!pendingIds.has(item.id) && (periodGone || (!facturasTruncated && !incomingFacIds.has(item.id)))) ||
                   numKey === 'REC-471445' ||
                   numKey === 'FAC-202608-08066' ||
                   item.id === 'a5c952f2-d4e6-415b-bf55-0ce12f575675' ||
@@ -1371,7 +1410,7 @@ class GitSyncEngine {
       this.fetchSupabase('medidores?select=*').then((r) => r.json()).catch(() => []),
       this.fetchSupabase('lecturas?select=*&order=fecha_lectura.desc&limit=1000').then((r) => r.json()).catch(() => []),
       this.fetchSupabase('periodos?select=*&order=fecha_inicio.asc').then((r) => r.json()).catch(() => []),
-      this.fetchSupabase('facturas?select=*&order=created_at.desc&limit=500').then((r) => r.json()).catch(() => []),
+      this.fetchSupabase('facturas?select=*&order=created_at.desc&limit=5000').then((r) => r.json()).catch(() => []),
       this.fetchSupabase('multas_rubros?select=*').then((r) => r.json()).catch(() => [])
     ]);
 
