@@ -887,20 +887,36 @@ function renderDesgloseRubros(rubros) {
   });
 
   // Configurar listeners de los inputs individuales de abono por rubro (RF-CAJ-03)
+  // Se acepta coma o punto decimal; un valor vacío/inválido NUNCA vuelve en silencio al saldo total:
+  // se conserva el último valor válido y se marca el campo en rojo.
+  const parseMontoAbono = (raw) => parseFloat(String(raw ?? '').trim().replace(',', '.'));
+
   document.querySelectorAll('.input-abono-rubro').forEach((inp) => {
+    inp.type = 'text';
+    inp.inputMode = 'decimal';
+    inp.dataset.lastValid = inp.value;
+
     inp.addEventListener('input', (e) => {
       const k = e.target.getAttribute('data-key');
       const max = parseFloat(e.target.getAttribute('data-max')) || 0;
-      let val = parseFloat(e.target.value);
+      let val = parseMontoAbono(e.target.value);
 
-      if (!isNaN(val) && val > max) {
+      if (isNaN(val) || val <= 0) {
+        e.target.style.borderColor = '#dc2626';
+        if (state.selectedItemsMap.has(k)) state.selectedItemsMap.get(k).montoACobrar = 0;
+        actualizarTotalSeleccionado();
+        return;
+      }
+      e.target.style.borderColor = '';
+
+      if (val > max) {
         val = max;
         e.target.value = max.toFixed(2);
       }
 
+      e.target.dataset.lastValid = e.target.value;
       if (state.selectedItemsMap.has(k)) {
-        const itemObj = state.selectedItemsMap.get(k);
-        itemObj.montoACobrar = isNaN(val) ? 0 : Math.round(val * 100) / 100;
+        state.selectedItemsMap.get(k).montoACobrar = Math.round(val * 100) / 100;
       }
       actualizarTotalSeleccionado();
     });
@@ -908,21 +924,21 @@ function renderDesgloseRubros(rubros) {
     inp.addEventListener('blur', (e) => {
       const k = e.target.getAttribute('data-key');
       const max = parseFloat(e.target.getAttribute('data-max')) || 0;
-      let val = parseFloat(e.target.value);
+      let val = parseMontoAbono(e.target.value);
 
       if (isNaN(val) || val <= 0) {
-        val = max;
-        e.target.value = max.toFixed(2);
-      } else if (val > max) {
-        val = max;
-        e.target.value = max.toFixed(2);
-      } else {
-        e.target.value = val.toFixed(2);
+        // Restaurar el último valor válido digitado por el cajero (no el saldo total)
+        val = parseMontoAbono(e.target.dataset.lastValid);
+        if (isNaN(val) || val <= 0) val = max;
       }
+      if (val > max) val = max;
+
+      e.target.value = val.toFixed(2);
+      e.target.dataset.lastValid = e.target.value;
+      e.target.style.borderColor = '';
 
       if (state.selectedItemsMap.has(k)) {
-        const itemObj = state.selectedItemsMap.get(k);
-        itemObj.montoACobrar = Math.round(val * 100) / 100;
+        state.selectedItemsMap.get(k).montoACobrar = Math.round(val * 100) / 100;
       }
       actualizarTotalSeleccionado();
     });
@@ -1047,6 +1063,33 @@ async function procesarCobroConfirmado() {
       return;
     }
   }
+
+  // Confirmación previa: desglose Saldo / Abono / Restante por rubro para evitar cobros no deseados
+  const filasConfirm = items.map((it) => {
+    const rub = state.deudasData?.rubrosPendientes?.find((r) => r.tipo === it.tipo && r.idReferencia === it.idReferencia);
+    const saldo = Number(rub?.saldoPendiente ?? it.montoACobrar);
+    const abono = Number(it.montoACobrar);
+    const resta = Math.max(0, Math.round((saldo - abono) * 100) / 100);
+    const parcial = resta > 0.001;
+    return `<tr>
+      <td style="text-align:left;padding:3px 6px;">${it.descripcion || it.tipo}</td>
+      <td style="text-align:right;padding:3px 6px;">$${saldo.toFixed(2)}</td>
+      <td style="text-align:right;padding:3px 6px;font-weight:700;">$${abono.toFixed(2)}</td>
+      <td style="text-align:right;padding:3px 6px;color:${parcial ? '#b45309' : '#16a34a'};">${parcial ? '$' + resta.toFixed(2) + ' (abono)' : 'Liquidado'}</td>
+    </tr>`;
+  }).join('');
+  const conf = await Swal.fire({
+    title: 'Confirmar cobro',
+    html: `<table style="width:100%;font-size:0.82rem;border-collapse:collapse;">
+      <thead><tr style="border-bottom:1px solid #cbd5e1;"><th style="text-align:left;padding:3px 6px;">Rubro</th><th style="text-align:right;padding:3px 6px;">Saldo</th><th style="text-align:right;padding:3px 6px;">A cobrar</th><th style="text-align:right;padding:3px 6px;">Queda</th></tr></thead>
+      <tbody>${filasConfirm}</tbody></table>
+      <p style="margin-top:10px;font-size:1rem;"><strong>Total a cobrar: $${total.toFixed(2)}</strong></p>`,
+    showCancelButton: true,
+    confirmButtonText: 'Confirmar y cobrar',
+    cancelButtonText: 'Revisar',
+    confirmButtonColor: '#0284c7'
+  });
+  if (!conf.isConfirmed) return;
 
   // Bloqueo de idempotencia (RNF-CAJ-05)
   state.isProcessingPayment = true;

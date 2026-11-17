@@ -410,11 +410,13 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
     (allSocioRubrosRes.data || []).forEach((r) => { if (r.id) rubrosMap.set(r.id, r); });
 
     let rubrosAbonosFactura = rubrosAbonosRes.data || [];
-    // Si no vinieron abonos por id_factura, revisar si hubo abonos de multas de este socio en la misma fecha
-    if (rubrosAbonosFactura.length === 0 && rubrosAbonosDayRes.data && rubrosAbonosDayRes.data.length > 0) {
-      rubrosAbonosFactura = rubrosAbonosDayRes.data.filter((ab) => {
-        const r = rubrosMap.get(ab.id_rubro);
-        return r && r.id_socio === factura.id_socio;
+    // Trazabilidad: solo los abonos que pertenecen a ESTA transacción (misma marca de tiempo que sus
+    // movimientos contables). Se elimina el fallback por "mismo día", que mezclaba abonos de otros recibos.
+    const txTimes = new Set(movsComprobante.map((m) => new Date(m.fecha).getTime()).filter((n) => !isNaN(n)));
+    if (txTimes.size > 0) {
+      rubrosAbonosFactura = rubrosAbonosFactura.filter((ab) => {
+        const t = new Date(ab.fecha).getTime();
+        return isNaN(t) || txTimes.has(t);
       });
     }
 
@@ -641,7 +643,7 @@ export const getFacturaComprobante = async (req: AuthenticatedRequest, res: Resp
     }
 
     // 3. Multas históricas si no vinieron en rubros_abonos
-    if (valorMultasFactura > 0 && !rubrosPendientesItems.some(r => r.cp === 'MU01')) {
+    if (valorMultasFactura > 0 && !rubrosPendientesItems.some(r => ['MU01', 'MG01', 'AL01'].includes(r.cp))) {
       rubrosPendientesItems.push({
         cp: 'MU01',
         ca: '01',

@@ -1,4 +1,4 @@
-import test from 'node:test';
+﻿import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { FONDO_IDS, type ItemCobroRequestDTO } from '../modules/caja/domain/CajaDTOs.ts';
@@ -438,4 +438,65 @@ test('MÓDULO 3: CAJA, COBROS Y CUADRE DIARIO (IEEE 830 / CLEAN ARCHITECTURE)', 
     assert.ok(fondoMultasAsiento, 'Debe existir asiento al Fondo de Multas y Extras');
     assert.equal(fondoMultasAsiento.monto, 20.00, 'Exactamente $20.00 deben ir al Fondo de Multas');
   });
-});
+
+  await t.test('10. Regresión: monto de factura = BD (flag alcantarillado del socio no se propaga al medidor)', async () => {
+    const { ConsultarDeudasSocioUseCase } = await import('../modules/caja/application/ConsultarDeudasSocioUseCase.ts');
+    const mockRepo: any = {
+      getSocioInfo: async () => ({ id: 's1', nombres: 'Maria', apellidos: 'Lalaleo', tiene_alcantarillado: true, fecha_nacimiento: '1955-01-01' }),
+      getMedidoresSocio: async () => [
+        { id: 'm1', numero_medidor: 'A', tiene_alcantarillado: true },
+        { id: 'm2', numero_medidor: 'B', tiene_alcantarillado: false }
+      ],
+      getSectores: async () => [],
+      getFacturasPendientes: async () => [
+        { id: 'f1', id_medidor: 'm1', id_periodo: 'p1', numero_factura: 'FAC-1', valor_base: 5, valor_excedente: 0, valor_alcantarillado: 1, total_mes: 6, total_pagar: 6, estado_pago: 'PENDIENTE' },
+        { id: 'f2', id_medidor: 'm2', id_periodo: 'p1', numero_factura: 'FAC-2', valor_base: 5, valor_excedente: 1.8, valor_alcantarillado: 0, total_mes: 6.8, total_pagar: 6.8, estado_pago: 'PENDIENTE' }
+      ],
+      getMultasPendientes: async () => [],
+      getPeriodos: async () => [{ id: 'p1', periodo_codigo: '2026-10', estado: 'ABIERTO' }],
+      getLecturasSocio: async () => []
+    };
+    const r = await new ConsultarDeudasSocioUseCase(mockRepo).ejecutar('s1');
+    assert.equal(r.rubrosPendientes.find((x: any) => x.idReferencia === 'f1')!.saldoPendiente, 6.00);
+    assert.equal(r.rubrosPendientes.find((x: any) => x.idReferencia === 'f2')!.saldoPendiente, 6.80);
+  });
+
+  await t.test('11. Regresión: factura con abono previo usa total_pagar como saldo y rechaza sobrecobro', async () => {
+    const { ConsultarDeudasSocioUseCase } = await import('../modules/caja/application/ConsultarDeudasSocioUseCase.ts');
+    const { ProcesarCobroUseCase } = await import('../modules/caja/application/ProcesarCobroUseCase.ts');
+    const fac = { id: 'f1', id_socio: 's1', id_periodo: 'p1', numero_factura: 'FAC-1', valor_base: 7, valor_excedente: 0, valor_alcantarillado: 0, total_mes: 7, total_pagar: 4, estado_pago: 'PENDIENTE' };
+    const mockRepo: any = {
+      getSocioInfo: async () => ({ id: 's1', nombres: 'A', apellidos: 'B', fecha_nacimiento: '1985-01-01' }),
+      getMedidoresSocio: async () => [], getSectores: async () => [],
+      getFacturasPendientes: async () => [fac], getMultasPendientes: async () => [],
+      getPeriodos: async () => [{ id: 'p1', periodo_codigo: '2026-10', estado: 'ABIERTO' }],
+      getLecturasSocio: async () => [], getFacturaPorIdONumero: async () => fac,
+      persistirCobroAtómico: async () => {}
+    };
+    const d = await new ConsultarDeudasSocioUseCase(mockRepo).ejecutar('s1');
+    assert.equal(d.rubrosPendientes[0].saldoPendiente, 4.00);
+    await assert.rejects(() => new ProcesarCobroUseCase(mockRepo).ejecutar({
+      idSocio: 's1', idCajero: 'c', metodoPago: 'EFECTIVO', montoTotalRecibido: 7,
+      items: [{ tipo: 'AGUA_PERIODO_ACTIVO', idReferencia: 'f1', montoACobrar: 7, descripcion: 'x' }]
+    } as any), /supera el saldo/);
+  });
+
+  await t.test('12. Regresión: abono de $5 a multa de $25 queda PARCIAL con saldo $20', async () => {
+    const { ProcesarCobroUseCase } = await import('../modules/caja/application/ProcesarCobroUseCase.ts');
+    let payload: any = null;
+    const multa = { id: 'm1', id_socio: 's1', tipo_rubro: 'MINGA', monto: 25, monto_pagado: 0, saldo_pendiente: 25, estado: 'PENDIENTE' };
+    const mockRepo: any = {
+      getSocioInfo: async () => ({ id: 's1', nombres: 'Delia', apellidos: 'Moreta', fecha_nacimiento: '1955-01-01' }),
+      getPeriodos: async () => [{ id: 'p1', periodo_codigo: '2026-10', estado: 'ABIERTO' }],
+      getMultaPorId: async () => multa, getFacturasPendientes: async () => [], getMultasPendientes: async () => [{ ...multa, saldo_pendiente: 20 }],
+      persistirCobroAtómico: async (p: any) => { payload = p; }
+    };
+    const r = await new ProcesarCobroUseCase(mockRepo).ejecutar({
+      idSocio: 's1', idCajero: 'c', metodoPago: 'EFECTIVO', montoTotalRecibido: 5,
+      items: [{ tipo: 'MULTA_COMUNITARIA', idReferencia: 'm1', montoACobrar: 5, descripcion: 'Minga' }]
+    } as any);
+    assert.equal(r.totalCobrado, 5);
+    assert.equal(payload.multasActualizaciones[0].patch.saldo_pendiente, 20);
+    assert.equal(payload.multasActualizaciones[0].patch.estado, 'PARCIAL');
+    assert.equal(payload.multasActualizaciones[0].abonoRecord.monto_abonado, 5);
+  });});

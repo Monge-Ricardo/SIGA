@@ -69,20 +69,21 @@ export class ConsultarDeudasSocioUseCase {
       const lAct = Number(lec?.lectura_actual ?? f.lectura_actual ?? 0);
       const consM3 = Math.max(0, Number((lAct - lAnt).toFixed(2)) || Number(lec?.consumo_total ?? f.consumo_m3 ?? 0));
       const excM3 = Math.max(0, Number((consM3 - 30).toFixed(2)));
-      const vBase = Number(f.valor_base || (esTerceraEdad ? 5.00 : 7.00));
-      const vExcedente = Number((excM3 * 0.10).toFixed(2)) || Number(f.valor_excedente || 0);
-      const vAlcantarillado = (tieneAlcantarillado || Number(f.valor_alcantarillado || 0) > 0) ? 1.00 : 0.00;
-      const totalAguaCalculado = Number((vBase + vExcedente + vAlcantarillado).toFixed(2));
+      // La factura guardada es la fuente de verdad: se muestran sus valores (por medidor), sin recalcular
+      const vBase = Number(f.valor_base ?? (esTerceraEdad ? 5.00 : 7.00));
+      const vExcedente = Number(f.valor_excedente ?? 0);
+      const vAlcantarillado = Number(f.valor_alcantarillado ?? 0);
 
-      // En el periodo activo, el valor de agua es estrictamente Base + Excedente + Alcantarillado
+      // Saldo real: total_pagar refleja abonos parciales; saldo_pendiente solo si existiera la columna
       let saldo = 0;
-      if (esPeriodoActivo) {
-        saldo = totalAguaCalculado;
-      } else if (f.saldo_pendiente !== undefined && f.saldo_pendiente !== null) {
+      if (f.saldo_pendiente !== undefined && f.saldo_pendiente !== null) {
         saldo = Number(f.saldo_pendiente);
+      } else if (f.total_pagar !== undefined && f.total_pagar !== null) {
+        saldo = Number(f.total_pagar);
       } else {
-        saldo = Number((Number(f.total_mes) > 0 ? f.total_mes : f.total_pagar) || 0);
+        saldo = Number(f.total_mes || 0);
       }
+      saldo = Number(saldo.toFixed(2));
 
       if (saldo <= 0) continue;
 

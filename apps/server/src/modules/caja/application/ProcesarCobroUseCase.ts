@@ -90,9 +90,10 @@ export class ProcesarCobroUseCase {
         throw new Error(`Factura ${item.idReferencia} no encontrada.`);
       }
 
+      // total_pagar refleja el saldo vigente (incluye abonos parciales previos)
       const saldoActual = fac.saldo_pendiente !== undefined && fac.saldo_pendiente !== null
         ? Number(fac.saldo_pendiente)
-        : Number((Number(fac.total_mes) > 0 ? fac.total_mes : fac.total_pagar) || 0);
+        : Number((fac.total_pagar !== undefined && fac.total_pagar !== null ? fac.total_pagar : fac.total_mes) || 0);
 
       if (item.montoACobrar > saldoActual + 0.001) {
         throw new Error(
@@ -107,7 +108,9 @@ export class ProcesarCobroUseCase {
         id: fac.id,
         patch: {
           estado_pago: estaExtinguida ? 'PAGADO' : 'PENDIENTE',
-          total_pagar: estaExtinguida ? Number(fac.total_mes || fac.total_pagar || item.montoACobrar) : nuevoSaldo,
+          total_pagar: estaExtinguida
+            ? Number((Number(fac.total_mes || 0) + Number(fac.valor_deuda_anterior || 0)) || fac.total_pagar || item.montoACobrar)
+            : nuevoSaldo,
           valor_multas: 0.00, // @deprecated: Multas gestionadas de forma independiente
           fecha_pago: estaExtinguida ? now : (fac.fecha_pago || null),
           metodo_pago: estaExtinguida ? dto.metodoPago : (fac.metodo_pago || null),
